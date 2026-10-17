@@ -8,6 +8,12 @@ never installed anywhere. Only CLAUDE.md, .claude/{agents,commands,skills},
 .claude/settings.json, the PR/issue templates, and scripts/session_cost.py
 + its config are part of the installed, portable config.
 
+settings.json is special: every other file is symlinked (or copied) whole,
+but settings.json is MERGED — permissions/statusLine/model are added
+in without ever touching keys this config doesn't own (hooks, theme,
+mcpServers, ...), on every run, every time. See merge_settings_json() and
+docs/decisions/0010-settings-json-is-merged-not-linked.md.
+
 Usage:
     python3 scripts/install.py                       # user scope -> ~/.claude
     python3 scripts/install.py --mode project --target ~/some/other/repo
@@ -27,10 +33,15 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
+# settings.json is NOT in this list — it's merged, not linked/copied, by
+# merge_settings_json() below, because a user's existing settings.json
+# routinely carries unrelated content (their own hooks, theme, MCP config)
+# that a whole-file overwrite would destroy. See
+# docs/decisions/0010-settings-json-is-merged-not-linked.md.
+#
 # (source path relative to REPO_ROOT, dest path relative to the install target)
 USER_SCOPE_ENTRIES = [
     ("CLAUDE.md", "CLAUDE.md"),
-    (".claude/settings.json", "settings.json"),
     (".github/pull_request_template.md", "templates/pull_request_template.md"),
     (".github/ISSUE_TEMPLATE/bug_report.yml", "templates/ISSUE_TEMPLATE/bug_report.yml"),
     (".github/ISSUE_TEMPLATE/feature_request.yml", "templates/ISSUE_TEMPLATE/feature_request.yml"),
@@ -55,13 +66,16 @@ DIR_ENTRIES = [
 
 
 class Action:
-    def __init__(self, src: Path, dst: Path, kind: str):
+    def __init__(self, src: Path, dst: Path, kind: str, notes: list[str] | None = None):
         self.src = src
         self.dst = dst
-        self.kind = kind  # "linked" | "copied" | "skipped-exists" | "would-<kind>" | "removed"
+        self.kind = kind  # "linked" | "copied" | "skipped-exists" | "would-<kind>" | "removed" | "merged" | "unchanged"
+        self.notes = notes or []
 
     def __str__(self) -> str:
-        return f"{self.kind}: {self.dst}"
+        lines = [f"{self.kind}: {self.dst}"]
+        lines += [f"  note: {note}" for note in self.notes]
+        return "\n".join(lines)
 
 
 def _same_content(src: Path, dst: Path) -> bool:
@@ -100,6 +114,73 @@ def install_one(src: Path, dst: Path, *, use_copy: bool, force: bool, dry_run: b
     else:
         dst.symlink_to(src.resolve(), target_is_directory=src.is_dir())
     return Action(src, dst, verb)
+
+
+def _load_json_or_empty(path: Path) -> dict:
+    if not path.is_file():
+        return {}
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def merge_settings_json(src: Path, dst: Path, *, dry_run: bool) -> Action:
+    """Merge dotclaude's permissions/statusLine/model defaults into an
+    existing settings.json, without ever touching keys it doesn't own
+    (hooks, theme, mcpServers, or anything else already there).
+
+    - permissions.allow / permissions.deny: union — add dotclaude's entries
+      if missing, never remove or reorder what's already there.
+    - statusLine: set only if entirely absent. If something else is already
+      configured, leave it and note the mismatch instead of guessing.
+    - model: set only if entirely absent — an existing choice always wins.
+    """
+    original = _load_json_or_empty(dst)
+    merged = json.loads(json.dumps(original))  # deep copy, so `original` stays the baseline
+    src_data = _load_json_or_empty(src)
+    notes: list[str] = []
+
+    src_perms = src_data.get("permissions", {})
+    if src_perms:
+        dst_perms = merged.setdefault("permissions", {})
+        for key in ("allow", "deny"):
+            for item in src_perms.get(key, []):
+                dst_list = dst_perms.setdefault(key, [])
+                if item not in dst_list:
+                    dst_list.append(item)
+
+    if "statusLine" in src_data:
+        if "statusLine" not in merged:
+            merged["statusLine"] = src_data["statusLine"]
+        elif merged["statusLine"] != src_data["statusLine"]:
+            notes.append(
+                "statusLine is already set to something else — dotclaude's default "
+                "statusLine (session cost) was not applied. See .claude/settings.json "
+                "in the dotclaude repo if you want it."
+            )
+
+    if "model" in src_data and "model" not in merged:
+        merged["model"] = src_data["model"]
+
+    changed = merged != original
+    if not changed:
+        return Action(src, dst, "unchanged", notes=notes)
+    if dry_run:
+        return Action(src, dst, "would-merge", notes=notes)
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    with open(dst, "w", encoding="utf-8") as f:
+        json.dump(merged, f, indent=2)
+        f.write("\n")
+    return Action(src, dst, "merged", notes=notes)
+
+
+def install_settings_json(target: Path, mode: str, *, dry_run: bool) -> list[Action]:
+    if mode != "user":
+        return []
+    src = REPO_ROOT / ".claude" / "settings.json"
+    if not src.is_file():
+        return []
+    return [merge_settings_json(src, target / "settings.json", dry_run=dry_run)]
 
 
 def install_dir_entries(target: Path, mode: str, *, use_copy: bool, force: bool, dry_run: bool) -> list[Action]:
@@ -154,6 +235,20 @@ def uninstall(target: Path, mode: str) -> list[Action]:
         else:
             path.unlink()
         actions.append(Action(REPO_ROOT, path, "removed"))
+
+    settings_path = target / "settings.json"
+    if mode == "user" and settings_path.is_file():
+        actions.append(
+            Action(
+                REPO_ROOT,
+                settings_path,
+                "left-as-is",
+                notes=[
+                    "settings.json is merged, not linked/copied, so uninstall never removes it. "
+                    "Remove the permissions/statusLine entries by hand if you want them gone."
+                ],
+            )
+        )
     return actions
 
 
@@ -198,6 +293,7 @@ def main(argv=None) -> int:
     else:
         actions = install_file_entries(target, args.mode, use_copy=args.copy, force=args.force, dry_run=args.dry_run)
         actions += install_dir_entries(target, args.mode, use_copy=args.copy, force=args.force, dry_run=args.dry_run)
+        actions += install_settings_json(target, args.mode, dry_run=args.dry_run)
 
     for action in actions:
         print(action)

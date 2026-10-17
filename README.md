@@ -33,9 +33,17 @@ python3 scripts/install.py --uninstall      # remove what a prior run installed
   into one specific project. Use this for a project where you want a GitHub
   Actions workflow (like `claude-pr-review.yml`) to see these agents — a CI
   runner only checks out that project, not your `~/.claude/`.
+- Everything is symlinked (or copied with `--copy`) whole, **except
+  `settings.json`, which is merged** — every run, not just the first. Your
+  existing `hooks`, `theme`, `model`, or anything else dotclaude doesn't own
+  is left untouched; only `permissions` (unioned) and `statusLine`/`model`
+  (added only if entirely absent) come from dotclaude, and a run that
+  changes nothing reports `unchanged`. See
+  `docs/decisions/0010-settings-json-is-merged-not-linked.md`.
 - The installer never overwrites a file that already differs from this
   repo's version unless you pass `--force`; it never touches files it didn't
-  create itself.
+  create itself. `--uninstall` leaves `settings.json` alone entirely (it's
+  merged content, not a file this installer fully owns).
 
 Personal overrides (API keys, local-only permissions) go in that project's
 `.claude/settings.local.json`, which is gitignored — never in

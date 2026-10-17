@@ -57,3 +57,22 @@ stale. Added `check_shipped_files_are_repo_agnostic` to
 `scripts/validate_repo.py` so this class of mistake fails CI going forward.
 See `docs/decisions/0008-config-must-be-repo-agnostic.md` and
 `docs/decisions/0009-templates-are-personal-not-github-native.md`.
+
+## 2026-10-17 — Pushed to GitHub, installed, and made settings.json merge automatic
+
+Pushed the initial commits to the (previously empty) `origin` remote and ran
+the installer for real against this machine's actual `~/.claude/`. That run
+surfaced exactly the risk `install.py` was designed to guard against: an
+existing `~/.claude/settings.json` with unrelated `hooks` (a different tool
+entirely) and a `model` set moments earlier via `/model` — both of which a
+naive overwrite would have destroyed. Handling that one instance by hand and
+documenting "merge manually next time" wasn't good enough — it's a
+guarantee that would quietly lapse the next time this file needed to change.
+
+Replaced the one-time manual merge with `merge_settings_json()`: every
+`install.py` run (user scope) now unions `permissions.allow`/`deny`, adds
+`statusLine`/`model` only if entirely absent, and never touches any other
+key — on every run, not just the first, and reports `unchanged` when
+there's nothing to do. `--uninstall` now explicitly leaves `settings.json`
+alone rather than attempting to remove it. See
+`docs/decisions/0010-settings-json-is-merged-not-linked.md`.
