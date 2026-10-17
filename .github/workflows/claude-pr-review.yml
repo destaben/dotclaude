@@ -38,7 +38,9 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request' ||
       (github.event.issue.pull_request != null &&
-       contains(github.event.comment.body, '@claude review'))
+       contains(github.event.comment.body, '@claude review') &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                github.event.comment.author_association))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -55,10 +57,9 @@ jobs:
           # app installed on the repo.
           github_token: ${{ secrets.GITHUB_TOKEN }}
           # anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          show_full_output: true
           claude_args: >-
             --model claude-haiku-5-5 --effort low
-            --allowedTools "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git status:*),Bash(python3 -m pytest:*),Bash(python3 scripts/validate_repo.py:*),Read,Grep,Glob"
+            --allowedTools "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git diff:*),Read,Grep,Glob"
           prompt: |
             Review pull request #${{ github.event.pull_request.number || github.event.issue.number }}
             of this repository (HEAD is detached, so use this number with
@@ -70,6 +71,9 @@ jobs:
             docs need updating for this change. Post the combined findings
             as a single PR comment with `gh pr comment`. If there are no findings, post a short
             comment saying so instead of staying silent.
+            This run only has read access to the code and cannot edit files or
+            run tests (CI already runs them): the documenter reports only, and
+            the bug-hunter reviews the diff without running the suite.
             Run the agents in the foreground and wait for their results: this
             is a non-interactive run that ends when you stop, so do not end
             your turn until the comment has been posted.
