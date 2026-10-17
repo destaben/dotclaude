@@ -70,12 +70,15 @@ what was adapted from [awesome-copilot](https://github.com/github/awesome-copilo
 
 `.github/workflows/claude-pr-review.yml` (this repo's own CI — project
 scope, see the Install section to use it in another repo) runs `bug-hunter`
-against a pull request — same agent and severity policy as `/release`, no
-duplicate agent (see `docs/decisions/0005-reuse-bug-hunter-for-ci-review.md`).
-It's inactive until you add a `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`
-secret, and triggers on an `@claude review` comment or manual dispatch rather
-than every push — see `docs/decisions/0007-pro-plan-cost-sustainability.md`
-for why.
+and `documenter` against a pull request — same agents and severity policy
+as `/release`, no duplicate agent (see
+`docs/decisions/0005-reuse-bug-hunter-for-ci-review.md`). It's inactive
+until you add a `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` secret.
+It runs automatically on every PR (`opened`/`synchronize`/`reopened`), using
+`claude-haiku-5-5` at low effort to keep the per-run cost down, plus the
+`@claude review` comment and manual dispatch as a fallback — see
+`docs/decisions/0007-pro-plan-cost-sustainability.md` and
+`docs/decisions/0011-propagated-auto-pr-review.md` for why.
 
 The PR/issue templates are different: they're personal defaults, installed
 to `~/.claude/templates/` and used by `commit-and-pr`/`github-ops` in *any*
