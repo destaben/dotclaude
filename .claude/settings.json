@@ -1,0 +1,26 @@
+{
+  "model": "claude-sonnet-5-5",
+  "permissions": {
+    "allow": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Edit",
+      "Write",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(python -m unittest:*)",
+      "Bash(python scripts/*)"
+    ],
+    "deny": [
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(rm -rf /:*)"
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "python3 scripts/session_cost.py --oneline 2>/dev/null || echo 'cost n/a'"
+  }
+}

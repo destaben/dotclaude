@@ -1,0 +1,18 @@
+{
+  "_comment": "USD per 1M tokens. TODO: fill in from the official pricing page before relying on session_cost.py output. Do not invent values.",
+  "_source": "https://docs.claude.com/en/docs/about-claude/pricing",
+  "models": {
+    "claude-opus-5-5": {
+      "input_per_mtok": "TODO",
+      "output_per_mtok": "TODO"
+    },
+    "claude-sonnet-5-5": {
+      "input_per_mtok": "TODO",
+      "output_per_mtok": "TODO"
+    },
+    "claude-haiku-5-5": {
+      "input_per_mtok": "TODO",
+      "output_per_mtok": "TODO"
+    }
+  }
+}

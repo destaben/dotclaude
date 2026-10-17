@@ -1,0 +1,7 @@
+{
+  "_comment": "Thresholds used by the token-budget skill. Warnings are advisory only; nothing here blocks a tool call.",
+  "task_token_warning": 150000,
+  "task_token_critical": 400000,
+  "subagent_spawn_warning": 5,
+  "context_tokens_warning": 120000
+}
