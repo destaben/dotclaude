@@ -3,6 +3,20 @@
 All notable changes to this repo are recorded here. Entries explain why a
 change was made, not just what changed — the diff already shows what.
 
+## 2026-10-17 — Make the PR review workflow actually post
+
+Every review run failed with `Could not fetch an OIDC token`: without a
+`github_token`, `claude-code-action` tries an OIDC exchange for the Claude
+GitHub App token, which needs `id-token: write` and the app installed. The
+workflow now passes `GITHUB_TOKEN`. Fixing that exposed more: the agent
+needs the PR number (HEAD is detached) and an explicit tool allowlist, and
+Haiku ended its run before posting unless told to wait. The review of this
+very change flagged that letting the agent run `gh pr comment` plus read
+`.git/config` was a secret-leak path via a prompt-injected diff, so the agent
+now only writes `review.md` and a workflow step posts it; the comment trigger
+is limited to owner/member/collaborator. The review no longer runs the test
+suite (it executes untrusted code); `docs-check` still does.
+
 ## 2026-10-17 — Price `claude-sonnet-5` and guard `pricing.json`
 
 Added `claude-sonnet-5` ($2 input / $10 output per MTok) to

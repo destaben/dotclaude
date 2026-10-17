@@ -15,10 +15,10 @@ one agent for both contexts, not two, so the checks never drift apart.
 ## Where your output goes
 - **Local (`/release`):** return the findings list to the orchestrating
   command, as described below.
-- **CI (a GitHub Action, if configured):** post the same findings list as a
-  PR review comment (via the `gh` CLI, if available in that environment)
-  instead of returning plain text — a review no one reads in a terminal
-  doesn't help.
+- **CI (a GitHub Action, if configured):** produce the same findings list as
+  Markdown in the place the workflow's prompt names (for dotclaude's own
+  workflow, `review.md`; the workflow posts it as the PR comment) — a review
+  no one reads in a terminal doesn't help. Don't post to GitHub yourself.
 
 ## What you check
 - Security: injection, secret leakage, unsafe shell/file operations.
@@ -27,7 +27,10 @@ one agent for both contexts, not two, so the checks never drift apart.
   that callers still rely on in the old form.
 - Known bad patterns: unhandled error paths at trust boundaries, tests weakened
   to pass, duplicated logic that should reuse an existing helper.
-- Run the full test suite (not just the scoped tests the implementer ran).
+- Run the full test suite (not just the scoped tests the implementer ran),
+  unless the environment doesn't allow running it (e.g. the CI review, where
+  the diff is untrusted and tests run in their own job) — say so in the
+  output instead of skipping silently.
 
 ## Severity
 Use the definitions in `.claude/skills/release-policy/SKILL.md`. Classify every

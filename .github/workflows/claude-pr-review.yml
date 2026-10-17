@@ -46,6 +46,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Run bug-hunter and documenter review
         uses: anthropics/claude-code-action@v1
@@ -59,24 +60,43 @@ jobs:
           # anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_args: >-
             --model claude-haiku-5-5 --effort low
-            --allowedTools "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git diff:*),Read,Grep,Glob"
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git diff:*),Bash(git show:*),Read,Grep,Glob,Write(review.md)"
+            --disallowedTools "Read(.git/**)"
           prompt: |
             Review pull request #${{ github.event.pull_request.number || github.event.issue.number }}
             of this repository (HEAD is detached, so use this number with
-            `gh pr view`/`gh pr diff`/`gh pr comment`; run commands from the
-            repo root with relative paths, no `git -C`). Review it using the bug-hunter agent defined in
+            `gh pr view`/`gh pr diff`; run commands from the repo root with
+            relative paths, no `git -C`). Review it using the bug-hunter agent defined in
             .claude/agents/bug-hunter.md and the severity definitions in
             .claude/skills/release-policy/SKILL.md. Then run the documenter
             agent defined in .claude/agents/documenter.md to check whether
             docs need updating for this change. Post the combined findings
-            as a single PR comment with `gh pr comment`. If there are no findings, post a short
-            comment saying so instead of staying silent.
-            This run only has read access to the code and cannot edit files or
-            run tests (CI already runs them): the documenter reports only, and
-            the bug-hunter reviews the diff without running the suite.
+            as Markdown in `review.md`; a later workflow step posts that file as the
+            PR comment. If there are no findings, write a short note saying so
+            instead of leaving it empty.
+            In this run you can read the code and write one file, `review.md`;
+            you cannot edit anything else, run tests (CI already runs them),
+            or post to GitHub. The documenter reports only, and the
+            bug-hunter reviews the diff without running the suite.
             Run the agents in the foreground and wait for their results: this
             is a non-interactive run that ends when you stop, so do not end
-            your turn until the comment has been posted.
+            your turn until `review.md` is written.
+
+      # The agent never talks to GitHub's write API: it writes review.md and
+      # this step posts it, so a prompt-injected diff cannot make the agent
+      # run `gh pr comment` with arbitrary content. A workflow_dispatch run
+      # has no PR number, so there is nothing to post to and it is skipped.
+      - name: Post the review
+        if: always() && (github.event.pull_request.number || github.event.issue.number)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+        run: |
+          if [ -s review.md ]; then
+            gh pr comment "$PR_NUMBER" --body-file review.md
+          else
+            echo "review.md missing or empty; nothing to post"
+          fi
 
 # Before relying on this workflow, re-check the action's current input names
 # (`claude_code_oauth_token`, `anthropic_api_key`, `prompt`, `claude_args`)

@@ -43,11 +43,14 @@ by `install.py`; to use it in another repo, project-scope install the agents
 there too (see the README's Install section) and copy this workflow file in.
 It runs the same `bug-hunter` agent against a GitHub pull request, instead of
 a local diff — no second agent, see
-`docs/decisions/0005-reuse-bug-hunter-for-ci-review.md`. Triggered by
-commenting `@claude review` on a PR, or manually via `workflow_dispatch` —
-deliberately not on every push, because it shares your Claude subscription's
-usage quota with your local sessions (see
-`docs/decisions/0007-pro-plan-cost-sustainability.md`). Inactive until you
+`docs/decisions/0005-reuse-bug-hunter-for-ci-review.md`. Triggered on every
+PR (opened/synchronize/reopened) on Haiku at low effort, by commenting
+`@claude review` (owner, members and collaborators only), or manually via
+`workflow_dispatch` (see
+`docs/decisions/0011-propagated-auto-pr-review.md`, which narrows
+`docs/decisions/0007-pro-plan-cost-sustainability.md`). The agent only writes
+`review.md`; a workflow step posts it, so the agent has no write path to
+GitHub. Inactive until you
 add either a `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` repository
 secret — see the workflow file's header comment for the tradeoff between the
 two.
