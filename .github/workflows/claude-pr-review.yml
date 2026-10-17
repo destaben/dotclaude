@@ -58,14 +58,17 @@ jobs:
           show_full_output: true
           claude_args: >-
             --model claude-haiku-5-5 --effort low
-            --allowedTools "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git diff:*),Bash(git log:*),Read,Grep,Glob"
+            --allowedTools "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git status:*),Bash(python3 -m pytest:*),Bash(python3 scripts/validate_repo.py:*),Read,Grep,Glob"
           prompt: |
-            Review this pull request using the bug-hunter agent defined in
+            Review pull request #${{ github.event.pull_request.number || github.event.issue.number }}
+            of this repository (HEAD is detached, so use this number with
+            `gh pr view`/`gh pr diff`/`gh pr comment`; run commands from the
+            repo root with relative paths, no `git -C`). Review it using the bug-hunter agent defined in
             .claude/agents/bug-hunter.md and the severity definitions in
             .claude/skills/release-policy/SKILL.md. Then run the documenter
             agent defined in .claude/agents/documenter.md to check whether
             docs need updating for this change. Post the combined findings
-            as a PR review comment. If there are no findings, post a short
+            as a single PR comment with `gh pr comment`. If there are no findings, post a short
             comment saying so instead of staying silent.
 
 # Before relying on this workflow, re-check the action's current input names
