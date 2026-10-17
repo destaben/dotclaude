@@ -36,7 +36,8 @@ jobs:
   review:
     if: >
       github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'pull_request' ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
       (github.event.issue.pull_request != null &&
        contains(github.event.comment.body, '@claude review') &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
@@ -61,7 +62,7 @@ jobs:
           # anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_args: >-
             --model claude-haiku-5-5 --effort low
-            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git diff:*),Bash(git show:*),Read,Grep,Glob"
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git show:*),Read,Grep,Glob"
             --disallowedTools "Read(.git/**)"
           prompt: |
             Review pull request #${{ github.event.pull_request.number || github.event.issue.number }}
@@ -96,7 +97,7 @@ jobs:
           EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
         run: |
           if [ -f "$EXECUTION_FILE" ]; then
-            jq -r '[.[] | select(.type == "result")] | last | .result // empty' "$EXECUTION_FILE" > "$RUNNER_TEMP/review.md"
+            jq -r '[.[]? | select(.type == "result" and .subtype == "success" and (.is_error | not))] | last | .result // empty' "$EXECUTION_FILE" > "$RUNNER_TEMP/review.md"
           fi
           if [ -s "$RUNNER_TEMP/review.md" ]; then
             gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/review.md"

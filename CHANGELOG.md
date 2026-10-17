@@ -16,7 +16,8 @@ very change flagged that letting the agent run `gh pr comment` plus read
 now only returns the review as its final message and a workflow step posts
 it; the comment trigger
 is limited to owner/member/collaborator. The review no longer runs the test
-suite (it executes untrusted code); `docs-check` still does.
+suite (it executes untrusted code); `docs-check` still does, though advisory
+(`continue-on-error`). PRs from forks are skipped.
 
 ## 2026-10-17 — Price `claude-sonnet-5` and guard `pricing.json`
 
