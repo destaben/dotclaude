@@ -17,7 +17,7 @@ one agent for both contexts, not two, so the checks never drift apart.
   command, as described below.
 - **CI (a GitHub Action, if configured):** produce the same findings list as
   Markdown in the place the workflow's prompt names (for dotclaude's own
-  workflow, `review.md`; the workflow posts it as the PR comment) — a review
+  workflow, your final message; the workflow posts it as the PR comment) — a review
   no one reads in a terminal doesn't help. Don't post to GitHub yourself.
 
 ## What you check

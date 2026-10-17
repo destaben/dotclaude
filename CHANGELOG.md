@@ -13,7 +13,8 @@ needs the PR number (HEAD is detached) and an explicit tool allowlist, and
 Haiku ended its run before posting unless told to wait. The review of this
 very change flagged that letting the agent run `gh pr comment` plus read
 `.git/config` was a secret-leak path via a prompt-injected diff, so the agent
-now only writes `review.md` and a workflow step posts it; the comment trigger
+now only returns the review as its final message and a workflow step posts
+it; the comment trigger
 is limited to owner/member/collaborator. The review no longer runs the test
 suite (it executes untrusted code); `docs-check` still does.
 

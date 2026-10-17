@@ -48,8 +48,8 @@ PR (opened/synchronize/reopened) on Haiku at low effort, by commenting
 `@claude review` (owner, members and collaborators only), or manually via
 `workflow_dispatch` (see
 `docs/decisions/0011-propagated-auto-pr-review.md`, which narrows
-`docs/decisions/0007-pro-plan-cost-sustainability.md`). The agent only writes
-`review.md`; a workflow step posts it, so the agent has no write path to
+`docs/decisions/0007-pro-plan-cost-sustainability.md`). The agent's final
+message is the review; a workflow step posts it, so the agent has no write path to
 GitHub. Inactive until you
 add either a `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` repository
 secret — see the workflow file's header comment for the tradeoff between the

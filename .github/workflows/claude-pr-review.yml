@@ -49,6 +49,7 @@ jobs:
           persist-credentials: false
 
       - name: Run bug-hunter and documenter review
+        id: review
         uses: anthropics/claude-code-action@v1
         with:
           # Pick exactly one of these two secrets; see the header comment.
@@ -58,10 +59,9 @@ jobs:
           # app installed on the repo.
           github_token: ${{ secrets.GITHUB_TOKEN }}
           # anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          show_full_output: true # TEMP: diagnose Edit(/review.md) denial, remove
           claude_args: >-
             --model claude-haiku-5-5 --effort low
-            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git diff:*),Bash(git show:*),Read,Grep,Glob,Edit(/review.md)"
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git diff:*),Bash(git show:*),Read,Grep,Glob"
             --disallowedTools "Read(.git/**)"
           prompt: |
             Review pull request #${{ github.event.pull_request.number || github.event.issue.number }}
@@ -72,31 +72,36 @@ jobs:
             .claude/skills/release-policy/SKILL.md. Then run the documenter
             agent defined in .claude/agents/documenter.md to check whether
             docs need updating for this change. Post the combined findings
-            as Markdown in `review.md`; a later workflow step posts that file as the
-            PR comment. If there are no findings, write a short note saying so
-            instead of leaving it empty.
-            In this run you can read the code and write one file, `review.md`;
-            you cannot edit anything else, run tests (CI already runs them),
-            or post to GitHub. The documenter reports only, and the
+            as Markdown in your FINAL message, and make that message the review
+            itself (no preamble such as "I posted..."): a later workflow step
+            posts it as the PR comment. If there are no findings, say so
+            briefly instead of leaving it empty.
+            In this run you can only read the code: you cannot write files,
+            run tests (CI already runs them), or post to GitHub. The documenter reports only, and the
             bug-hunter reviews the diff without running the suite.
             Run the agents in the foreground and wait for their results: this
             is a non-interactive run that ends when you stop, so do not end
-            your turn until `review.md` is written.
+            your turn until you have written the final review message.
 
-      # The agent never talks to GitHub's write API: it writes review.md and
-      # this step posts it, so a prompt-injected diff cannot make the agent
-      # run `gh pr comment` with arbitrary content. A workflow_dispatch run
-      # has no PR number, so there is nothing to post to and it is skipped.
+      # The agent never talks to GitHub's write API and cannot write files: its
+      # final message is the review, and this step posts it, so a
+      # prompt-injected diff cannot make the agent run `gh pr comment` with
+      # arbitrary content. A workflow_dispatch run has no PR number, so there
+      # is nothing to post to and it is skipped.
       - name: Post the review
         if: always() && (github.event.pull_request.number || github.event.issue.number)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
         run: |
-          if [ -s review.md ]; then
-            gh pr comment "$PR_NUMBER" --body-file review.md
+          if [ -f "$EXECUTION_FILE" ]; then
+            jq -r '[.[] | select(.type == "result")] | last | .result // empty' "$EXECUTION_FILE" > "$RUNNER_TEMP/review.md"
+          fi
+          if [ -s "$RUNNER_TEMP/review.md" ]; then
+            gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/review.md"
           else
-            echo "review.md missing or empty; nothing to post"
+            echo "no final review message found; nothing to post"
           fi
 
 # Before relying on this workflow, re-check the action's current input names
