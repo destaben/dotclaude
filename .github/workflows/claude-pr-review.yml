@@ -50,6 +50,10 @@ jobs:
         with:
           # Pick exactly one of these two secrets; see the header comment.
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Use the workflow's own token instead of the OIDC exchange for the
+          # Claude GitHub App token, which needs `id-token: write` and the
+          # app installed on the repo.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           # anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_args: '--model claude-haiku-5-5 --effort low'
           prompt: |
