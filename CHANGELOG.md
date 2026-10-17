@@ -3,6 +3,17 @@
 All notable changes to this repo are recorded here. Entries explain why a
 change was made, not just what changed — the diff already shows what.
 
+## 2026-10-17 — Price `claude-sonnet-5` and guard `pricing.json`
+
+Added `claude-sonnet-5` ($2 input / $10 output per MTok) to
+`config/pricing.json`. Without it, `session_cost.py` reported sessions on that
+model as unpriced, because the lookup is an exact match and does not fall back
+to `claude-sonnet-5-5`. The rates were checked against the official pricing
+page the same day (the introductory price became the standard one), so
+`_fetched_at` is accurate. Added tests that reject duplicate keys and
+non-numeric or non-positive rates in the shipped file, since
+`validate_repo.py` does not inspect its contents.
+
 ## 2026-10-17 — Automatic, per-PR review on Haiku 5.5 / low effort
 
 `claude-pr-review.yml` now also triggers on `pull_request`

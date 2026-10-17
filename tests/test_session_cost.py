@@ -124,5 +124,37 @@ class MainIntegrationTest(unittest.TestCase):
         self.assertEqual(exit_code, 1)
 
 
+class ShippedPricingFileTest(unittest.TestCase):
+    """Guards the real config/pricing.json, which no other check inspects."""
+
+    PRICING = REPO_ROOT / "config" / "pricing.json"
+
+    def _load(self):
+        def reject_duplicates(pairs):
+            keys = [k for k, _ in pairs]
+            self.assertEqual(len(keys), len(set(keys)), f"duplicate keys: {keys}")
+            return dict(pairs)
+
+        return json.loads(self.PRICING.read_text(), object_pairs_hook=reject_duplicates)
+
+    def test_every_model_has_numeric_rates(self):
+        for model, rates in self._load()["models"].items():
+            for field in ("input_per_mtok", "output_per_mtok"):
+                value = rates.get(field)
+                self.assertIsInstance(value, (int, float), f"{model}.{field}")
+                self.assertGreater(value, 0, f"{model}.{field}")
+
+    def test_sonnet_5_family_is_priced(self):
+        totals = {
+            "input_tokens": 1_000_000,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "output_tokens": 1_000_000,
+        }
+        pricing = self._load()
+        for model in ("claude-sonnet-5", "claude-sonnet-5-5"):
+            self.assertAlmostEqual(session_cost.estimate_cost(model, totals, pricing), 12.0, msg=model)
+
+
 if __name__ == "__main__":
     unittest.main()
