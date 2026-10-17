@@ -70,6 +70,9 @@ jobs:
             docs need updating for this change. Post the combined findings
             as a single PR comment with `gh pr comment`. If there are no findings, post a short
             comment saying so instead of staying silent.
+            Run the agents in the foreground and wait for their results: this
+            is a non-interactive run that ends when you stop, so do not end
+            your turn until the comment has been posted.
 
 # Before relying on this workflow, re-check the action's current input names
 # (`claude_code_oauth_token`, `anthropic_api_key`, `prompt`, `claude_args`)
