@@ -3,6 +3,17 @@
 All notable changes to this repo are recorded here. Entries explain why a
 change was made, not just what changed — the diff already shows what.
 
+## 2026-10-17 — Automatic, per-PR review on Haiku 5.5 / low effort
+
+`claude-pr-review.yml` now also triggers on `pull_request`
+(`opened`/`synchronize`/`reopened`), not just on an `@claude review` comment,
+and runs both `bug-hunter` and `documenter` via
+`claude_args: '--model claude-haiku-5-5 --effort low'` to keep the per-run
+cost low enough to justify firing on every push. Added
+`docs/decisions/0011-propagated-auto-pr-review.md`, which narrows (without
+superseding) `0007-pro-plan-cost-sustainability.md`'s comment-only trigger
+decision now that the cost per run is this low.
+
 ## 2026-10-17 — Initial scaffold
 
 Bootstrapped the repo: global rules (`CLAUDE.md`), the planner / implementer /
