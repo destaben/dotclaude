@@ -1,0 +1,38 @@
+name: Bug report
+description: Something in an agent, skill, command, or script behaves incorrectly.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected vs. what actually happened. Include exact error text if there is any.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The minimal command/prompt sequence that reproduces it (e.g. "ran /release on branch X, step 2 failed").
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - agent (planner/implementer/bug-hunter/documenter/token-auditor)
+        - command (/plan, /release, /pr)
+        - skill
+        - scripts (session_cost.py / validate_repo.py)
+        - settings.json
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Relevant file paths, line numbers, or script output. Do not paste full session transcripts — they may contain unrelated context.
+    validations:
+      required: false

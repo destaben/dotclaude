@@ -35,6 +35,17 @@ Personal overrides (API keys, local-only permissions) go in
 See `docs/pipeline.md` for the prose walkthrough and `docs/references.md` for
 what was adapted from [awesome-copilot](https://github.com/github/awesome-copilot).
 
+## GitHub PR review and templates
+
+`.github/workflows/claude-pr-review.yml` runs `bug-hunter` against a pull
+request — same agent and severity policy as `/release`, no duplicate (see
+`docs/decisions/0005-reuse-bug-hunter-for-ci-review.md`). It's inactive until
+you add a `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` secret, and
+triggers on an `@claude review` comment or manual dispatch rather than every
+push — see `docs/decisions/0007-pro-plan-cost-sustainability.md` for why.
+`commit-and-pr` and `github-ops` fill `.github/pull_request_template.md` and
+the forms in `.github/ISSUE_TEMPLATE/` for every PR and issue respectively.
+
 ## Pipeline
 
 <!-- pipeline:start -->

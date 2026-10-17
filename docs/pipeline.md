@@ -36,3 +36,20 @@ order, rather than the harness intercepting tool calls. See
   automatically — invoke it when you want a bloat check.
 - `/pr`: skips the test/review/doc steps for a change you've already verified
   yourself.
+
+## GitHub PR review (`.github/workflows/claude-pr-review.yml`)
+Runs the same `bug-hunter` agent against a GitHub pull request, instead of a
+local diff. No second agent — see
+`docs/decisions/0005-reuse-bug-hunter-for-ci-review.md`. Triggered by
+commenting `@claude review` on a PR, or manually via `workflow_dispatch` —
+deliberately not on every push, because it shares your Claude subscription's
+usage quota with your local sessions (see
+`docs/decisions/0007-pro-plan-cost-sustainability.md`). Inactive until you
+add either a `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` repository
+secret — see the workflow file's header comment for the tradeoff between the
+two.
+
+## PR and issue templates
+`commit-and-pr` fills `.github/pull_request_template.md` for every PR.
+`github-ops` fills the matching form in `.github/ISSUE_TEMPLATE/` for every
+issue — there's no blank-issue fallback.
