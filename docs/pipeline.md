@@ -44,13 +44,16 @@ there too (see the README's Install section) and copy this workflow file in.
 It runs the same `bug-hunter` agent against a GitHub pull request, instead of
 a local diff — no second agent, see
 `docs/decisions/0005-reuse-bug-hunter-for-ci-review.md`. Triggered on every
-PR (opened/synchronize/reopened) on Haiku at low effort, by commenting
-`@claude review` (owner, members and collaborators only), or manually via
+same-repo PR (opened/synchronize/reopened; fork PRs are skipped) on Haiku at
+low effort, by commenting
+`@claude review` (owner, members and collaborators only; this path does also
+run on fork PRs when a trusted user asks for it), or manually via
 `workflow_dispatch` (see
 `docs/decisions/0011-propagated-auto-pr-review.md`, which narrows
 `docs/decisions/0007-pro-plan-cost-sustainability.md`). The agent's final
-message is the review; a workflow step posts it, so the agent has no write path to
-GitHub. Inactive until you
+message is the review; a workflow step posts it, so the agent has no
+write tools. The review is advisory: a prompt-injected diff can still
+influence what it says. Inactive until you
 add either a `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` repository
 secret — see the workflow file's header comment for the tradeoff between the
 two.

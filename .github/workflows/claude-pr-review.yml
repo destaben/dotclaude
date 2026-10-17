@@ -84,11 +84,13 @@ jobs:
             is a non-interactive run that ends when you stop, so do not end
             your turn until you have written the final review message.
 
-      # The agent never talks to GitHub's write API and cannot write files: its
-      # final message is the review, and this step posts it, so a
-      # prompt-injected diff cannot make the agent run `gh pr comment` with
-      # arbitrary content. A workflow_dispatch run has no PR number, so there
-      # is nothing to post to and it is skipped.
+      # The agent has no write tools and no `gh pr comment`: its final message
+      # is the review and this step posts it. That removes the "run gh with
+      # arbitrary content" path, but not influence: an injected diff can still
+      # make the review say anything (including "no findings"), and the
+      # `@claude review` comment path also runs on fork PRs when a trusted user
+      # asks for it. Treat the review as advisory. A workflow_dispatch run has
+      # no PR number, so there is nothing to post to and it is skipped.
       - name: Post the review
         if: always() && (github.event.pull_request.number || github.event.issue.number)
         env:
