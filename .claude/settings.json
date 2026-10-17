@@ -9,9 +9,7 @@
       "Write",
       "Bash(git status:*)",
       "Bash(git diff:*)",
-      "Bash(git log:*)",
-      "Bash(python -m unittest:*)",
-      "Bash(python scripts/*)"
+      "Bash(git log:*)"
     ],
     "deny": [
       "Bash(git push --force:*)",
@@ -21,6 +19,6 @@
   },
   "statusLine": {
     "type": "command",
-    "command": "python3 scripts/session_cost.py --oneline 2>/dev/null || echo 'cost n/a'"
+    "command": "python3 \"$HOME/.claude/dotclaude-scripts/scripts/session_cost.py\" --oneline 2>/dev/null || echo 'cost n/a'"
   }
 }

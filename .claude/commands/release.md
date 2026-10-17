@@ -17,8 +17,9 @@ is a sequence of steps inside this command, not a hook on any tool-call event.
      keep looping.
    - Non-severe: list the findings and ask the user before changing anything.
    - None: continue.
-4. **Documenter.** Invoke the `documenter` agent. It must complete — and
-   `scripts/validate_repo.py` must pass — before step 5 starts.
+4. **Documenter.** Invoke the `documenter` agent. It must complete — and any
+   structural checks the current project has of its own must still pass —
+   before step 5 starts.
 5. **Commit and PR.** Run `.claude/skills/commit-and-pr/SKILL.md`: stage,
    commit with a conventional message, push a branch (never `main`), open the
    PR, and write or update the session-cost footer.

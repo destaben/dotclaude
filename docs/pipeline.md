@@ -38,8 +38,11 @@ order, rather than the harness intercepting tool calls. See
   yourself.
 
 ## GitHub PR review (`.github/workflows/claude-pr-review.yml`)
-Runs the same `bug-hunter` agent against a GitHub pull request, instead of a
-local diff. No second agent — see
+This workflow is dotclaude's own project-specific CI — it is *not* installed
+by `install.py`; to use it in another repo, project-scope install the agents
+there too (see the README's Install section) and copy this workflow file in.
+It runs the same `bug-hunter` agent against a GitHub pull request, instead of
+a local diff — no second agent, see
 `docs/decisions/0005-reuse-bug-hunter-for-ci-review.md`. Triggered by
 commenting `@claude review` on a PR, or manually via `workflow_dispatch` —
 deliberately not on every push, because it shares your Claude subscription's
@@ -50,6 +53,11 @@ secret — see the workflow file's header comment for the tradeoff between the
 two.
 
 ## PR and issue templates
-`commit-and-pr` fills `.github/pull_request_template.md` for every PR.
-`github-ops` fills the matching form in `.github/ISSUE_TEMPLATE/` for every
-issue — there's no blank-issue fallback.
+Unlike the workflow above, these *are* personal and portable — see
+`docs/decisions/0009-templates-are-personal-not-github-native.md`. The
+source lives at `.github/pull_request_template.md` and
+`.github/ISSUE_TEMPLATE/*.yml` (also usable natively by GitHub for PRs/issues
+against dotclaude itself), and `install.py` copies them to
+`~/.claude/templates/`. `commit-and-pr` and `github-ops` use whichever
+project's own `.github/` template exists first, falling back to the personal
+copy at `~/.claude/templates/` — never the dotclaude repo's copy directly.

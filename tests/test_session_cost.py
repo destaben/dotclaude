@@ -2,6 +2,7 @@ import json
 import sys
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -75,6 +76,31 @@ class FormatTest(unittest.TestCase):
         line = session_cost.format_oneline(usage, pricing)
         self.assertIn("+", line)
         self.assertIn("1 model(s)", line)
+
+
+class PricingStalenessTest(unittest.TestCase):
+    def test_fresh_pricing_has_no_warning(self):
+        pricing = {"_fetched_at": "2026-10-01", "_max_age_days": 30}
+        self.assertIsNone(session_cost.pricing_staleness_warning(pricing, today=date(2026, 10, 15)))
+
+    def test_stale_pricing_warns_with_age(self):
+        pricing = {"_fetched_at": "2026-01-01", "_max_age_days": 30}
+        warning = session_cost.pricing_staleness_warning(pricing, today=date(2026, 10, 17))
+        self.assertIsNotNone(warning)
+        self.assertIn("2026-01-01", warning)
+
+    def test_missing_fetched_at_has_no_warning(self):
+        self.assertIsNone(session_cost.pricing_staleness_warning({}))
+
+    def test_oneline_flags_stale_pricing(self):
+        usage = {"m": {"input_tokens": 1, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": 1}}
+        pricing = {
+            "models": {"m": {"input_per_mtok": 1, "output_per_mtok": 1}},
+            "_fetched_at": "2020-01-01",
+            "_max_age_days": 30,
+        }
+        line = session_cost.format_oneline(usage, pricing)
+        self.assertIn("stale pricing", line)
 
 
 class MainIntegrationTest(unittest.TestCase):

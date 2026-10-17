@@ -60,3 +60,11 @@ jobs:
 # (`claude_code_oauth_token`, `anthropic_api_key`, `prompt`) against
 # https://code.claude.com/docs/en/github-actions — this was scaffolded from
 # documentation current as of 2026-10-17 and the action may have moved on.
+#
+# To reuse this in a DIFFERENT repo: this file itself (project-specific CI)
+# and .claude/agents/bug-hunter.md + .claude/skills/release-policy/ must all
+# be committed into that repo. A GitHub Actions runner only checks out the
+# target repo, not your ~/.claude — user-scope install isn't visible to it.
+# Run `python3 scripts/install.py --mode project --target <path-to-that-repo>`
+# from this dotclaude repo to install the agents/skills there, then copy this
+# workflow file in too.

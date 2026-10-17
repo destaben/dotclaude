@@ -106,6 +106,50 @@ class ValidateRepoTest(unittest.TestCase):
             errors = validate_repo.run_all_checks(root)
             self.assertEqual(errors, [])
 
+    def test_this_repo_phrase_in_agent_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            build_minimal_valid_repo(root)
+            (root / ".claude" / "agents" / "planner.md").write_text(
+                "---\nname: planner\ndescription: plans things\n---\n"
+                "This repo always writes plans to docs/plans/.\n"
+            )
+            errors = validate_repo.run_all_checks(root)
+            self.assertTrue(any("repo-specific reference" in e for e in errors))
+
+    def test_docs_decisions_reference_in_skill_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            build_minimal_valid_repo(root)
+            (root / ".claude" / "skills" / "demo-skill" / "SKILL.md").write_text(
+                "---\nname: demo-skill\ndescription: a demo\n---\n"
+                "See docs/decisions/0001-example.md for why.\n"
+            )
+            errors = validate_repo.run_all_checks(root)
+            self.assertTrue(any("docs/decisions/" in e for e in errors))
+
+    def test_this_repo_phrase_in_pr_template_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            build_minimal_valid_repo(root)
+            (root / ".github").mkdir(parents=True)
+            (root / ".github" / "pull_request_template.md").write_text(
+                "Link a decision record from this repo if relevant.\n"
+            )
+            errors = validate_repo.run_all_checks(root)
+            self.assertTrue(any("pull_request_template.md" in e for e in errors))
+
+    def test_generic_agent_body_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            build_minimal_valid_repo(root)
+            (root / ".claude" / "agents" / "planner.md").write_text(
+                "---\nname: planner\ndescription: plans things\n---\n"
+                "Write the plan to the current project's plans folder if it has one.\n"
+            )
+            errors = validate_repo.run_all_checks(root)
+            self.assertEqual(errors, [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -16,6 +16,17 @@ HOME_PATH_RE = re.compile(r"/Users/[A-Za-z0-9_.-]+/|/home/[A-Za-z0-9_.-]+/")
 HOME_PATH_ALLOWED_SUBSTRINGS = ("/Users/you/", "/Users/<", "/home/you/")
 TRACKED_TEXT_SUFFIXES = {".md", ".json", ".py", ".yml", ".yaml", ".txt", ""}
 
+# Files that get installed into ~/.claude (or a project's .claude/) by
+# scripts/install.py must stay agnostic to dotclaude's own repo layout —
+# none of these substrings should appear in them. Case-insensitive.
+REPO_SPECIFIC_PATTERNS = (
+    "this repo",
+    "docs/decisions/",
+    "docs/plans/",
+    "scripts/validate_repo.py",
+    "docs-check.yml",
+)
+
 
 def fail(errors: list, message: str) -> None:
     errors.append(message)
@@ -172,6 +183,30 @@ def check_no_secrets(errors: list, repo_root: Path) -> None:
             fail(errors, f"{rel}: looks like an absolute home path ({snippet})")
 
 
+def check_shipped_files_are_repo_agnostic(errors: list, repo_root: Path) -> None:
+    """CLAUDE.md, agents, commands, and skills get installed elsewhere by
+    install.py — they must not assume dotclaude's own repo layout exists
+    wherever they end up installed."""
+    shipped_files = []
+    claude_md = repo_root / "CLAUDE.md"
+    if claude_md.is_file():
+        shipped_files.append(claude_md)
+    for subdir in ("agents", "commands"):
+        shipped_files.extend(sorted((repo_root / ".claude" / subdir).glob("*.md")))
+    shipped_files.extend(sorted((repo_root / ".claude" / "skills").glob("*/SKILL.md")))
+    pr_template = repo_root / ".github" / "pull_request_template.md"
+    if pr_template.is_file():
+        shipped_files.append(pr_template)
+    shipped_files.extend(sorted((repo_root / ".github" / "ISSUE_TEMPLATE").glob("*.yml")))
+
+    for path in shipped_files:
+        text = path.read_text(encoding="utf-8").lower()
+        rel = _rel(path, repo_root)
+        for pattern in REPO_SPECIFIC_PATTERNS:
+            if pattern in text:
+                fail(errors, f"{rel}: contains repo-specific reference '{pattern}' — shipped files must stay project-agnostic")
+
+
 def run_all_checks(repo_root: Path) -> list:
     errors: list = []
     agent_names = check_agents(errors, repo_root)
@@ -181,6 +216,7 @@ def run_all_checks(repo_root: Path) -> list:
     check_claude_md_length(errors, repo_root)
     check_readme_pipeline(errors, repo_root, agent_names, command_names)
     check_no_secrets(errors, repo_root)
+    check_shipped_files_are_repo_agnostic(errors, repo_root)
     return errors
 
 

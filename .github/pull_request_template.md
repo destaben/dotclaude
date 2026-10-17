@@ -1,7 +1,10 @@
 <!--
-Filled in by the commit-and-pr skill (.claude/skills/commit-and-pr/SKILL.md) for
-every PR this repo opens. If you're a human filling this by hand, keep the same
-sections — automation and people use the same shape.
+This file is the personal PR template used by the commit-and-pr skill in any
+project (installed from the dotclaude config repo to ~/.claude/templates/),
+and it also doubles as the native GitHub template for PRs opened against the
+dotclaude repo itself — keep its content project-agnostic. If you're a human
+filling this by hand, keep the same sections — automation and people use the
+same shape.
 -->
 
 ## Summary
@@ -11,12 +14,12 @@ sections — automation and people use the same shape.
 ## Why
 
 <!-- The motivation: a bug reproduced, a rule that needed to change, a gap that
-     came up in use. Link a decision record under docs/decisions/ if this
+     came up in use. Link a decision record if the project keeps one and this
      involved a judgment call. -->
 
 ## Test plan
 
-<!-- Required by testing-mindset (.claude/skills/testing-mindset/SKILL.md).
+<!-- Required by the testing-mindset skill.
      Two short bullet lists — not "tests pass." -->
 
 **Tested:**

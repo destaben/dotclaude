@@ -1,5 +1,9 @@
+# Personal bug-report template (installed from the dotclaude config repo to
+# ~/.claude/templates/ISSUE_TEMPLATE/ by install.py), also used natively by
+# GitHub for issues filed against the dotclaude repo itself. Keep it generic
+# — it gets used in any project, not just this one.
 name: Bug report
-description: Something in an agent, skill, command, or script behaves incorrectly.
+description: Something behaves incorrectly.
 labels: ["bug"]
 body:
   - type: textarea
@@ -13,26 +17,20 @@ body:
     id: repro
     attributes:
       label: Steps to reproduce
-      description: The minimal command/prompt sequence that reproduces it (e.g. "ran /release on branch X, step 2 failed").
+      description: The minimal steps/command sequence that reproduces it.
     validations:
       required: true
-  - type: dropdown
+  - type: input
     id: area
     attributes:
       label: Area
-      options:
-        - agent (planner/implementer/bug-hunter/documenter/token-auditor)
-        - command (/plan, /release, /pr)
-        - skill
-        - scripts (session_cost.py / validate_repo.py)
-        - settings.json
-        - other
+      description: Which part of the project this touches (free text — name the module, file, or feature).
     validations:
-      required: true
+      required: false
   - type: textarea
     id: evidence
     attributes:
       label: Evidence
-      description: Relevant file paths, line numbers, or script output. Do not paste full session transcripts — they may contain unrelated context.
+      description: Relevant file paths, line numbers, logs, or command output. Don't paste anything that might contain secrets or unrelated private context.
     validations:
       required: false

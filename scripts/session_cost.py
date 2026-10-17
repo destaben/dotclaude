@@ -15,6 +15,7 @@ import argparse
 import json
 import os
 import sys
+from datetime import date
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -83,6 +84,32 @@ def load_pricing(pricing_path: Path) -> dict:
         return json.load(f)
 
 
+def pricing_staleness_days(pricing: dict, today: date | None = None) -> int | None:
+    """Days since pricing was fetched, or None if pricing has no _fetched_at."""
+    fetched_at = pricing.get("_fetched_at")
+    if not fetched_at:
+        return None
+    try:
+        fetched_date = date.fromisoformat(fetched_at)
+    except ValueError:
+        return None
+    return ((today or date.today()) - fetched_date).days
+
+
+def pricing_staleness_warning(pricing: dict, today: date | None = None) -> str | None:
+    """A one-line warning if pricing is older than its own _max_age_days, else None."""
+    age_days = pricing_staleness_days(pricing, today)
+    max_age_days = pricing.get("_max_age_days")
+    if age_days is None or not isinstance(max_age_days, (int, float)):
+        return None
+    if age_days <= max_age_days:
+        return None
+    return (
+        f"Pricing data is {age_days} days old (fetched {pricing.get('_fetched_at')}, "
+        f"max age {int(max_age_days)} days) — refresh config/pricing.json before trusting these figures."
+    )
+
+
 def estimate_cost(model: str, totals: dict, pricing: dict) -> float | None:
     model_pricing = pricing.get("models", {}).get(model)
     if not model_pricing:
@@ -128,6 +155,9 @@ def format_markdown_table(usage_by_model: dict, pricing: dict) -> str:
         "\n_Estimate at API list prices. Claude Pro/Max is billed as a flat subscription, "
         "not per token, so this does not reflect what was actually charged._"
     )
+    staleness_warning = pricing_staleness_warning(pricing)
+    if staleness_warning:
+        lines.append(f"\n**Warning:** {staleness_warning}")
     return "\n".join(lines)
 
 
@@ -141,7 +171,8 @@ def format_oneline(usage_by_model: dict, pricing: dict) -> str:
         else:
             total_cost += cost
     suffix = "+" if any_unknown else ""
-    return f"session est. ${total_cost:,.4f}{suffix} ({len(usage_by_model)} model(s))"
+    stale_marker = " [stale pricing]" if pricing_staleness_warning(pricing) else ""
+    return f"session est. ${total_cost:,.4f}{suffix} ({len(usage_by_model)} model(s)){stale_marker}"
 
 
 def main(argv=None) -> int:

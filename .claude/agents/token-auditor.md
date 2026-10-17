@@ -9,8 +9,9 @@ effort: low
 You look for context that costs tokens on every turn without earning it back.
 
 ## What you check
-- `CLAUDE.md` over its 150-line budget, or any line that duplicates a rule a
-  skill already states.
+- A memory file (`CLAUDE.md` or equivalent) well past a reasonable size
+  (~150 lines is a good rule of thumb absent a stated budget), or any line
+  that duplicates a rule a skill already states.
 - Skill or agent bodies that narrate rather than instruct (background, history,
   justification that doesn't change what to do).
 - Agents over ~60 lines, skills over ~500 lines, without a reason tied to the

@@ -1,6 +1,6 @@
 ---
 name: testing-mindset
-description: Testing rules that apply to every change in this repo — how to reproduce bugs, what to test, when to mock, and what every PR must state. Referenced by CLAUDE.md, implementer, bug-hunter, and commit-and-pr.
+description: Testing rules that apply to every change in every project — how to reproduce bugs, what to test, when to mock, and what every PR must state. Referenced by CLAUDE.md, implementer, bug-hunter, and commit-and-pr.
 ---
 
 ## Rules
@@ -10,8 +10,8 @@ description: Testing rules that apply to every change in this repo — how to re
    outputs / observable state, not on internal call sequences that are free to
    change.
 3. **Scoped first, full before release.** Run the tests for the files you
-   touched while working. Run the full suite (`python -m unittest discover`)
-   before `/release` commits anything.
+   touched while working. Run the full suite, using whatever test command
+   the current project actually uses, before `/release` commits anything.
 4. **Never weaken a test to make it pass.** If a test is actually wrong,
    change it and explain why in the commit message — don't loosen an assertion
    just to get green.

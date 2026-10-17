@@ -4,9 +4,10 @@ description: Browser automation via the Playwright MCP connector. Disabled by de
 ---
 
 ## Why this is isolated
-Playwright's page snapshots are the heaviest tool output in this repo's MCP
-set. Run browser work in a Haiku subagent so snapshots never land in the main
-conversation's context — the subagent returns a short summary instead.
+Playwright's page snapshots are typically the heaviest tool output among the
+MCP connectors in use. Run browser work in a Haiku subagent so snapshots
+never land in the main conversation's context — the subagent returns a short
+summary instead.
 
 ## Defaults
 - Prefer **text snapshots** (accessibility tree / DOM text) over screenshots.

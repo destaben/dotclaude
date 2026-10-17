@@ -1,5 +1,9 @@
+# Personal feature-request template (installed from the dotclaude config
+# repo to ~/.claude/templates/ISSUE_TEMPLATE/ by install.py), also used
+# natively by GitHub for issues filed against the dotclaude repo itself.
+# Keep it generic — it gets used in any project, not just this one.
 name: Feature request
-description: Propose a new agent, skill, command, or change to the pipeline.
+description: Propose a new feature or a change to existing behavior.
 labels: ["enhancement"]
 body:
   - type: textarea
@@ -13,21 +17,13 @@ body:
     id: proposal
     attributes:
       label: Proposed change
-      description: What you'd add or change — new agent/skill/command, or a change to an existing one.
+      description: What you'd add or change.
     validations:
       required: true
   - type: textarea
     id: alternatives
     attributes:
       label: Alternatives considered
-      description: Why not an existing skill/agent, or a smaller change?
+      description: Why not an existing feature, or a smaller change?
     validations:
       required: false
-  - type: checkboxes
-    id: constraints
-    attributes:
-      label: Constraints this repo holds (confirm you've checked these)
-      options:
-        - label: No hooks — the change fits a command/skill sequence, not a tool-call hook.
-        - label: No personal data (names, emails, absolute home paths, tokens) in any tracked file.
-        - label: Keeps CLAUDE.md under 150 lines if it touches global rules.

@@ -30,3 +30,30 @@ placeholders). Added a sustainability review
 (`docs/decisions/0007-pro-plan-cost-sustainability.md`) of the whole
 pipeline's model routing against a Claude Pro subscription's shared usage
 quota.
+
+## 2026-10-17 — Make shipped config repo-agnostic; add the installer
+
+Caught and fixed a foundational mistake: several agents/skills/commands
+assumed dotclaude's own layout (`docs/plans/`, `docs/decisions/`,
+`scripts/validate_repo.py`, a bare `scripts/session_cost.py`,
+`config/budgets.json` relative to cwd, literal "this repo" phrasing) would
+exist wherever this config gets installed — it won't, in any other project.
+Rewrote `CLAUDE.md`, `planner`, `implementer`, `bug-hunter`, `documenter`,
+`token-auditor`, `/plan`, `/release`, `commit-and-pr`, `github-ops`,
+`token-budget`, `session-cost-report`, `testing-mindset`, `playwright-ops`,
+and `mcp-docs-ops` to either reference the *installed* path or check the
+current project's own convention with a generic fallback. Rewrote the two
+GitHub issue form templates, which had been dotclaude-specific (an agent-name
+dropdown, a dotclaude-rules checklist) despite being installed as the user's
+personal default for every project.
+
+Added `scripts/install.py` (symlink-by-default, `--copy`/`--dry-run`/
+`--force`/`--uninstall`, user or project scope) as the actual mechanism that
+performs the install this repo has always implied but never provided. Added
+`config/pricing.json._fetched_at`/`_max_age_days` plus a staleness warning in
+`session_cost.py`'s output, so pricing is treated as a time-limited cache
+with a documented refresh procedure instead of a value that goes silently
+stale. Added `check_shipped_files_are_repo_agnostic` to
+`scripts/validate_repo.py` so this class of mistake fails CI going forward.
+See `docs/decisions/0008-config-must-be-repo-agnostic.md` and
+`docs/decisions/0009-templates-are-personal-not-github-native.md`.
