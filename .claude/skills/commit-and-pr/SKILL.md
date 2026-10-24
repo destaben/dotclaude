@@ -12,7 +12,9 @@ description: Stage, commit, push a branch, open a PR, and write the session-cost
 3. Commit with a Conventional Commits message (`feat:`, `fix:`, `docs:`,
    `refactor:`, `test:`, `chore:`) describing *why*, not a diff restatement.
 4. Push to a feature branch. **Never push to `main`. Never force-push.**
-5. Open the PR through the GitHub MCP connector (see `github-ops`), **never
+5. **Open the PR by default** — pushing alone is not the end of this skill.
+   Only skip the PR if the user explicitly asks for push-only. Open it through
+   the GitHub MCP connector (see `github-ops`), **never
    starting from a blank body** — don't write a PR body from scratch when a
    template exists. GitHub pre-fills new PRs from a template automatically
    in the web UI, but MCP/API-created PRs don't get that for free, so find
