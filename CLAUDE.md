@@ -21,6 +21,10 @@ bug-hunter, documenter, commit-and-pr). No hooks are used for this — it's a
 sequence of steps inside the commands and skills themselves, not something
 attached to the tool-call event system.
 
+## Decisions
+Put real design choices to the council via `/council`; follow the
+`council-policy` skill for when to convene it and what its verdict binds.
+
 ## Testing
 Follow the `testing-mindset` skill: reproduce bugs with a failing test
 first, test behavior and contracts not implementation, run scoped tests

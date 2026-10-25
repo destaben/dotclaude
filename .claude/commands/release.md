@@ -10,7 +10,7 @@ is a sequence of steps inside this command, not a hook on any tool-call event.
    implementation. If it fails, stop and report — don't proceed to review.
 2. **Bug hunter.** Invoke the `bug-hunter` agent on the diff. Classify every
    finding as severe or non-severe per
-   `.claude/skills/release-policy/SKILL.md`.
+   the `release-policy` skill.
 3. **Severity routing.**
    - Severe: auto-fix, then re-run step 1 and step 2. Cap this loop at 2
      passes. If still severe after 2 passes, stop and ask the user — do not
@@ -20,7 +20,7 @@ is a sequence of steps inside this command, not a hook on any tool-call event.
 4. **Documenter.** Invoke the `documenter` agent. It must complete — and any
    structural checks the current project has of its own must still pass —
    before step 5 starts.
-5. **Commit and PR.** Run `.claude/skills/commit-and-pr/SKILL.md`: stage,
+5. **Commit and PR.** Run the `commit-and-pr` skill: stage,
    commit with a conventional message, push a branch (never `main`), open the
    PR, and write or update the session-cost footer.
 

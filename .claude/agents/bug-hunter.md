@@ -34,7 +34,7 @@ one agent for both contexts, not two, so the checks never drift apart.
   output instead of skipping silently.
 
 ## Severity
-Use the definitions in `.claude/skills/release-policy/SKILL.md`. Classify every
+Use the definitions in the `release-policy` skill. Classify every
 finding as severe or non-severe and say why — don't leave it to the caller to
 infer.
 

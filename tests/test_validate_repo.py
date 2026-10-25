@@ -106,6 +106,57 @@ class ValidateRepoTest(unittest.TestCase):
             errors = validate_repo.run_all_checks(root)
             self.assertEqual(errors, [])
 
+    def _release_md(self, titles):
+        body = "\n".join(f"{i}. **{t}.** Do it." for i, t in enumerate(titles, start=1))
+        return "---\ndescription: release\n---\n" + body + "\n"
+
+    def test_release_steps_in_order_pass(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            build_minimal_valid_repo(root)
+            (root / ".claude" / "commands" / "release.md").write_text(self._release_md(
+                ["Full test suite", "Bug hunter", "Severity routing", "Documenter", "Commit and PR"]))
+            (root / "README.md").write_text(
+                "# T\n\n<!-- pipeline:start -->\n```mermaid\nflowchart TD\n"
+                "A[/plan/] --> B[planner]\nA --> C[/release/]\n```\n<!-- pipeline:end -->\n")
+            self.assertEqual(validate_repo.run_all_checks(root), [])
+
+    def test_release_step_title_without_trailing_period_still_matches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            build_minimal_valid_repo(root)
+            titles = ["Full test suite", "Bug hunter", "Severity routing", "Documenter", "Commit and PR"]
+            body = "\n".join(f"{i}. **{t}** — do it." for i, t in enumerate(titles, start=1))
+            (root / ".claude" / "commands" / "release.md").write_text("---\ndescription: r\n---\n" + body + "\n")
+            (root / "README.md").write_text(
+                "# T\n\n<!-- pipeline:start -->\n```mermaid\nflowchart TD\n"
+                "A[/plan/] --> B[planner]\nA --> C[/release/]\n```\n<!-- pipeline:end -->\n")
+            self.assertEqual(validate_repo.run_all_checks(root), [])
+
+    def test_release_steps_reordered_fail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            build_minimal_valid_repo(root)
+            (root / ".claude" / "commands" / "release.md").write_text(self._release_md(
+                ["Full test suite", "Documenter", "Bug hunter", "Severity routing", "Commit and PR"]))
+            errors = validate_repo.run_all_checks(root)
+            self.assertTrue(any("release.md: steps must be" in e for e in errors))
+
+    def test_release_step_missing_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            build_minimal_valid_repo(root)
+            (root / ".claude" / "commands" / "release.md").write_text(self._release_md(
+                ["Full test suite", "Bug hunter", "Severity routing", "Commit and PR"]))
+            errors = validate_repo.run_all_checks(root)
+            self.assertTrue(any("release.md: steps must be" in e for e in errors))
+
+    def test_repo_without_release_command_is_not_checked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            build_minimal_valid_repo(root)
+            self.assertEqual(validate_repo.run_all_checks(root), [])
+
     def test_this_repo_phrase_in_agent_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -149,6 +200,40 @@ class ValidateRepoTest(unittest.TestCase):
             )
             errors = validate_repo.run_all_checks(root)
             self.assertEqual(errors, [])
+
+    def test_shipped_council_files_are_valid_and_agnostic(self):
+        names = [
+            "council-contrarian", "council-first-principles", "council-visionary",
+            "council-outsider", "council-executor", "council-chair",
+        ]
+        agents_dir = REPO_ROOT / ".claude" / "agents"
+        for name in names:
+            text = (agents_dir / f"{name}.md").read_text(encoding="utf-8")
+            fm = text.split("---", 2)[1]
+            self.assertIn(f"name: {name}", fm)
+            self.assertRegex(fm, r"model: (haiku|sonnet)")
+            self.assertRegex(fm, r"effort: (low|medium)")
+            self.assertNotIn("Edit", fm)
+            self.assertNotIn("Write", fm)
+            self.assertNotIn("Bash", fm)
+        self.assertEqual(validate_repo.run_all_checks(REPO_ROOT), [])
+
+    def test_outsider_has_no_search_tools(self):
+        text = (REPO_ROOT / ".claude" / "agents" / "council-outsider.md").read_text(encoding="utf-8")
+        tools = [l for l in text.split("---", 2)[1].splitlines() if l.startswith("tools:")]
+        self.assertEqual(tools, ["tools: Read"])
+
+    def test_council_spawn_budget_matches_fallback(self):
+        budgets = json.loads((REPO_ROOT / "config" / "budgets.json").read_text(encoding="utf-8"))
+        n = budgets["subagent_spawn_warning"]
+        self.assertGreaterEqual(n, 6)  # a full council is 6 calls
+        skill = (REPO_ROOT / ".claude" / "skills" / "token-budget" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn(f"{n} subagent spawns", skill)
+
+    def test_shipped_files_reference_skills_by_name_not_path(self):
+        for sub in ("agents", "commands"):
+            for path in (REPO_ROOT / ".claude" / sub).glob("*.md"):
+                self.assertNotIn(".claude/skills/", path.read_text(encoding="utf-8"), path.name)
 
 
 if __name__ == "__main__":
