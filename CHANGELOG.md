@@ -3,6 +3,39 @@
 All notable changes to this repo are recorded here. Entries explain why a
 change was made, not just what changed — the diff already shows what.
 
+## 2026-10-25 — Harden what the council review flagged
+
+The council's review of earlier decisions asked for three fixes, now made.
+The PR review workflow skips drafts and cancels a superseded run on the same
+PR, since every push used to start a run and post a comment; its concurrency
+group is unique for comments that don't ask for a review, so they can't cancel
+a real one. `install.py` writes `settings.json` atomically, keeps a `.bak`,
+writes through a symlink, and refuses (touching nothing) a file that isn't
+valid JSON or whose `permissions` has the wrong shape. The validator now checks
+that `release.md` numbers its steps in the documented order, because with no
+hooks that order is the whole gate. `bug-hunter` stays on Haiku at medium
+effort: the council suggested Sonnet, declined to protect the subscription quota.
+
+## 2026-10-25 — Consolidate decision records
+
+Eleven decision records overlapped (0007 and 0011 told one story, as did
+0008-0010) and cost tokens to read. They are now four topic records, and the council's own decision lives in the
+pipeline one:
+pipeline and agents, cost and quota, portable shipped config, and tooling
+choices. Old numbers are gone; git history has the originals. Reviewing them
+with the new council also produced the follow-ups listed at the end of each
+record.
+
+## 2026-10-25 — Add a decision council
+
+Design choices had one proposer and no structured challenge. `/council` now
+runs advisors with distinct lenses in parallel (two by default, five in full
+mode) and a chair that issues the binding verdict, cheap models for the shallow lenses and Sonnet for the
+ones that need depth. A quick council (3 calls) is the default so it fits
+alongside normal work on a shared subscription; a full one (6) is for costly
+decisions. The spawn-warning budget moved from 5 to 7 so a full council
+doesn't trigger it. See `docs/decisions/0001-pipeline-and-agents.md`.
+
 ## 2026-10-17 — Make the PR review workflow actually post
 
 Every review run failed with `Could not fetch an OIDC token`: without a
@@ -38,10 +71,9 @@ non-numeric or non-positive rates in the shipped file, since
 (`opened`/`synchronize`/`reopened`), not just on an `@claude review` comment,
 and runs both `bug-hunter` and `documenter` via
 `claude_args: '--model claude-haiku-5-5 --effort low'` to keep the per-run
-cost low enough to justify firing on every push. Added
-`docs/decisions/0011-propagated-auto-pr-review.md`, which narrows (without
-superseding) `0007-pro-plan-cost-sustainability.md`'s comment-only trigger
-decision now that the cost per run is this low.
+cost low enough to justify firing on every push. Recorded in
+`docs/decisions/0002-cost-and-quota.md`, which relaxes the earlier comment-only
+trigger now that the cost per run is this low.
 
 ## 2026-10-17 — Initial scaffold
 
@@ -67,7 +99,7 @@ push. Added `.github/pull_request_template.md` and
 `commit-and-pr` and `github-ops` updated to fill them explicitly. Filled
 `config/pricing.json` with real API list prices (previously `TODO`
 placeholders). Added a sustainability review
-(`docs/decisions/0007-pro-plan-cost-sustainability.md`) of the whole
+(`docs/decisions/0002-cost-and-quota.md`) of the whole
 pipeline's model routing against a Claude Pro subscription's shared usage
 quota.
 
@@ -95,8 +127,7 @@ performs the install this repo has always implied but never provided. Added
 with a documented refresh procedure instead of a value that goes silently
 stale. Added `check_shipped_files_are_repo_agnostic` to
 `scripts/validate_repo.py` so this class of mistake fails CI going forward.
-See `docs/decisions/0008-config-must-be-repo-agnostic.md` and
-`docs/decisions/0009-templates-are-personal-not-github-native.md`.
+See `docs/decisions/0003-shipped-config-is-portable.md`.
 
 ## 2026-10-17 — Pushed to GitHub, installed, and made settings.json merge automatic
 
@@ -115,4 +146,4 @@ Replaced the one-time manual merge with `merge_settings_json()`: every
 key — on every run, not just the first, and reports `unchanged` when
 there's nothing to do. `--uninstall` now explicitly leaves `settings.json`
 alone rather than attempting to remove it. See
-`docs/decisions/0010-settings-json-is-merged-not-linked.md`.
+`docs/decisions/0003-shipped-config-is-portable.md`.

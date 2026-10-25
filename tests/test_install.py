@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import sys
 import tempfile
@@ -171,6 +173,102 @@ class MergeSettingsJsonTest(unittest.TestCase):
             action = install.merge_settings_json(self._src(), dst, dry_run=True)
             self.assertEqual(action.kind, "would-merge")
             self.assertFalse(dst.exists())
+
+    def test_malformed_json_raises_and_leaves_file_untouched(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp) / "settings.json"
+            dst.write_text("{ not json")
+            with self.assertRaises(ValueError):
+                install.merge_settings_json(self._src(), dst, dry_run=False)
+            self.assertEqual(dst.read_text(), "{ not json")
+            self.assertFalse((Path(tmp) / "settings.json.bak").exists())
+
+    def test_non_object_permissions_raises_and_leaves_file_untouched(self):
+        for bad in ('{"permissions": []}', '{"permissions": {"allow": "Read"}}'):
+            with tempfile.TemporaryDirectory() as tmp:
+                dst = Path(tmp) / "settings.json"
+                dst.write_text(bad)
+                with self.assertRaises(ValueError):
+                    install.merge_settings_json(self._src(), dst, dry_run=False)
+                self.assertEqual(dst.read_text(), bad)
+
+    def test_keeps_previous_version_as_bak_when_merging(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp) / "settings.json"
+            original = json.dumps({"theme": "dark"})
+            dst.write_text(original)
+            install.merge_settings_json(self._src(), dst, dry_run=False)
+            self.assertEqual((Path(tmp) / "settings.json.bak").read_text(), original)
+            self.assertEqual(json.loads(dst.read_text())["theme"], "dark")
+
+    def test_no_bak_and_no_temp_files_when_nothing_changes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp) / "settings.json"
+            install.merge_settings_json(self._src(), dst, dry_run=False)
+            install.merge_settings_json(self._src(), dst, dry_run=False)
+            self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()), ["settings.json"])
+
+    def test_bak_holds_only_the_latest_previous_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp) / "settings.json"
+            dst.write_text(json.dumps({"a": 1}))
+            install.merge_settings_json(self._src(), dst, dry_run=False)
+            edited = json.loads(dst.read_text())
+            edited["b"] = 2
+            edited["permissions"]["allow"].remove(edited["permissions"]["allow"][0])
+            dst.write_text(json.dumps(edited))
+            install.merge_settings_json(self._src(), dst, dry_run=False)
+            self.assertEqual(json.loads((Path(tmp) / "settings.json.bak").read_text()), edited)
+
+    def test_new_file_is_world_readable_not_0600(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp) / "settings.json"
+            install.merge_settings_json(self._src(), dst, dry_run=False)
+            self.assertEqual(dst.stat().st_mode & 0o777, 0o644)
+
+    def test_dangling_symlink_is_refused_without_creating_directories(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            link = Path(tmp) / "settings.json"
+            link.symlink_to(Path(tmp) / "missing_dir" / "real.json")
+            with self.assertRaises(ValueError):
+                install.merge_settings_json(self._src(), link, dry_run=False)
+            self.assertFalse((Path(tmp) / "missing_dir").exists())
+
+    def test_dry_run_reports_would_merge_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dst = Path(tmp) / "settings.json"
+            dst.write_text(json.dumps({"theme": "dark"}))
+            action = install.merge_settings_json(self._src(), dst, dry_run=True)
+            self.assertEqual(action.kind, "would-merge")
+            self.assertEqual(json.loads(dst.read_text()), {"theme": "dark"})
+            self.assertFalse((Path(tmp) / "settings.json.bak").exists())
+
+    def test_main_reports_os_errors_cleanly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            (target / "settings.json").mkdir()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                code = install.main(["--target", str(target), "--copy"])
+            self.assertEqual(code, 1)
+
+    def test_writes_through_a_symlinked_settings_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            real = Path(tmp) / "real.json"
+            real.write_text(json.dumps({"theme": "dark"}))
+            link = Path(tmp) / "settings.json"
+            link.symlink_to(real)
+            install.merge_settings_json(self._src(), link, dry_run=False)
+            self.assertTrue(link.is_symlink())
+            self.assertIn("permissions", json.loads(real.read_text()))
+
+    def test_main_reports_malformed_settings_and_exits_nonzero(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            (target / "settings.json").write_text("{ nope")
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                code = install.main(["--target", str(target), "--copy"])
+            self.assertEqual(code, 1)
+            self.assertEqual((target / "settings.json").read_text(), "{ nope")
 
     def test_project_scope_does_not_install_settings_json(self):
         with tempfile.TemporaryDirectory() as tmp:

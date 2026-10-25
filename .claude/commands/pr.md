@@ -3,7 +3,7 @@ description: Commit the current working tree and open a PR, without running the 
 argument-hint: (none — operates on the current working tree)
 ---
 
-Run `.claude/skills/commit-and-pr/SKILL.md` directly on the current working
+Run the `commit-and-pr` skill directly on the current working
 tree: stage, commit with a conventional message, push a branch (never `main`),
 open the PR, and write or update the session-cost footer.
 

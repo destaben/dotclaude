@@ -10,7 +10,7 @@ and a non-blocking change pipeline. Public, MIT-licensed, no secrets.
 > assume some other project has a `docs/decisions/`, a `docs/plans/`, this
 > repo's test runner, or any other dotclaude-specific structure just because
 > dotclaude itself does. `scripts/validate_repo.py` enforces this
-> automatically on every change (see `docs/decisions/0008-config-must-be-repo-agnostic.md`).
+> automatically on every change (see `docs/decisions/0003-shipped-config-is-portable.md`).
 > Only `scripts/validate_repo.py`, `tests/`, and the `docs/` folder are
 > dotclaude's own dev tooling — those are never installed anywhere.
 
@@ -39,7 +39,7 @@ python3 scripts/install.py --uninstall      # remove what a prior run installed
   is left untouched; only `permissions` (unioned) and `statusLine`/`model`
   (added only if entirely absent) come from dotclaude, and a run that
   changes nothing reports `unchanged`. See
-  `docs/decisions/0010-settings-json-is-merged-not-linked.md`.
+  `docs/decisions/0003-shipped-config-is-portable.md`.
 - The installer never overwrites a file that already differs from this
   repo's version unless you pass `--force`; it never touches files it didn't
   create itself. `--uninstall` leaves `settings.json` alone entirely (it's
@@ -58,10 +58,12 @@ Personal overrides (API keys, local-only permissions) go in that project's
 | Agent | `bug-hunter` | Security, contracts, bad-practice review (Haiku, medium) |
 | Agent | `documenter` | Updates docs after review passes (Haiku, low) |
 | Agent | `token-auditor` | On-demand context-bloat report (Haiku, low) |
+| Agent | `council-*` (contrarian, outsider, first-principles, visionary, executor, chair) | Decision advisors and the binding chair (Sonnet or Haiku) |
 | Command | `/plan` | Entry point: planner → plan for approval |
+| Command | `/council` | Decision council: quick by default, `full` on request |
 | Command | `/release` | Full pipeline: tests → bug-hunter → docs → PR |
 | Command | `/pr` | Commit and open a PR without the full pipeline |
-| Skill | `commit-and-pr`, `github-ops`, `testing-mindset`, `release-policy`, `token-budget`, `session-cost-report`, `mcp-gmail-ops`, `mcp-drive-ops`, `mcp-calendar-ops`, `mcp-docs-ops`, `playwright-ops` | See `.claude/skills/*/SKILL.md` |
+| Skill | `commit-and-pr`, `github-ops`, `testing-mindset`, `release-policy`, `council-policy`, `token-budget`, `session-cost-report`, `mcp-gmail-ops`, `mcp-drive-ops`, `mcp-calendar-ops`, `mcp-docs-ops`, `playwright-ops` | See `.claude/skills/*/SKILL.md` |
 
 See `docs/pipeline.md` for the prose walkthrough and `docs/references.md` for
 what was adapted from [awesome-copilot](https://github.com/github/awesome-copilot).
@@ -72,19 +74,19 @@ what was adapted from [awesome-copilot](https://github.com/github/awesome-copilo
 scope, see the Install section to use it in another repo) runs `bug-hunter`
 and `documenter` against a pull request — same agents and severity policy
 as `/release`, no duplicate agent (see
-`docs/decisions/0005-reuse-bug-hunter-for-ci-review.md`). It's inactive
-until you add a `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` secret.
-It runs automatically on every PR (`opened`/`synchronize`/`reopened`), using
+`docs/decisions/0001-pipeline-and-agents.md`). It's inactive
+until you add a `CLAUDE_CODE_OAUTH_TOKEN` secret.
+It runs automatically on every non-draft, same-repo PR (`opened`/`synchronize`/`reopened`/
+`ready_for_review`; a newer push cancels the run in progress), using
 `claude-haiku-5-5` at low effort to keep the per-run cost down, plus the
 `@claude review` comment and manual dispatch as a fallback — see
-`docs/decisions/0007-pro-plan-cost-sustainability.md` and
-`docs/decisions/0011-propagated-auto-pr-review.md` for why.
+`docs/decisions/0002-cost-and-quota.md` for why.
 
 The PR/issue templates are different: they're personal defaults, installed
 to `~/.claude/templates/` and used by `commit-and-pr`/`github-ops` in *any*
 project — preferring that project's own `.github/` template when it has one.
 They also happen to double as this repo's own native GitHub templates. See
-`docs/decisions/0009-templates-are-personal-not-github-native.md`.
+`docs/decisions/0003-shipped-config-is-portable.md`.
 
 ## Pipeline
 
@@ -92,6 +94,8 @@ They also happen to double as this repo's own native GitHub templates. See
 ```mermaid
 flowchart TD
     A[Change request] --> B["/plan (Sonnet, medium)"]
+    B -.->|design choice| Q["/council quick: council-contrarian, council-outsider, then council-chair. /council full adds council-first-principles, council-visionary, council-executor"]
+    Q -.-> B
     B -->|you approve| C["Implement (Haiku, high)"]
     C --> D[Scoped tests]
     D -->|fails twice| E[Escalate to Sonnet]
@@ -111,7 +115,10 @@ flowchart TD
 ```
 
 The diagram's boxes map to the `planner`, `implementer`, `bug-hunter`, and
-`documenter` agents (in that order), invoked by `/plan` and `/release`. Two
+`documenter` agents (in that order), invoked by `/plan` and `/release`.
+`/council` is the decision step: a quick council (contrarian, outsider, chair)
+by default, or a full one (adding first principles, visionary, executor),
+whose chair's verdict settles the choice (see the `council-policy` skill). Two
 more entry points sit outside the diagram: `/pr` runs the `commit-and-pr`
 skill directly, for a change you've already verified yourself and don't want
 the full `/release` pipeline for. The `token-auditor` agent runs on demand

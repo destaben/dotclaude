@@ -12,7 +12,7 @@ settings.json is special: every other file is symlinked (or copied) whole,
 but settings.json is MERGED — permissions/statusLine/model are added
 in without ever touching keys this config doesn't own (hooks, theme,
 mcpServers, ...), on every run, every time. See merge_settings_json() and
-docs/decisions/0010-settings-json-is-merged-not-linked.md.
+docs/decisions/0003-shipped-config-is-portable.md.
 
 Usage:
     python3 scripts/install.py                       # user scope -> ~/.claude
@@ -27,8 +27,10 @@ from __future__ import annotations
 import argparse
 import filecmp
 import json
+import os
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -37,7 +39,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # merge_settings_json() below, because a user's existing settings.json
 # routinely carries unrelated content (their own hooks, theme, MCP config)
 # that a whole-file overwrite would destroy. See
-# docs/decisions/0010-settings-json-is-merged-not-linked.md.
+# docs/decisions/0003-shipped-config-is-portable.md.
 #
 # (source path relative to REPO_ROOT, dest path relative to the install target)
 USER_SCOPE_ENTRIES = [
@@ -117,10 +119,63 @@ def install_one(src: Path, dst: Path, *, use_copy: bool, force: bool, dry_run: b
 
 
 def _load_json_or_empty(path: Path) -> dict:
+    """Missing file -> {}. Anything unreadable raises ValueError naming the
+    file, so a malformed settings.json is never mistaken for an empty one and
+    overwritten."""
     if not path.is_file():
         return {}
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"{path} is not valid JSON ({e}); left untouched, fix it and re-run") from e
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} must hold a JSON object at the top level; left untouched")
+    return data
+
+
+def _check_permissions_shape(path: Path, data: dict) -> None:
+    """Refuse to merge into a permissions block we'd corrupt."""
+    perms = data.get("permissions")
+    if perms is None:
+        return
+    if not isinstance(perms, dict):
+        raise ValueError(f"{path}: 'permissions' must be an object; left untouched")
+    for key in ("allow", "deny"):
+        if key in perms and not isinstance(perms[key], list):
+            raise ValueError(f"{path}: 'permissions.{key}' must be a list; left untouched")
+
+
+def _write_json_atomically(dst: Path, data: dict) -> None:
+    """Write data to dst via a temp file in the same directory and os.replace,
+    so a crash mid-write can't leave a truncated file. Keeps the previous
+    version as '<name>.bak' (one generation: each changed merge replaces it),
+    preserves its mode, and writes through a symlink instead of replacing it.
+    Crash-safe, not safe against another process writing the file in the same
+    instant."""
+    real = dst
+    if dst.is_symlink():
+        real = dst.resolve()
+        if not real.exists():
+            raise ValueError(f"{dst} is a symlink to a missing file ({real}); left untouched")
+    real.parent.mkdir(parents=True, exist_ok=True)
+    existed = real.is_file()
+    if existed:
+        shutil.copy2(real, real.with_name(real.name + ".bak"))
+    fd, tmp_name = tempfile.mkstemp(dir=real.parent, prefix=real.name + ".", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        if existed:
+            shutil.copymode(real, tmp)
+        else:
+            os.chmod(tmp, 0o644)  # mkstemp makes it 0600
+        os.replace(tmp, real)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def merge_settings_json(src: Path, dst: Path, *, dry_run: bool) -> Action:
@@ -133,8 +188,13 @@ def merge_settings_json(src: Path, dst: Path, *, dry_run: bool) -> Action:
     - statusLine: set only if entirely absent. If something else is already
       configured, leave it and note the mismatch instead of guessing.
     - model: set only if entirely absent — an existing choice always wins.
+
+    Raises ValueError, writing nothing, if the existing file is not valid
+    JSON or its permissions block has an unexpected shape. A changed file is
+    written atomically and the previous version kept as settings.json.bak.
     """
     original = _load_json_or_empty(dst)
+    _check_permissions_shape(dst, original)
     merged = json.loads(json.dumps(original))  # deep copy, so `original` stays the baseline
     src_data = _load_json_or_empty(src)
     notes: list[str] = []
@@ -167,10 +227,7 @@ def merge_settings_json(src: Path, dst: Path, *, dry_run: bool) -> Action:
     if dry_run:
         return Action(src, dst, "would-merge", notes=notes)
 
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    with open(dst, "w", encoding="utf-8") as f:
-        json.dump(merged, f, indent=2)
-        f.write("\n")
+    _write_json_atomically(dst, merged)
     return Action(src, dst, "merged", notes=notes)
 
 
@@ -293,7 +350,13 @@ def main(argv=None) -> int:
     else:
         actions = install_file_entries(target, args.mode, use_copy=args.copy, force=args.force, dry_run=args.dry_run)
         actions += install_dir_entries(target, args.mode, use_copy=args.copy, force=args.force, dry_run=args.dry_run)
-        actions += install_settings_json(target, args.mode, dry_run=args.dry_run)
+        try:
+            actions += install_settings_json(target, args.mode, dry_run=args.dry_run)
+        except (ValueError, OSError, RuntimeError) as e:
+            for action in actions:
+                print(action)
+            print(f"\nERROR: settings.json was not merged: {e}", file=sys.stderr)
+            return 1
 
     for action in actions:
         print(action)

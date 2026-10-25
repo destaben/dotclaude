@@ -12,7 +12,7 @@ and `context_tokens_warning` from a budgets file, checked in this order:
    `~/.claude/dotclaude-scripts/config/budgets.json` (installed from your
    dotclaude config).
 3. Otherwise, fall back to reasonable defaults (e.g. 150k/400k task tokens,
-   5 subagent spawns, 120k context tokens) and say you're using built-in
+   7 subagent spawns, 120k context tokens) and say you're using built-in
    defaults rather than a configured file.
 These are starting points — adjust them in whichever file you're reading
 from as actual usage patterns become clear; don't hardcode numbers here that

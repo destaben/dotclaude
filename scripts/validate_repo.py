@@ -28,6 +28,19 @@ REPO_SPECIFIC_PATTERNS = (
 )
 
 
+# The release gate is only the documented order of these steps (there are no
+# hooks), so the order itself is a checked contract: release.md must number
+# its steps 1..N with these titles, in this order.
+REQUIRED_RELEASE_STEPS = (
+    "full test suite",
+    "bug hunter",
+    "severity routing",
+    "documenter",
+    "commit and pr",
+)
+RELEASE_STEP_RE = re.compile(r"^(\d+)\. \*\*(.+?)\.?\*\*", re.MULTILINE)
+
+
 def fail(errors: list, message: str) -> None:
     errors.append(message)
 
@@ -131,6 +144,18 @@ def check_settings_no_hooks(errors: list, repo_root: Path) -> None:
         fail(errors, ".claude/settings.json must not contain a 'hooks' key")
 
 
+def check_release_step_order(errors: list, repo_root: Path) -> None:
+    release = repo_root / ".claude" / "commands" / "release.md"
+    if not release.is_file():
+        return  # a repo without a release command has no gate to check
+    steps = [(int(n), title.strip().lower()) for n, title in RELEASE_STEP_RE.findall(release.read_text(encoding="utf-8"))]
+    expected = list(enumerate(REQUIRED_RELEASE_STEPS, start=1))
+    if steps != expected:
+        found = ", ".join(f"{n}. {title}" for n, title in steps) or "none"
+        wanted = ", ".join(f"{n}. {title}" for n, title in expected)
+        fail(errors, f".claude/commands/release.md: steps must be numbered and ordered as [{wanted}]; found [{found}]")
+
+
 def check_claude_md_length(errors: list, repo_root: Path) -> None:
     claude_md = repo_root / "CLAUDE.md"
     if not claude_md.is_file():
@@ -213,6 +238,7 @@ def run_all_checks(repo_root: Path) -> list:
     command_names = check_commands(errors, repo_root)
     check_skills(errors, repo_root)
     check_settings_no_hooks(errors, repo_root)
+    check_release_step_order(errors, repo_root)
     check_claude_md_length(errors, repo_root)
     check_readme_pipeline(errors, repo_root, agent_names, command_names)
     check_no_secrets(errors, repo_root)

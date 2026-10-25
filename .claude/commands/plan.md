@@ -10,3 +10,8 @@ it has one, or presents it directly otherwise; either way it does not touch
 any other file. Once it returns, show the plan summary and wait for explicit
 approval before any implementation work starts. If $ARGUMENTS is empty, ask what
 change to plan for instead of guessing.
+
+If the plan turns on a choice between real alternatives that is costly to
+reverse, run `/council` on that choice before presenting the plan, per the
+`council-policy` skill, and include its verdict in the summary. Most plans
+don't need one.
