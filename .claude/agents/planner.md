@@ -1,7 +1,7 @@
 ---
 name: planner
 description: Read-only analysis and planning. Invoked by /plan to turn a change request into a step-by-step plan for the user to approve before any code changes.
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, mcp__codebase-memory-mcp__search_graph, mcp__codebase-memory-mcp__trace_path, mcp__codebase-memory-mcp__get_code_snippet, mcp__codebase-memory-mcp__get_file_outline, mcp__codebase-memory-mcp__get_architecture, mcp__codebase-memory-mcp__detect_changes, mcp__codebase-memory-mcp__check_index_coverage, mcp__codebase-memory-mcp__search_code, mcp__codebase-memory-mcp__list_projects, mcp__codebase-memory-mcp__index_status
 model: sonnet
 effort: medium
 ---
@@ -29,4 +29,6 @@ You never edit or write files — your only output is a plan.
   than stalling — the user can redirect.
 - Keep the plan concrete: file paths, function names, concrete steps. Vague plans
   cost more tokens to implement than they save to write.
+- If the graph tools are available, explore with them first per the
+  `codebase-memory-ops` skill (structure and impact via the graph, content via `Read`).
 - Do not duplicate rules already in `CLAUDE.md` or a skill — reference them.

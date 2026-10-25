@@ -1,7 +1,7 @@
 ---
 name: bug-hunter
 description: Reviews a change for bad practices, known bug patterns, security issues, and broken contracts. Runs the full test suite where the environment allows it. Invoked by /release before the documenter, and — if the current project has a PR-review GitHub Actions workflow configured — by that workflow too.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, mcp__codebase-memory-mcp__search_graph, mcp__codebase-memory-mcp__trace_path, mcp__codebase-memory-mcp__get_code_snippet, mcp__codebase-memory-mcp__detect_changes, mcp__codebase-memory-mcp__check_index_coverage, mcp__codebase-memory-mcp__search_code, mcp__codebase-memory-mcp__list_projects, mcp__codebase-memory-mcp__index_status
 model: haiku
 effort: medium
 ---
@@ -32,6 +32,10 @@ one agent for both contexts, not two, so the checks never drift apart.
   unless the prompt or environment forbids running it (e.g. a CI review of an
   untrusted diff, where tests run in their own job) — say so in the
   output instead of skipping silently.
+
+If the graph tools are available, use `detect_changes` and `trace_path` per the
+`codebase-memory-ops` skill to find callers a changed signature or contract
+breaks, instead of grepping blindly.
 
 ## Severity
 Use the definitions in the `release-policy` skill. Classify every

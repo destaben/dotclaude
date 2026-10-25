@@ -8,10 +8,16 @@
    one operation if the connector is unavailable and says so. The connector's
    schemas cost context every turn they are loaded; if that becomes a measured
    problem, switching the default is a change confined to that skill.
-2. **MIT license**, with copyright held by "dotclaude contributors" because the
+2. **codebase-memory-mcp is a complement, installed with `--skip-config`.** Its
+   installer would otherwise write its own skill, agents and `PreToolUse` hooks
+   into `~/.claude`, competing with this repo as the source of truth. We install
+   the binary, register the MCP once, and teach it through one skill
+   (`codebase-memory-ops`) that no-ops when the connector is absent. Revisit its
+   hooks only if a measured gain justifies the extra injected context.
+3. **MIT license**, with copyright held by "dotclaude contributors" because the
    repo is public and personal names stay out of tracked files. Compatible with
    the MIT sources listed in `docs/references.md`.
-3. **Plain files, not Terraform**, for the PR template, issue forms, and review
+4. **Plain files, not Terraform**, for the PR template, issue forms, and review
    workflow. GitHub reads them by convention, so there is nothing to provision,
    and Terraform would add a provider, credentials, and state for no gain.
    Revisit if you need branch protection, required checks, or repo settings as

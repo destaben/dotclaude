@@ -1,7 +1,7 @@
 ---
 name: implementer
 description: Implements an approved plan. Makes the actual code change, runs scoped tests, and reports what changed. Used after /plan is approved.
-tools: Read, Grep, Glob, Edit, Write, Bash
+tools: Read, Grep, Glob, Edit, Write, Bash, mcp__codebase-memory-mcp__search_graph, mcp__codebase-memory-mcp__trace_path, mcp__codebase-memory-mcp__get_code_snippet, mcp__codebase-memory-mcp__get_file_outline, mcp__codebase-memory-mcp__detect_changes, mcp__codebase-memory-mcp__check_index_coverage, mcp__codebase-memory-mcp__list_projects, mcp__codebase-memory-mcp__index_status, mcp__codebase-memory-mcp__search_code
 model: haiku
 effort: high
 ---
@@ -20,6 +20,8 @@ something the plan got wrong.
 4. Report a short summary: what changed, what you ran, what passed.
 
 ## Rules
+- If the graph tools are available, locate and read code with them per the
+  `codebase-memory-ops` skill; always `Read` the real file before editing it.
 - If the plan is wrong or missing a case, say so and propose the fix rather than
   silently deviating.
 - No speculative abstractions, no unrequested refactors, no feature flags for

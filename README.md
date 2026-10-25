@@ -63,7 +63,7 @@ Personal overrides (API keys, local-only permissions) go in that project's
 | Command | `/council` | Decision council: quick by default, `full` on request |
 | Command | `/release` | Full pipeline: tests → bug-hunter → docs → PR |
 | Command | `/pr` | Commit and open a PR without the full pipeline |
-| Skill | `commit-and-pr`, `github-ops`, `testing-mindset`, `release-policy`, `council-policy`, `token-budget`, `session-cost-report`, `mcp-gmail-ops`, `mcp-drive-ops`, `mcp-calendar-ops`, `mcp-docs-ops`, `playwright-ops` | See `.claude/skills/*/SKILL.md` |
+| Skill | `commit-and-pr`, `github-ops`, `testing-mindset`, `release-policy`, `council-policy`, `token-budget`, `session-cost-report`, `mcp-gmail-ops`, `mcp-drive-ops`, `mcp-calendar-ops`, `mcp-docs-ops`, `playwright-ops`, `codebase-memory-ops` | See `.claude/skills/*/SKILL.md` |
 
 See `docs/pipeline.md` for the prose walkthrough and `docs/references.md` for
 what was adapted from [awesome-copilot](https://github.com/github/awesome-copilot).
@@ -136,6 +136,8 @@ inside `/release` itself.
 - Keep `CLAUDE.md` under 150 lines; put detail in the skill that owns it.
 - Read files with `offset`/`limit`; delegate MCP-heavy or exploratory work to
   a Haiku subagent; run `/clear` between unrelated tasks.
+- Explore code graph-first when the `codebase-memory-mcp` tools are available
+  (see the `codebase-memory-ops` skill).
 - Enable only the MCP connectors a given project actually needs.
 - `scripts/validate_repo.py` enforces the structural rules above on every PR
   (advisory, via `.github/workflows/docs-check.yml` — it never blocks local

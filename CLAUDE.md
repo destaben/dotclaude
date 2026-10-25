@@ -43,6 +43,8 @@ bug.
 ## Token rules
 - Read files with `offset`/`limit` instead of loading whole files when you
   only need a part of them.
+- When the `codebase-memory-mcp` tools are available, explore code graph-first
+  per the `codebase-memory-ops` skill before reading or grepping files.
 - Delegate MCP-heavy or exploratory work to a Haiku subagent so raw tool
   output stays out of the main context.
 - Run `/clear` between unrelated tasks.

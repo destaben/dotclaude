@@ -3,6 +3,18 @@
 All notable changes to this repo are recorded here. Entries explain why a
 change was made, not just what changed — the diff already shows what.
 
+## 2026-10-25 — Use codebase-memory-mcp graph-first
+
+Added a `codebase-memory-ops` skill so exploration goes through the code graph
+(search, snippets, callers, change impact) before whole-file reads, which is
+faster and cheaper. It is a complement, not a replacement: the skill applies only
+when the connector is present and falls back to `Read`/`Grep` otherwise, keeping
+the shipped config portable. `planner`, `implementer` and `bug-hunter` get the
+read-only graph tools and a one-line pointer; the read-only tools are
+pre-allowed, while indexing, delete, ADR writes and trace ingestion stay behind
+a prompt. The MCP was installed with `--skip-config`, so this repo
+stays the single source of truth for skills, agents and hooks.
+
 ## 2026-10-25 — Harden what the council review flagged
 
 The council's review of earlier decisions asked for three fixes, now made.
