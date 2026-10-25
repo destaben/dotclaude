@@ -14,9 +14,11 @@ tokens; reading whole files to find the same thing costs several times more.
 Use it for **structure**, and keep `Read`/`Grep` for **content**.
 
 ## Workflow
-1. **Check the index once per project.** `list_projects` (or `index_status`);
-   if the project is missing, run `index_repository` with `async: true`, then
-   `status: true` until it finishes. Never block on a large synchronous index.
+1. **Check the index once per project.** `list_projects` (or `index_status`).
+   If the project is missing, the main session indexes it with `index_repository`
+   (`async: true`, then `status: true` until it finishes; never block on a large
+   synchronous index) — this call prompts for approval. Subagents only check:
+   if the project is unindexed they fall back to `Grep`/`Read` and say so.
 2. **Orient** with `get_architecture` (or `get_graph_schema`) instead of
    listing directories and opening files.
 3. **Locate** with `search_graph` (symbol/semantic) or `search_code` (text) with

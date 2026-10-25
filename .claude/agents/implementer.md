@@ -1,7 +1,7 @@
 ---
 name: implementer
 description: Implements an approved plan. Makes the actual code change, runs scoped tests, and reports what changed. Used after /plan is approved.
-tools: Read, Grep, Glob, Edit, Write, Bash, mcp__codebase-memory-mcp__search_graph, mcp__codebase-memory-mcp__trace_path, mcp__codebase-memory-mcp__get_code_snippet, mcp__codebase-memory-mcp__get_file_outline, mcp__codebase-memory-mcp__detect_changes, mcp__codebase-memory-mcp__check_index_coverage
+tools: Read, Grep, Glob, Edit, Write, Bash, mcp__codebase-memory-mcp__search_graph, mcp__codebase-memory-mcp__trace_path, mcp__codebase-memory-mcp__get_code_snippet, mcp__codebase-memory-mcp__get_file_outline, mcp__codebase-memory-mcp__detect_changes, mcp__codebase-memory-mcp__check_index_coverage, mcp__codebase-memory-mcp__list_projects, mcp__codebase-memory-mcp__index_status, mcp__codebase-memory-mcp__search_code
 model: haiku
 effort: high
 ---

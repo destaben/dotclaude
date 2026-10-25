@@ -136,6 +136,8 @@ inside `/release` itself.
 - Keep `CLAUDE.md` under 150 lines; put detail in the skill that owns it.
 - Read files with `offset`/`limit`; delegate MCP-heavy or exploratory work to
   a Haiku subagent; run `/clear` between unrelated tasks.
+- Explore code graph-first when the `codebase-memory-mcp` tools are available
+  (see the `codebase-memory-ops` skill).
 - Enable only the MCP connectors a given project actually needs.
 - `scripts/validate_repo.py` enforces the structural rules above on every PR
   (advisory, via `.github/workflows/docs-check.yml` — it never blocks local

@@ -1,7 +1,7 @@
 ---
 name: bug-hunter
 description: Reviews a change for bad practices, known bug patterns, security issues, and broken contracts. Runs the full test suite where the environment allows it. Invoked by /release before the documenter, and — if the current project has a PR-review GitHub Actions workflow configured — by that workflow too.
-tools: Read, Grep, Glob, Bash, mcp__codebase-memory-mcp__search_graph, mcp__codebase-memory-mcp__trace_path, mcp__codebase-memory-mcp__get_code_snippet, mcp__codebase-memory-mcp__detect_changes, mcp__codebase-memory-mcp__check_index_coverage, mcp__codebase-memory-mcp__search_code
+tools: Read, Grep, Glob, Bash, mcp__codebase-memory-mcp__search_graph, mcp__codebase-memory-mcp__trace_path, mcp__codebase-memory-mcp__get_code_snippet, mcp__codebase-memory-mcp__detect_changes, mcp__codebase-memory-mcp__check_index_coverage, mcp__codebase-memory-mcp__search_code, mcp__codebase-memory-mcp__list_projects, mcp__codebase-memory-mcp__index_status
 model: haiku
 effort: medium
 ---
