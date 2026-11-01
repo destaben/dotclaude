@@ -7,8 +7,9 @@ change was made, not just what changed — the diff already shows what.
 
 Replaced the `playwright-ops` skill with `browser-ops`, which drives the
 `agent-browser` CLI through Bash instead of the Playwright MCP connector. Its
-accessibility-tree snapshots with short refs cost far fewer tokens than
-Playwright's page snapshots, and a CLI needs no connector configured. The
+accessibility-tree snapshots with short refs are expected to cost fewer tokens
+than Playwright's page snapshots (not yet measured), and a CLI needs no
+connector configured. The
 guidance to run browser work in a subagent and prefer text over screenshots is
 kept; a named session per task is added so agents don't share one browser.
 
