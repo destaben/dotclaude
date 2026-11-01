@@ -3,6 +3,18 @@
 All notable changes to this repo are recorded here. Entries explain why a
 change was made, not just what changed — the diff already shows what.
 
+## 2026-11-01 — Browser automation via agent-browser
+
+Replaced the `playwright-ops` skill with `browser-ops`, which drives the
+`agent-browser` CLI through Bash instead of the Playwright MCP connector. Its
+accessibility-tree snapshots with short refs are expected to cost fewer tokens
+than Playwright's page snapshots (not yet measured), and a CLI needs no
+connector configured. The guidance to run browser work in a subagent and prefer
+text over screenshots is kept; a unique named session per task is added so
+agents don't share one browser. The guide's `session id` example is not used
+because it yields one id per worktree and relies on an exported variable that
+doesn't survive between Bash calls.
+
 ## 2026-10-25 — Use codebase-memory-mcp graph-first
 
 Added a `codebase-memory-ops` skill so exploration goes through the code graph

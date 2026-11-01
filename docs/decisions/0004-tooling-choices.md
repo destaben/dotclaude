@@ -1,6 +1,6 @@
 # 0004 — Tooling choices
 
-- Date: 2026-10-25 (consolidates the former 0003, 0004, and 0006)
+- Date: 2026-10-25 (consolidates the former 0003, 0004, and 0006); item 5 added 2026-11-01
 - Status: accepted; the license awaits your final confirmation
 
 1. **GitHub MCP connector by default, not `gh`.** Per your instruction, as
@@ -22,3 +22,11 @@
    and Terraform would add a provider, credentials, and state for no gain.
    Revisit if you need branch protection, required checks, or repo settings as
    code, or to roll the same files out across many repos.
+5. **agent-browser CLI, not the Playwright MCP connector, for browser work.**
+   The `browser-ops` skill drives the CLI through Bash from a subagent, so the
+   connector's tool schemas stay out of every turn's context and page output
+   stays out of the main conversation. Its compact `@eN` snapshot refs are
+   expected to cost fewer tokens than Playwright's page snapshots; that is not
+   measured yet. A CLI also needs no connector configured. The version is
+   pinned and bumped deliberately. If the measured cost is no better, switching
+   back is a change confined to that skill.
