@@ -9,9 +9,11 @@ Replaced the `playwright-ops` skill with `browser-ops`, which drives the
 `agent-browser` CLI through Bash instead of the Playwright MCP connector. Its
 accessibility-tree snapshots with short refs are expected to cost fewer tokens
 than Playwright's page snapshots (not yet measured), and a CLI needs no
-connector configured. The
-guidance to run browser work in a subagent and prefer text over screenshots is
-kept; a named session per task is added so agents don't share one browser.
+connector configured. The guidance to run browser work in a subagent and prefer
+text over screenshots is kept; a unique named session per task is added so
+agents don't share one browser. The guide's `session id` example is not used
+because it yields one id per worktree and relies on an exported variable that
+doesn't survive between Bash calls.
 
 ## 2026-10-25 — Use codebase-memory-mcp graph-first
 
