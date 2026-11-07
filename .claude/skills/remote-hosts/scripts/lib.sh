@@ -40,19 +40,20 @@ shell_quote() {
 # "curl -u user:pass", "mysql -pSECRET", and NAME=value / NAME: value for password, passwd,
 # passphrase, pass, pwd, token, secret, auth, cookie, session, credentials and any NAME_KEY
 # (including prefixed names such as DB_PASSWORD or suffixed ones such as TOKEN_FILE). A value is
-# either one bare word or a quoted string that may contain spaces ("correct horse battery").
+# either one bare run of non-space characters (commas included) or a quoted string that may
+# contain spaces ("correct horse battery"); the same holds for `-u` and mysql `-p` forms.
 # Deliberate non-goal: an UNQUOTED value with spaces (PASSWORD=correct horse) is not a single value
 # in shell/env semantics, only the first word is the value, so only that word is redacted.
 # Deliberate non-goal: "mysql -p secret" (with a space) is NOT a password: mysql then prompts
 # and treats "secret" as the database name, so redacting it would only hide a diagnostic.
 redact() {
   perl -pe '
-    my $v = q{(?:"[^"]*"|\x27[^\x27]*\x27|[^\s,"\x27]+)};
     s{(://)\S*@}{$1}g;
     s{(?i)(authorization["\x27]?\s*[=:]\s*).*}{$1REDACTED}g;
-    s{(?i)\b(bearer|basic)\s+(?:(?=[A-Za-z0-9._~+/=-]*[0-9._~+/=-])[A-Za-z0-9._~+/=-]{8,}|[A-Za-z0-9._~+/=-]{20,})}{$1 REDACTED}g;
+    s{(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}}{Bearer REDACTED}g;
+    s{(?i)\bbasic\s+(?:(?=[A-Za-z0-9._~+/=-]*[0-9._~+/=-])[A-Za-z0-9._~+/=-]{8,}|[A-Za-z0-9._~+/=-]{20,})}{Basic REDACTED}g;
     s{(?i)(--?(?:password|passwd|passphrase|pass|pwd|token|secret|api-?key|access-?key)(?:\s+|=))(?!--[A-Za-z])(?:"[^"]*"|\x27[^\x27]*\x27|\S+)}{$1REDACTED}g;
-    s{(?i)(\s-u\s+)[^\s:]+:\S+}{$1REDACTED}g;
-    s{(?i)(\bmysql\w*\b[^\n]*?\s)-p\S+}{$1-pREDACTED}g;
-    s{(?i)((?:(?:password|passwd|passphrase|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|credentials?)(?:[_-][A-Za-z0-9_-]*)?|pass|pwd|auth|cookie|session(?:[_-]?(?:id|token|key))?|[A-Za-z0-9]+[_-]key)["\x27]?\s*[=:]\s*)(?:"[^"]*"|\x27[^\x27]*\x27|[^\s,"\x27]+)}{$1REDACTED}g'
+    s{(?i)(\s-u\s+)(?:"[^"]*"|\x27[^\x27]*\x27|[^\s:]+:\S+)}{$1REDACTED}g;
+    s{(?i)(\bmysql\w*\b[^\n]*?\s)-p(?:"[^"]*"|\x27[^\x27]*\x27|\S+)}{$1-pREDACTED}g;
+    s{(?i)((?:(?:password|passwd|passphrase|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|credentials?)(?:[_-][A-Za-z0-9_-]*)?|pass|pwd|auth|cookie|session(?:[_-]?(?:id|token|key))?|[A-Za-z0-9]+[_-]key)["\x27]?\s*[=:]\s*)(?:"[^"]*"|\x27[^\x27]*\x27|[^\s"\x27]+)}{$1REDACTED}g'
 }

@@ -18,7 +18,7 @@ prefer changing the stack through its repo and deploy scripts. After any change
 or discovery, update the vault docs in the same session.
 Refresh facts with `scripts/inventory.sh <alias> ~/homelab-vault/raw` (never on a printer host
 unless `scripts/print-state.sh` exits 0, see the printers section)
-(read-only; credentials are redacted best-effort, remote commands run under a 90 s timeout, and the per-host output directory ignores itself in git) and fix any drift in the docs.
+(read-only; credentials are redacted best-effort, remote commands run under a 90 s timeout when the target has GNU `timeout` (otherwise unbounded, with a note), and the per-host output directory ignores itself in git) and fix any drift in the docs.
 If the vault is missing, say so and offer to rebuild it with `inventory.sh`.
 
 ## Conventions
@@ -105,6 +105,8 @@ Recorded so a reviewer does not re-raise them as defects:
   point at a parent directory.
 - **An unquoted value with spaces** (`PASSWORD=correct horse`) only has its first word redacted,
   matching shell/env semantics; quote it to redact the whole string.
+- **The `*.raw`/`*.new` cleanup trap** only touches files with those names inside the per-alias output
+  directory this script owns; they are its own temporary files, so deleting leftovers is intended.
 - **Alias validation reads `~/.ssh/config` and its `Include` files**; hosts defined only
   through other mechanisms must be added to the config to be usable. That restriction is
   deliberate: it is what prevents option injection through the alias argument.

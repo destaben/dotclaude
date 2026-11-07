@@ -4,6 +4,7 @@
 # Usage: probe.sh <alias> [alias...]   (never sends a password)
 # shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
+[ "$#" -gt 0 ] || { echo "usage: probe.sh <alias> [alias...]" >&2; exit 2; }
 rc=0
 for h in "$@"; do
   echo "=== $h"
@@ -16,7 +17,10 @@ for h in "$@"; do
     echo "  port $port: not checked (nc not installed); the ssh result below is authoritative"
   else
     if nc -z -w 3 -- "$host" "$port" >/dev/null 2>&1; then echo "  port $port: open"; else echo "  port $port: CLOSED/unreachable"; fi
-    echo "  banner: $(nc -w 3 -- "$host" "$port" </dev/null 2>/dev/null | head -1)"
+    # The banner comes from the device: show it only if it is a well-formed SSH identification
+    # string (printable, bounded), never as free text that could carry instructions.
+    banner=$(nc -w 3 -- "$host" "$port" </dev/null 2>/dev/null | head -1 | tr -cd '[:print:]' | cut -c1-80)
+    case "$banner" in SSH-[0-9]*) echo "  banner: $banner" ;; *) echo "  banner: (not an SSH identification string; not shown)" ;; esac
   fi
   out=$(ssh -n -v -T -o BatchMode=yes -o ConnectTimeout=5 -- "$h" true 2>&1)
   echo "$out" | grep -E "Authentications that can continue|Offering public key|Server accepts key|Authenticated to|Permission denied" | sed 's/^/  /'
