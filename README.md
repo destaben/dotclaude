@@ -134,7 +134,7 @@ inside `/release` itself.
 
 ## Token efficiency
 
-- Keep `CLAUDE.md` under 150 lines; put detail in the skill that owns it.
+- Keep `CLAUDE.md` at most 150 lines; put detail in the skill that owns it.
 - Read files with `offset`/`limit`; delegate MCP-heavy or exploratory work to
   a Haiku subagent; run `/clear` between unrelated tasks.
 - Explore code graph-first when the `codebase-memory-mcp` tools are available

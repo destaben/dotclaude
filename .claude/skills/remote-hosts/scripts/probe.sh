@@ -23,6 +23,9 @@ for h in "$@"; do
     if nc -z -w 3 -- "$host" "$port" >/dev/null 2>&1; then echo "  port $port: open"; else echo "  port $port: CLOSED/unreachable"; fi
     # The banner comes from the device, so it is untrusted text and is never echoed. It is mapped to
     # a fixed vocabulary: a known server family plus a version made of digits, or a generic label.
+    if ! command -v perl >/dev/null 2>&1; then
+      echo "  banner: not read (perl is needed for a hard time limit on the read)"
+    else
     raw=$(bounded 4 nc -w 3 -- "$host" "$port" </dev/null 2>/dev/null | head -c 120 | head -1 | tr -cd '[:print:]')
     case "$raw" in
       SSH-2.0-OpenSSH_[0-9]*) banner="OpenSSH $(printf '%s' "$raw" | sed -n 's/^SSH-2\.0-OpenSSH_\([0-9][0-9.]*\(p[0-9][0-9]*\)\{0,1\}\).*/\1/p')" ;;
@@ -31,6 +34,7 @@ for h in "$@"; do
       *) banner="(not an SSH identification string)" ;;
     esac
     echo "  banner: $banner"
+    fi
   fi
   # The verdict comes from ssh's exit status only; nothing the device sends is parsed for it or
   # echoed. From the verbose log we extract just the names of the auth methods the server offers,

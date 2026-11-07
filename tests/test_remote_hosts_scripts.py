@@ -277,6 +277,13 @@ class InventoryTests(StubSshCase):
         self.assertIn("escape", text)
         self.assertLessEqual(max(len(line) for line in text.splitlines()), 1000)
 
+    def test_error_files_carry_the_marker_and_carriage_returns_are_stripped(self):
+        self.run_inventory("fail")
+        err = (self.out / "box" / "os.err").read_text()
+        self.assertTrue(err.startswith("# UNTRUSTED DEVICE OUTPUT"))
+        out = subprocess.run(["sh", "-c", f". {SCRIPTS}/lib.sh; sanitize_text"], input="a\rb\n", capture_output=True, text=True).stdout
+        self.assertEqual(out, "ab\n")
+
     def test_remote_timeout_counts_as_failed(self):
         r = self.run_inventory("timeout")
         self.assertEqual(r.returncode, 1)
@@ -406,7 +413,50 @@ class PrinterGuardTests(StubSshCase):
         finally:
             os.chmod(env["REMOTE_HOSTS_PRINTERS"], 0o600)
         self.assertEqual(r.returncode, 3)
-        self.assertIn("not readable", r.stderr)
+        self.assertIn("not a readable file", r.stderr)
+
+    def test_a_listed_printer_without_an_address_fails_closed(self):
+        env = self.conf("")
+        Path(env["REMOTE_HOSTS_PRINTERS"]).write_text("box\n")
+        r = self.run_script("probe.sh", env, "box")
+        self.assertEqual(r.returncode, 3)
+        self.assertIn("without a Moonraker address", r.stderr)
+
+    def test_a_directory_instead_of_a_config_file_fails_closed(self):
+        env = self.conf("127.0.0.1:1")
+        path = Path(env["REMOTE_HOSTS_PRINTERS"])
+        path.unlink()
+        path.mkdir()
+        r = self.run_script("probe.sh", env, "box")
+        self.assertEqual(r.returncode, 3)
+        self.assertIn("not a readable file", r.stderr)
+
+    def test_inventory_stops_when_a_print_starts_in_the_middle_of_the_run(self):
+        calls = {"n": 0}
+        body = {True: b'{"result":{"status":{"print_stats":{"state":"printing"},"display_status":{"progress":0.1}}}}',
+                False: b'{"result":{"status":{"print_stats":{"state":"standby"},"display_status":{"progress":0}}}}'}
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                calls["n"] += 1
+                data = body[calls["n"] > 3]     # idle for the first three checks, then a print starts
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *a):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(lambda: (server.shutdown(), server.server_close()))
+        env = self.conf(f"127.0.0.1:{server.server_port}")
+        r = self.run_script("inventory.sh", env, "box", str(self.out))
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        self.assertIn("stopped early", r.stderr)
+        done = sorted(p.name for p in (self.out / "box").glob("*.txt"))
+        self.assertTrue(0 < len(done) < 10, done)
 
     def test_guard_exit_code_outranks_a_later_refused_alias(self):
         env = self.conf(f"127.0.0.1:{self.serve('printing')}")
@@ -437,7 +487,7 @@ class ProbeTests(StubSshCase):
     def test_missing_nc_is_reported_as_not_checked_not_as_closed(self):
         tools = Path(self.tmp.name, "tools")
         tools.mkdir()
-        for name in ("sh", "dirname", "awk", "grep", "sed", "head", "cat"):
+        for name in ("sh", "dirname", "awk", "grep", "sed", "head", "cat", "tr", "sort", "cut", "perl"):
             target = shutil.which(name)
             if target:
                 (tools / name).symlink_to(target)

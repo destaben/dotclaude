@@ -39,26 +39,28 @@ shell_quote() {
 # printer_guard <alias>: if the alias is a printer, require print-state.sh to report it idle before
 # any ssh. Returns 3 (and explains) otherwise. The mapping file has lines "<alias> <host[:port]>"
 # (Moonraker address) and defaults to ${HOMELAB_VAULT:-$HOME/homelab-vault}/config/printers.conf
-# (override: REMOTE_HOSTS_PRINTERS). An alias counts as a printer if it is listed, OR if it
-# resolves (ssh -G) to the same host name as a listed alias or as a listed Moonraker address, so a
-# second alias for the same machine is covered too. No file: no guard. A file that exists but cannot
-# be read fails closed. REMOTE_HOSTS_FORCE=1 bypasses it; it is a safety net against mistakes and
-# forgetting, not a barrier against a deliberate bypass: SKILL.md says it is set only after the user
-# agrees.
+# (override: REMOTE_HOSTS_PRINTERS). An alias counts as a printer if it is listed, OR if its
+# configured HostName (as `ssh -G` reports it, compared literally, no DNS lookup) equals the HostName
+# of a listed alias or the host part of a listed Moonraker address. No file: no guard. Everything
+# else fails closed: a path that exists but is not a readable regular file, or a listed printer
+# without a Moonraker address, is refused. REMOTE_HOSTS_FORCE=1 bypasses it; it is a safety net
+# against mistakes and forgetting, not a barrier against a deliberate bypass: SKILL.md says it is
+# set only after the user agrees.
 printer_guard() {
   cfg=${REMOTE_HOSTS_PRINTERS:-${HOMELAB_VAULT:-$HOME/homelab-vault}/config/printers.conf}
   [ -e "$cfg" ] || return 0
-  if [ ! -r "$cfg" ]; then echo "refused: $cfg exists but is not readable, so the printer guard cannot be evaluated" >&2; return 3; fi
+  if [ ! -f "$cfg" ] || [ ! -r "$cfg" ]; then echo "refused: $cfg exists but is not a readable file, so the printer guard cannot be evaluated" >&2; return 3; fi
   want=$(ssh -n -G -- "$1" 2>/dev/null | awk '$1=="hostname"{print $2; exit}')
-  target=""
+  target=""; matched=0
   while read -r a t _; do
     case "$a" in ''|'#'*) continue ;; esac
     other=$(ssh -n -G -- "$a" 2>/dev/null | awk '$1=="hostname"{print $2; exit}')
     thost=${t%:[0-9]*}
-    if [ "$a" = "$1" ] || { [ -n "$want" ] && { [ "$want" = "$other" ] || [ "$want" = "$thost" ]; }; }; then target=$t; break; fi
+    if [ "$a" = "$1" ] || { [ -n "$want" ] && { [ "$want" = "$other" ] || { [ -n "$thost" ] && [ "$want" = "$thost" ]; }; }; }; then target=$t; matched=1; break; fi
   done < "$cfg"
-  [ -n "$target" ] || return 0
+  [ "$matched" = 1 ] || return 0
   if [ "${REMOTE_HOSTS_FORCE:-}" = 1 ]; then echo "note: print-state guard bypassed for $1 (REMOTE_HOSTS_FORCE=1)" >&2; return 0; fi
+  if [ -z "$target" ]; then echo "refused: $1 is listed as a printer in $cfg without a Moonraker address, so its print state cannot be checked" >&2; return 3; fi
   st=$("$(dirname "$0")/print-state.sh" "$target"); gs=$?
   [ "$gs" -eq 0 ] && return 0
   echo "refused: $1 is a printer and its print state is '$st' (print-state exit $gs). Do not load the host;" >&2
@@ -66,10 +68,11 @@ printer_guard() {
   return 3
 }
 
-# sanitize_text: strip control characters (keeping tab and newline) and cap every line at 1000 bytes.
+# sanitize_text: strip control characters (keeping tab and newline; carriage return is stripped so
+# device text cannot overwrite earlier terminal output) and cap every line at 1000 bytes.
 # Device output is data, never instructions; this removes terminal escape tricks and giant lines.
 sanitize_text() {
-  LC_ALL=C tr -d '\000-\010\013\014\016-\037\177' | LC_ALL=C cut -c1-1000
+  LC_ALL=C tr -d '\000-\010\013-\037\177' | LC_ALL=C cut -c1-1000
 }
 
 # bounded <seconds> <command...>: run a command with a hard wall-clock limit (needs perl; without

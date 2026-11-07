@@ -1,6 +1,6 @@
 # 0004 — Tooling choices
 
-- Date: 2026-10-25 (consolidates the former 0003, 0004, and 0006); items 5 and 6 added 2026-11-01 and 2026-11-07 respectively
+- Date: 2026-10-25 (consolidates the former 0003, 0004, and 0006); items 5, 6 and 7 added 2026-11-01, 2026-11-07 and 2026-11-07 respectively
 - Status: accepted; the license awaits your final confirmation
 
 1. **GitHub MCP connector by default, not `gh`.** Per your instruction, as
@@ -37,3 +37,14 @@
    long or poll for nothing. The `github-ops` skill therefore uses `gh run list`
    and `gh run watch` via Bash for this one operation, in the background, and
    says so. Everything else stays on the connector.
+7. **`remote-hosts`: ssh aliases, a private vault, and an HTTP check first for printers
+   (2026-11-07).** Administering the user's own machines goes through named aliases
+   in `~/.ssh/config` with key-only, non-interactive ssh (`BatchMode`), not a
+   device-specific MCP: nothing to install or keep running, and a missing key fails
+   fast instead of hanging on a prompt the agent cannot answer. Instance facts
+   (addresses, services, restore plans) live in a separate private repo, never here,
+   because this repo is public (see `0003-shipped-config-is-portable.md`). For
+   printers the first look is a single HTTP request to Moonraker, because heavy
+   commands on a Pi-class host can disturb a running print; the scripts enforce
+   that as a safety net for the aliases the user lists. Device output is treated as
+   untrusted data throughout.

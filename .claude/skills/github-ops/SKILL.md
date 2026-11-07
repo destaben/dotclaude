@@ -62,12 +62,12 @@ don't reach for it as a general shell substitute.
        for a severe finding (fix those). That session request is what allows a justification,
        and it is never silent: every justification is listed in your final
        report for the user to overrule, and anything that needs a design choice is asked, not decided:
-       write the reason where a reviewer will see it next time (a code comment at
-       the spot, plus a "Design notes" or equivalent section in the relevant doc),
-       and state it in a PR comment. The aim is that the same finding is never
+       write the reason for the user and for future readers (a code comment at the
+       spot, plus a "Design notes" or equivalent section in the relevant doc), and state it in a
+       PR comment. It explains the decision; it is not a way to steer the reviewer. The aim is that the same finding is never
        raised twice, so the justification must be specific (what, why, what
        control makes it acceptable), not "by design".
-     Never merge the PR, and never skip, dismiss, or silently defer a finding, and never weaken a test
+     Never merge the PR, and never skip or silently defer a finding, and never weaken a test
      to make a review pass. Bundle the fixes for one review into a single push
      so each push costs one review run.
 - **List issues/PRs:** request a narrow filter (author, label, state) rather

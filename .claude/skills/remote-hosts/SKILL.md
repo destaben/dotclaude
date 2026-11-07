@@ -41,8 +41,7 @@ If the vault is missing, say so and offer to rebuild it with `inventory.sh`.
 
 ## One-time setup per device (user runs it)
 Claude cannot answer a password prompt, so the user runs, once per alias, **in
-their own terminal (not with `!` inside Claude Code**, which has no TTY; see
-"Diagnosing a connection"):
+their own terminal (not with `!` inside Claude Code**; "Diagnosing a connection" says why):
 
     ssh-copy-id -i ~/.ssh/id_ed25519.pub <alias>
 
@@ -73,8 +72,8 @@ invasive check possible: one HTTP GET to Moonraker, no ssh.
 A Pi-class host can lose USB/serial timing under load, which ruins a print.
 
 The scripts apply this themselves (a safety net against forgetting, not a barrier against a
-deliberate bypass) for every alias in the vault's `config/printers.conf` and for any other alias that
-resolves to the same host; a raw `ssh` command skips it, so use the scripts. List printers in `config/printers.conf`
+deliberate bypass) for every alias in the vault's `config/printers.conf` and for any other alias whose
+configured `HostName` equals theirs (compared literally); a raw `ssh` command skips it, so use the scripts. List printers in `config/printers.conf`
 (lines `<alias> <host[:port]>`, the Moonraker address). `probe.sh` and `inventory.sh` then call
 `print-state.sh` themselves and refuse (exit 3) unless it reports idle. After the user agrees,
 `REMOTE_HOSTS_FORCE=1` bypasses the guard for one run and is set only after the user agrees in the
@@ -117,12 +116,17 @@ Recorded so a reviewer does not re-raise them as defects:
   net on top of two other controls: the output directory is git-ignored and created with
   mode 0700, and instance data belongs in the private vault. We prefer over-redaction
   (e.g. a word like `pass:` followed by text) to leaking, so some diagnostic text may be
-  hidden; patterns are covered by `tests/test_remote_hosts_scripts.py`.
+  hidden; patterns are covered by `tests/test_remote_hosts_scripts.py`. Known gap: free-form
+  space-separated secrets. It covers HTTP headers passed with `-H/--header` that name a credential,
+  flags, quoted values and `NAME=value`/`NAME: value`; prose such as `token abc123` is not matched
+  because that would also hide ordinary text.
 - **`print-state.sh` defaults to port 80** because that is how this skill's reference
   setup exposes Moonraker (behind a reverse proxy). A printer serving Moonraker directly
   passes `host:7125`. A wrong port yields exit 20, which fails safe (treated as "printing").
-- **`inventory.sh` does not itself check the print state.** The rule lives with the caller:
-  never run it against a printer host unless `print-state.sh` exits 0 (see the printers section).
+- **`inventory.sh` checks the print state through `printer_guard`** before the run and again before
+  every topic, so a print that starts mid-run stops it (exit 3, remaining topics skipped). That covers
+  aliases in `printers.conf` or sharing their configured `HostName` (compared literally, no DNS
+  lookup); a printer that is not listed is unguarded, and the caller must run `print-state.sh` first.
 - **Aliases starting with `.` are refused** so `.`/`..` can never make the per-host output directory
   point at a parent directory.
 - **An unquoted value with spaces** (`PASSWORD=correct horse`) only has its first word redacted,
@@ -141,11 +145,8 @@ Recorded so a reviewer does not re-raise them as defects:
 - **A `kill -9` can leave `*.raw` files**; a trap cannot catch SIGKILL. They sit in a 0700
   directory, mode 0600, git-ignored, and are removed on the next normal exit.
 
-- **Free-form space-separated secrets are a known gap** of the redactor. It covers HTTP headers passed
-  with `-H/--header` that name a credential, flags, quoted values and `NAME=value`/`NAME: value`;
-  other prose such as `token abc123` is not matched because that would also hide ordinary text.
 - **The banner read is bounded** (hard 4 s limit via perl, 120 bytes), so a device that streams
-  bytes cannot stall `probe.sh`.
+  bytes cannot stall `probe.sh`; without perl the banner is not read at all.
 - **Device-controlled text is never echoed verbatim**: `probe.sh` maps the banner to a fixed
   vocabulary (`OpenSSH <digits>`, `Dropbear <digits>` or a generic label), takes its verdict only from
   ssh's exit status and lists just allow-listed auth-method names; `print-state.sh` prints only a known
