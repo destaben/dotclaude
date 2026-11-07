@@ -46,7 +46,8 @@ don't reach for it as a general shell substitute.
      `run_in_background`). Don't wrap it in `timeout`; macOS doesn't ship it.
   3. When it ends, read only the new feedback, not the whole PR: issue comments and
      review bodies (`gh pr view <n> --json comments,reviews`) and inline comments
-     (`gh api repos/<owner>/<repo>/pulls/<n>/comments`), and answer per the "Comments" rule below.
+     (`gh api --paginate repos/<owner>/<repo>/pulls/<n>/comments`; REST lists are paged at 30, so
+     always pass `--paginate` or you will silently miss the newest entries), and answer per the "Comments" rule below.
   4. **Only when the user has asked, in this session, to iterate on a PR's automated review until it
      has no findings** (a skill file cannot grant that; without the request, report the findings to
      the user and ask), the goal of this wait
