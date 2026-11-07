@@ -743,7 +743,8 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(code, expected)
                 self.assertIn("speech: ok", out.getvalue())
 
-    def test_telegram_setup_prints_the_chat_id_and_never_the_token(self):
+    def run_telegram_setup(self, answers):
+        """answers maps a bot API method to the JSON the service returns."""
         import contextlib
         import unittest.mock as mock
         env = Path(self.tmp.name) / "env"
@@ -757,15 +758,64 @@ class CliTests(unittest.TestCase):
             def __exit__(self, *a):
                 return False
 
-        payload = json.dumps({"result": [{"message": {"chat": {"id": 4242, "type": "private", "first_name": "Someone"}}}]}).encode()
+        def fake_urlopen(url, timeout):
+            method = url.rsplit("/", 1)[1]
+            return Response(json.dumps(answers[method]).encode())
+
         out = io.StringIO()
-        with mock.patch.object(ceo.urllib.request, "urlopen", lambda url, timeout: Response(payload)):
+        with mock.patch.object(ceo.urllib.request, "urlopen", fake_urlopen):
             with contextlib.redirect_stdout(out):
                 code = ceo.main(["--config", str(self.config), "telegram-setup"])
+        return code, out.getvalue()
+
+    @staticmethod
+    def answers(updates, webhook=""):
+        return {
+            "getMe": {"ok": True, "result": {"username": "my_bot"}},
+            "getWebhookInfo": {"ok": True, "result": {"url": webhook}},
+            "getUpdates": {"ok": True, "result": updates},
+        }
+
+    def test_telegram_setup_prints_the_chat_id_and_never_the_token(self):
+        update = {"message": {"chat": {"id": 4242, "type": "private", "first_name": "Someone"}}}
+        code, out = self.run_telegram_setup(self.answers([update]))
         self.assertEqual(code, 0)
-        self.assertIn("CEO_TELEGRAM_CHAT_ID=4242", out.getvalue())
-        self.assertNotIn("SECRETTOKEN", out.getvalue())
-        self.assertNotIn("Someone", out.getvalue())
+        self.assertIn("@my_bot", out)
+        self.assertIn("CEO_TELEGRAM_CHAT_ID=4242", out)
+        self.assertNotIn("SECRETTOKEN", out)
+        self.assertNotIn("Someone", out)
+
+    def test_telegram_setup_without_messages_names_the_bot_to_write_to(self):
+        code, out = self.run_telegram_setup(self.answers([]))
+        self.assertEqual(code, 1)
+        self.assertIn("@my_bot", out)
+        self.assertIn("press Start", out)
+
+    def test_telegram_setup_reports_a_webhook_that_blocks_updates(self):
+        code, out = self.run_telegram_setup(self.answers([], webhook="https://example.invalid/hook"))
+        self.assertEqual(code, 1)
+        self.assertIn("webhook", out)
+        self.assertNotIn("example.invalid", out)
+
+    def test_telegram_setup_reads_other_kinds_of_update(self):
+        code, out = self.run_telegram_setup(self.answers([{"my_chat_member": {"chat": {"id": 77, "type": "private"}}}]))
+        self.assertIn("CEO_TELEGRAM_CHAT_ID=77", out)
+
+    def test_telegram_setup_refused_token_is_a_clean_error(self):
+        import contextlib
+        import unittest.mock as mock
+        env = Path(self.tmp.name) / "env"
+        env.write_text("CEO_TELEGRAM_TOKEN=SECRETTOKEN\n")
+        os.chmod(env, 0o600)
+
+        def refuse(url, timeout):
+            raise OSError("401 for " + url)
+
+        err = io.StringIO()
+        with mock.patch.object(ceo.urllib.request, "urlopen", refuse), contextlib.redirect_stderr(err):
+            code = ceo.main(["--config", str(self.config), "telegram-setup"])
+        self.assertEqual(code, 1)
+        self.assertNotIn("SECRETTOKEN", err.getvalue())
 
 
 if __name__ == "__main__":

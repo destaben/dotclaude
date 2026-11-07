@@ -451,7 +451,7 @@ def notification_text(question: str, options: List[str], status: str) -> str:
     return "\n".join(lines).strip()
 
 
-HEADS_UP = "Claudio te va a llamar en un momento. Abre Linphone y déjalo en primer plano."
+HEADS_UP = "Hola, soy Claudio. Te voy a llamar en un momento, ¿puedes atender?"
 
 
 def wait_for_phone(asterisk, config: Dict, env: Dict[str, str], notifier: Callable, sleep, clock) -> bool:
@@ -596,23 +596,37 @@ def cmd_check(args) -> int:
     return 0 if ok else 1
 
 
+def telegram_api(token: str, method: str):
+    """Call a read-only bot API method. Errors never mention the URL, which holds the token."""
+    try:
+        with urllib.request.urlopen("https://api.telegram.org/bot%s/%s" % (token, method), timeout=15) as response:
+            body = json.loads(response.read().decode("utf-8"))
+    except Exception:  # noqa: BLE001 - the URL holds the token, so report nothing specific
+        raise CallError("cannot reach the chat service, or the token was refused (%s)" % method)
+    if not body.get("ok"):
+        raise CallError("the chat service refused the request (%s)" % method)
+    return body.get("result")
+
+
 def cmd_telegram_setup(args) -> int:
     config = load_config(args.config)
     token = load_env_file(config["env_file"]).get("CEO_TELEGRAM_TOKEN")
     if not token:
         raise CallError("put CEO_TELEGRAM_TOKEN in the env file first")
-    try:
-        with urllib.request.urlopen("https://api.telegram.org/bot%s/getUpdates" % token, timeout=15) as response:
-            updates = json.loads(response.read().decode("utf-8")).get("result", [])
-    except Exception:  # noqa: BLE001 - the URL holds the token, so report nothing specific
-        raise CallError("cannot reach the chat service")
+    bot = telegram_api(token, "getMe") or {}
+    print("This token belongs to the bot @%s" % bot.get("username", "?"))
+    webhook = telegram_api(token, "getWebhookInfo") or {}
+    if webhook.get("url"):
+        print("A webhook is set on this bot, which stops getUpdates from returning messages.")
+        return 1
     seen = {}
-    for update in updates:
-        chat = (update.get("message") or {}).get("chat") or {}
-        if "id" in chat:
-            seen[chat["id"]] = chat.get("type", "?")
+    for update in telegram_api(token, "getUpdates") or []:
+        for key in ("message", "edited_message", "channel_post", "my_chat_member"):
+            chat = (update.get(key) or {}).get("chat") or {}
+            if "id" in chat:
+                seen[chat["id"]] = chat.get("type", "?")
     if not seen:
-        print("No messages found. Send any message to the bot, then run this again.")
+        print("No messages found. Open the bot @%s in the chat app, press Start, send any message, then run this again." % bot.get("username", "?"))
         return 1
     for chat_id, kind in seen.items():
         print("CEO_TELEGRAM_CHAT_ID=%s  (chat type: %s)" % (chat_id, kind))
