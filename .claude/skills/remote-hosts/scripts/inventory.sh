@@ -5,7 +5,8 @@
 # Never dumps env vars or .env files; all output is passed through redact() to strip
 # URL credentials and password/token-like values (best-effort, see lib.sh). A topic that fails
 # (ssh error 255 or remote timeout 124) keeps its previous file and leaves a .err note; the
-# script then lists the failed topics and exits 1. Exit 2 means bad usage.
+# script then lists the failed topics and exits 1. Exit 2 means bad usage, a missing prerequisite
+# (perl) or an unwritable output directory.
 # shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
 h=$1; base=$2
