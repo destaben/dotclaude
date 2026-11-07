@@ -73,6 +73,7 @@ printer_guard() {
   if [ -z "$target" ]; then echo "refused: $1 is listed as a printer in $cfg without a Moonraker address, so its print state cannot be checked" >&2; return 3; fi
   st=$("$(dirname "$0")/print-state.sh" "$target"); gs=$?
   [ "$gs" -eq 0 ] && return 0
+  if [ "$gs" -eq 2 ] || [ -z "$st" ]; then st="not available: print-state.sh rejected the address '$target' from printers.conf (use host[:port] or [ipv6]:port)"; fi
   echo "refused: $1 is a printer and its print state is '$st' (print-state exit $gs). Do not load the host;" >&2
   echo "confirm with the user, then rerun with REMOTE_HOSTS_FORCE=1 if they agree." >&2
   return 3

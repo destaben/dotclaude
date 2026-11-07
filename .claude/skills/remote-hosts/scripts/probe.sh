@@ -17,16 +17,20 @@ for h in "$@"; do
   port=$(echo "$cfg" | awk '$1=="port"{print $2}')
   # Print no address, user name or key path: probe output is often pasted into issues and PRs.
   echo "  cfg: port $port, $(echo "$cfg" | awk '$1=="identityfile"{n++} END{print n+0}') identity file(s) configured"
+  # No `--` is passed to nc (not every netcat build accepts it); a host name that could be read as an
+  # option is refused instead.
   if ! command -v nc >/dev/null 2>&1; then
     echo "  port $port: not checked (nc not installed); the ssh result below is authoritative"
+  elif [ -z "$host" ] || [ "${host#-}" != "$host" ]; then
+    echo "  port $port: not checked (unusable host name); the ssh result below is authoritative"
   else
-    if nc -z -w 3 -- "$host" "$port" >/dev/null 2>&1; then echo "  port $port: open"; else echo "  port $port: CLOSED/unreachable"; fi
+    if nc -z -w 3 "$host" "$port" >/dev/null 2>&1; then echo "  port $port: open"; else echo "  port $port: CLOSED/unreachable"; fi
     # The banner comes from the device, so it is untrusted text and is never echoed. It is mapped to
     # a fixed vocabulary: a known server family plus a version made of digits, or a generic label.
     if ! command -v perl >/dev/null 2>&1; then
       echo "  banner: not read (perl is needed for a hard time limit on the read)"
     else
-    raw=$(bounded 4 nc -w 3 -- "$host" "$port" </dev/null 2>/dev/null | head -c 120 | head -1 | tr -cd '[:print:]')
+    raw=$(bounded 4 nc -w 3 "$host" "$port" </dev/null 2>/dev/null | head -c 120 | head -1 | tr -cd '[:print:]')
     case "$raw" in
       SSH-2.0-OpenSSH_[0-9]*) banner="OpenSSH $(printf '%s' "$raw" | sed -n 's/^SSH-2\.0-OpenSSH_\([0-9][0-9.]*\(p[0-9][0-9]*\)\{0,1\}\).*/\1/p')" ;;
       SSH-2.0-dropbear_[0-9]*) banner="Dropbear $(printf '%s' "$raw" | sed -n 's/^SSH-2\.0-dropbear_\([0-9][0-9.]*\).*/\1/p')" ;;

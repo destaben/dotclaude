@@ -127,8 +127,8 @@ Recorded so a reviewer does not re-raise them as defects:
   every topic, so a print that starts mid-run stops it (exit 3, remaining topics skipped). That covers
   aliases in `printers.conf` or sharing their configured `HostName` (compared literally, no DNS
   lookup); a printer that is not listed is unguarded, and the caller must run `print-state.sh` first.
-  The match is literal: if `printers.conf` names `ender.local` but another alias uses
-  `HostName 192.168.1.50`, list that alias (or the address) as well.
+  The match is literal: if `printers.conf` names `printer.example` but another alias uses
+  `HostName 192.0.2.50`, list that alias (or the address) as well.
 - **Aliases starting with `.` are refused** so `.`/`..` can never make the per-host output directory
   point at a parent directory.
 - **An unquoted value with spaces** (`PASSWORD=correct horse`) only has its first word redacted,

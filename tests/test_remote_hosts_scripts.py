@@ -195,8 +195,8 @@ class AliasValidationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home:
             ssh = Path(home, ".ssh")
             ssh.mkdir()
-            (ssh / "config").write_text("Include extra.conf\nHOST printer # server\n  HostName 10.0.0.1\n")
-            (ssh / "extra.conf").write_text("Host viainclude\n  HostName 10.0.0.2\n")
+            (ssh / "config").write_text("Include extra.conf\nHOST printer # server\n  HostName 192.0.2.1\n")
+            (ssh / "extra.conf").write_text("Host viainclude\n  HostName 192.0.2.2\n")
             for alias, ok in (("printer", True), ("viainclude", True), ("server", False), ("nope", False)):
                 with self.subTest(alias=alias):
                     r = subprocess.run(["sh", "-c", f". {SCRIPTS}/lib.sh; valid_alias '{alias}'"],
@@ -209,7 +209,7 @@ class AliasValidationTests(unittest.TestCase):
             ssh.mkdir()
             (ssh / "config").write_text("Include one.conf\n")
             (ssh / "one.conf").write_text("Include two.conf\nInclude config\n")
-            (ssh / "two.conf").write_text("Host deep\n  HostName 10.0.0.4\n")
+            (ssh / "two.conf").write_text("Host deep\n  HostName 192.0.2.4\n")
             for alias, ok in (("deep", True), ("absent", False)):
                 with self.subTest(alias=alias):
                     r = subprocess.run(["sh", "-c", f". {SCRIPTS}/lib.sh; valid_alias '{alias}'"],
@@ -221,7 +221,7 @@ class AliasValidationTests(unittest.TestCase):
             home = Path(base, "My Home")
             (home / ".ssh" / "conf.d").mkdir(parents=True)
             (home / ".ssh" / "config").write_text("Include conf.d/*.conf\n")
-            (home / ".ssh" / "conf.d" / "a.conf").write_text("Host spaced\n  HostName 10.0.0.3\n")
+            (home / ".ssh" / "conf.d" / "a.conf").write_text("Host spaced\n  HostName 192.0.2.3\n")
             r = subprocess.run(["sh", "-c", f". {SCRIPTS}/lib.sh; valid_alias spaced"],
                                env={**os.environ, "HOME": str(home)}, capture_output=True, timeout=30)
             self.assertEqual(r.returncode, 0)
@@ -252,14 +252,14 @@ class StubSshCase(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         t = Path(self.tmp.name)
         (t / "home" / ".ssh").mkdir(parents=True)
-        (t / "home" / ".ssh" / "config").write_text("Host box\n  HostName 10.0.0.9\n")
+        (t / "home" / ".ssh" / "config").write_text("Host box\n  HostName 192.0.2.9\n")
         (t / "bin").mkdir()
         stub = t / "bin" / "ssh"
         stub.write_text(
             '#!/bin/sh\n'
             'if [ "$1" = "-n" ] && [ "$2" = "-G" ]; then shift; fi\n'
             'if [ "$1" = "-G" ]; then\n'
-            '  case "$3" in other) h=10.0.0.77 ;; *) h=127.0.0.1 ;; esac\n'
+            '  case "$3" in other) h=192.0.2.77 ;; *) h=127.0.0.1 ;; esac\n'
             '  printf "hostname %s\\nport ${STUB_PORT:-1}\\nuser x\\nidentityfile k\\n" "$h"; exit 0\n'
             'fi\n'
             'for last; do :; done\n'
@@ -499,7 +499,7 @@ class PrinterGuardTests(StubSshCase):
         env = self.conf("[::1]:1")
         (Path(env["HOME"]) / ".ssh" / "config").write_text("Host box\n  HostName 127.0.0.1\nHost v6\n  HostName ::1\n")
         stub = Path(self.tmp.name, "bin", "ssh")
-        stub.write_text(stub.read_text().replace("other) h=10.0.0.77 ;;", "other) h=10.0.0.77 ;; v6) h=::1 ;;"))
+        stub.write_text(stub.read_text().replace("other) h=192.0.2.77 ;;", "other) h=192.0.2.77 ;; v6) h=::1 ;;"))
         Path(env["REMOTE_HOSTS_PRINTERS"]).write_text("other [::1]:1\n")
         r = self.run_script("probe.sh", env, "v6")
         self.assertEqual(r.returncode, 3, r.stdout + r.stderr)   # matched via the host part, then unreachable
@@ -511,7 +511,7 @@ class PrinterGuardTests(StubSshCase):
                 (Path(env["HOME"]) / ".ssh" / "config").write_text("Host box\n  HostName 127.0.0.1\nHost v6\n  HostName ::1\n")
                 stub = Path(self.tmp.name, "bin", "ssh")
                 if "v6) h=::1" not in stub.read_text():
-                    stub.write_text(stub.read_text().replace("other) h=10.0.0.77 ;;", "other) h=10.0.0.77 ;; v6) h=::1 ;;"))
+                    stub.write_text(stub.read_text().replace("other) h=192.0.2.77 ;;", "other) h=192.0.2.77 ;; v6) h=::1 ;;"))
                 Path(env["REMOTE_HOSTS_PRINTERS"]).write_text(f"other {entry}\n")
                 r = self.run_script("probe.sh", env, "v6")
                 self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
@@ -558,6 +558,13 @@ class PrinterGuardTests(StubSshCase):
         Path(env["REMOTE_HOSTS_PRINTERS"]).write_text(f"box 127.0.0.1:{self.serve('printing')}")   # no trailing newline
         r = self.run_script("probe.sh", env, "box")
         self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+
+    def test_a_bad_printer_address_gives_a_clear_refusal_not_an_empty_state(self):
+        env = self.conf("a/b@c")
+        r = self.run_script("probe.sh", env, "box")
+        self.assertEqual(r.returncode, 3)
+        self.assertIn("rejected the address", r.stderr)
+        self.assertNotIn("state is ''", r.stderr)
 
     def test_a_fifo_instead_of_a_config_file_fails_closed_for_every_uid(self):
         env = self.conf("127.0.0.1:1")
@@ -611,7 +618,7 @@ class PrinterGuardTests(StubSshCase):
 
     def test_alias_not_listed_or_no_file_means_no_guard(self):
         env = self.conf(f"127.0.0.1:{self.serve('printing')}")
-        Path(env["REMOTE_HOSTS_PRINTERS"]).write_text("other 10.0.0.77:1\n")
+        Path(env["REMOTE_HOSTS_PRINTERS"]).write_text("other 192.0.2.77:1\n")
         self.assertEqual(self.run_script("probe.sh", env, "box").returncode, 0)
         env["REMOTE_HOSTS_PRINTERS"] = str(Path(self.tmp.name, "absent.conf"))
         self.assertEqual(self.run_script("probe.sh", env, "box").returncode, 0)
@@ -681,6 +688,13 @@ class ProbeTests(StubSshCase):
         out = self.probe("ok", "box").stdout
         for leaked in ("127.0.0.1", "user x", "identityfile", "/.ssh/"):
             self.assertNotIn(leaked, out)
+
+    def test_a_host_name_that_looks_like_an_option_is_never_passed_to_nc(self):
+        stub = Path(self.tmp.name, "bin", "ssh")
+        stub.write_text(stub.read_text().replace('*) h=127.0.0.1 ;;', '*) h=-evil ;;'))
+        r = self.probe("ok", "box")
+        self.assertIn("not checked (unusable host name)", r.stdout)
+        self.assertEqual(r.returncode, 0)
 
     def test_probe_without_arguments_is_a_usage_error(self):
         r = subprocess.run([str(SCRIPTS / "probe.sh")], env=self.env, capture_output=True, text=True, timeout=30)
