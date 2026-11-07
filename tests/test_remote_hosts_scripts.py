@@ -89,6 +89,15 @@ class RedactTests(unittest.TestCase):
         # a port flag is not a secret
         self.assertEqual(self.redact("ssh -p 2222 host\n"), "ssh -p 2222 host\n")
 
+    def test_credential_headers_are_redacted_whole(self):
+        for line in ('curl -H "X-Auth-Token abc123" http://x', "curl --header 'Authorization-Key: k9' http://x",
+                     "curl -H 'Cookie: sid=zz' http://x"):
+            with self.subTest(line=line):
+                out = self.redact(line + "\n")
+                for secret in ("abc123", "k9", "sid=zz"):
+                    self.assertNotIn(secret, out)
+        self.assertEqual(self.redact("curl -H 'Accept: json' http://x\n"), "curl -H 'Accept: json' http://x\n")
+
     def test_dash_led_values_and_more_key_names(self):
         cases = {"backup --password -Hunter2x": "Hunter2x", "OPENAI_KEY=sk-abc123": "sk-abc123",
                  "cookie: sessionvalue99": "sessionvalue99", "auth=tok777": "tok777", "session_id=abcd1234": "abcd1234"}
@@ -306,6 +315,68 @@ class InventoryTests(StubSshCase):
         self.assertEqual(r.returncode, 2)
 
 
+class PrinterGuardTests(StubSshCase):
+    """probe.sh and inventory.sh refuse a printer host unless print-state.sh reports it idle."""
+
+    def serve(self, state):
+        body = ('{"result":{"status":{"print_stats":{"state":"%s","filename":"a.gcode"},'
+                '"display_status":{"progress":0.1}}}}' % state).encode()
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(lambda: (server.shutdown(), server.server_close()))
+        return server.server_port
+
+    def conf(self, target):
+        path = Path(self.tmp.name, "printers.conf")
+        path.write_text(f"box {target}\n")
+        return {**self.env, "REMOTE_HOSTS_PRINTERS": str(path), "STUB_MODE": "ok"}
+
+    def run_script(self, script, env, *args):
+        return subprocess.run([str(SCRIPTS / script), *args], env=env, capture_output=True, text=True, timeout=60)
+
+    def test_printing_printer_is_refused_before_any_ssh(self):
+        env = self.conf(f"127.0.0.1:{self.serve('printing')}")
+        for script, args in (("probe.sh", ("box",)), ("inventory.sh", ("box", str(self.out)))):
+            with self.subTest(script=script):
+                r = self.run_script(script, env, *args)
+                self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+                self.assertIn("refused", r.stderr)
+                self.assertFalse(Path(env["STUB_LOG"]).exists(), "ssh must not run")
+
+    def test_unreachable_moonraker_is_refused_too(self):
+        r = self.run_script("probe.sh", self.conf("127.0.0.1:1"), "box")
+        self.assertEqual(r.returncode, 3)
+
+    def test_idle_printer_proceeds(self):
+        env = self.conf(f"127.0.0.1:{self.serve('standby')}")
+        self.assertEqual(self.run_script("probe.sh", env, "box").returncode, 0)
+        self.assertEqual(self.run_script("inventory.sh", env, "box", str(self.out)).returncode, 0)
+
+    def test_force_bypasses_the_guard_with_a_note(self):
+        env = {**self.conf(f"127.0.0.1:{self.serve('printing')}"), "REMOTE_HOSTS_FORCE": "1"}
+        r = self.run_script("probe.sh", env, "box")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("bypassed", r.stderr)
+
+    def test_alias_not_listed_or_no_file_means_no_guard(self):
+        env = self.conf(f"127.0.0.1:{self.serve('printing')}")
+        Path(env["REMOTE_HOSTS_PRINTERS"]).write_text("other 127.0.0.1:1\n")
+        self.assertEqual(self.run_script("probe.sh", env, "box").returncode, 0)
+        env["REMOTE_HOSTS_PRINTERS"] = str(Path(self.tmp.name, "absent.conf"))
+        self.assertEqual(self.run_script("probe.sh", env, "box").returncode, 0)
+
+
 class ProbeTests(StubSshCase):
     def probe(self, mode, *aliases):
         return subprocess.run([str(SCRIPTS / "probe.sh"), *aliases], env={**self.env, "STUB_MODE": mode},
@@ -332,6 +403,39 @@ class ProbeTests(StubSshCase):
         self.assertIn("not checked (nc not installed)", r.stdout)
         self.assertNotIn("CLOSED", r.stdout)
         self.assertIn("RESULT: key auth OK", r.stdout)
+
+    @unittest.skipUnless(shutil.which("nc") and shutil.which("perl"), "nc/perl not installed")
+    def test_a_device_that_streams_bytes_cannot_stall_the_banner_read(self):
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(5)
+        stop = threading.Event()
+
+        def serve():
+            srv.settimeout(0.5)
+            while not stop.is_set():
+                try:
+                    c, _ = srv.accept()
+                except OSError:
+                    continue
+                try:
+                    while not stop.is_set():
+                        c.sendall(b"x" * 10)     # never a newline
+                        time.sleep(0.2)
+                except OSError:
+                    pass
+                c.close()
+
+        threading.Thread(target=serve, daemon=True).start()
+        started = time.time()
+        r = subprocess.run([str(SCRIPTS / "probe.sh"), "box"],
+                           env={**self.env, "STUB_MODE": "ok", "STUB_PORT": str(srv.getsockname()[1])},
+                           capture_output=True, text=True, timeout=40)
+        stop.set()
+        srv.close()
+        self.assertLess(time.time() - started, 20)
+        self.assertIn("RESULT: key auth OK", r.stdout)
+        self.assertIn("not an SSH identification string", r.stdout)
 
     def test_probe_without_arguments_is_a_usage_error(self):
         r = subprocess.run([str(SCRIPTS / "probe.sh")], env=self.env, capture_output=True, text=True, timeout=30)

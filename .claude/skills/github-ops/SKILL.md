@@ -56,8 +56,9 @@ don't reach for it as a general shell substitute.
      - **Fix it**, with a test that fails without the fix when the change is
        testable, and run the full suite before pushing.
      - **Justify it** only when it is not a real defect or is a documented trade-off, and never
-       for a severe finding (fix those). Every justification is listed to the user in your final
-       report, and the user can overrule it:
+       for a severe finding (fix those). The user's request to iterate on the review is the
+       authorization for this, but it is never silent: every justification is listed in your final
+       report for the user to overrule, and anything that needs a design choice is asked, not decided:
        write the reason where a reviewer will see it next time (a code comment at
        the spot, plus a "Design notes" or equivalent section in the relevant doc),
        and state it in a PR comment. The aim is that the same finding is never

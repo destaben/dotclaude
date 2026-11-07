@@ -9,6 +9,7 @@ rc=0
 for h in "$@"; do
   echo "=== $h"
   if ! valid_alias "$h"; then echo "  RESULT: refused (not a plain Host alias in ~/.ssh/config)"; rc=2; continue; fi
+  printer_guard "$h" || { [ "$rc" -lt 3 ] && rc=3; continue; }
   cfg=$(ssh -G -- "$h")
   host=$(echo "$cfg" | awk '$1=="hostname"{print $2}')
   port=$(echo "$cfg" | awk '$1=="port"{print $2}')
@@ -20,7 +21,7 @@ for h in "$@"; do
     # The banner comes from the device, so it is untrusted text. Show only the protocol and the
     # first software token (no spaces, at most 40 characters): enough to identify the server,
     # too little to carry a sentence. Anything else gets a fixed placeholder.
-    banner=$(nc -w 3 -- "$host" "$port" </dev/null 2>/dev/null | head -1 | tr -cd '[:print:]' | sed -n 's/^\(SSH-[0-9][0-9.]*-[A-Za-z0-9._+-]\{1,40\}\).*/\1/p')
+    banner=$(bounded 4 nc -w 3 -- "$host" "$port" </dev/null 2>/dev/null | head -c 120 | head -1 | tr -cd '[:print:]' | sed -n 's/^\(SSH-[0-9][0-9.]*-[A-Za-z0-9._+-]\{1,40\}\).*/\1/p')
     echo "  banner: ${banner:-(not an SSH identification string; not shown)}"
   fi
   out=$(ssh -n -v -T -o BatchMode=yes -o ConnectTimeout=5 -- "$h" true 2>&1)

@@ -80,7 +80,8 @@ It runs automatically on every non-draft, same-repo PR (`opened`/`synchronize`/`
 `ready_for_review`; a newer push cancels the run in progress), using
 `claude-haiku-5-5` at low effort to keep the per-run cost down, plus the
 `@claude review` comment and manual dispatch as a fallback — see
-`docs/decisions/0002-cost-and-quota.md` for why.
+`docs/decisions/0002-cost-and-quota.md` for why. Waiting on that review from a session
+is described in `docs/pipeline.md`.
 
 The PR/issue templates are different: they're personal defaults, installed
 to `~/.claude/templates/` and used by `commit-and-pr`/`github-ops` in *any*

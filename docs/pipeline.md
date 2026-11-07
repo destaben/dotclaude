@@ -58,13 +58,16 @@ low effort, by commenting
 run on fork PRs when a trusted user asks for it), or manually via
 `workflow_dispatch` (see
 `docs/decisions/0002-cost-and-quota.md`). Draft PRs are skipped until ready, and
-a newer run on the same PR cancels the one in progress. Waiting for this review from
-`github-ops` (`gh run watch`) does not change the severity routing of `/release`. The agent's final
+a newer run on the same PR cancels the one in progress. The agent's final
 message is the review; a workflow step posts it, so the agent has no
 write tools. The review is advisory: a prompt-injected diff can still
 influence what it says. Inactive until you
 add a `CLAUDE_CODE_OAUTH_TOKEN` repository secret. There is no API-key
 fallback: when the subscription quota runs out, the review simply doesn't run.
+
+To wait for a run's review after a push, `github-ops` uses `gh run watch` (see
+`docs/decisions/0004-tooling-choices.md`, item 6); that wait does not change the
+severity routing of `/release`.
 
 ## PR and issue templates
 Unlike the workflow above, these *are* personal and portable — see

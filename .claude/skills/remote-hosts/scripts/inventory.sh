@@ -11,6 +11,7 @@
 . "$(dirname "$0")/lib.sh"
 h=$1; base=$2
 valid_alias "$h" && [ -n "$base" ] || { echo "usage: inventory.sh <alias> <outdir> (alias must be a Host in ~/.ssh/config)" >&2; exit 2; }
+printer_guard "$h" || exit 3
 command -v perl >/dev/null 2>&1 || { echo "inventory.sh needs perl for redaction" >&2; exit 2; }
 umask 077
 out=$base/$h

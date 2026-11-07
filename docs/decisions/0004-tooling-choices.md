@@ -1,6 +1,6 @@
 # 0004 — Tooling choices
 
-- Date: 2026-10-25 (consolidates the former 0003, 0004, and 0006); item 5 added 2026-11-01
+- Date: 2026-10-25 (consolidates the former 0003, 0004, and 0006); items 5 and 6 added 2026-11-01 and 2026-11-07 respectively
 - Status: accepted; the license awaits your final confirmation
 
 1. **GitHub MCP connector by default, not `gh`.** Per your instruction, as

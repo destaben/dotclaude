@@ -65,6 +65,11 @@ invasive check possible: one HTTP GET to Moonraker, no ssh.
 - **Unknown or Klipper in `error` (20):** treat like printing and ask.
 A Pi-class host can lose USB/serial timing under load, which ruins a print.
 
+This is enforced, not only advised: list printers in the vault's `config/printers.conf`
+(lines `<alias> <host[:port]>`, the Moonraker address). `probe.sh` and `inventory.sh` then call
+`print-state.sh` themselves and refuse (exit 3) unless it reports idle. After the user agrees,
+`REMOTE_HOSTS_FORCE=1` bypasses the guard for one run. Without that file there is no guard.
+
 ## Safety
 - Default to **read-only** commands (status, logs, `ls`, `cat`, `df`, `uptime`,
   `systemctl status`, `journalctl --no-pager -n 100`).
@@ -121,6 +126,11 @@ Recorded so a reviewer does not re-raise them as defects:
 - **A `kill -9` can leave `*.raw` files**; a trap cannot catch SIGKILL. They sit in a 0700
   directory, mode 0600, git-ignored, and are removed on the next normal exit.
 
+- **Free-form space-separated secrets are a known gap** of the redactor. It covers HTTP headers passed
+  with `-H/--header` that name a credential, flags, quoted values and `NAME=value`/`NAME: value`;
+  other prose such as `token abc123` is not matched because that would also hide ordinary text.
+- **The banner read is bounded** (hard 4 s limit via perl, 120 bytes), so a device that streams
+  bytes cannot stall `probe.sh`.
 - **Device-controlled text is never echoed verbatim**: `probe.sh` shows only `SSH-<ver>-<one token>`
   from the banner and `print-state.sh` shows only a known state, a sanitized bounded file name and a
   number. IPv6 hosts are passed as `[addr]:port`.
