@@ -13,7 +13,7 @@ case "$1" in ''|-*|*[!A-Za-z0-9.:_\[\]-]*) echo "usage: print-state.sh <host-or-
 command -v python3 >/dev/null 2>&1 || { echo "state=unknown (python3 missing)"; exit 20; }
 body=$(curl -g -s -m 5 "http://$1/printer/objects/query?print_stats&display_status") || { echo "state=unreachable"; exit 20; }
 printf '%s' "$body" | python3 -I -c '
-import json, sys
+import json, math, sys
 KNOWN = ("standby", "printing", "paused", "complete", "cancelled", "error")
 try:
     s = json.load(sys.stdin)["result"]["status"]
@@ -23,6 +23,8 @@ try:
         print("state=unknown"); sys.exit(20)
     try:
         pct = 100 * float(d.get("progress") or 0)
+        if not math.isfinite(pct):
+            pct = 0.0
     except (TypeError, ValueError):
         pct = 0.0
     print("state=%s progress=%.1f%%" % (st, pct))   # the file name is deliberately not shown

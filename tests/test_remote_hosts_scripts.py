@@ -10,6 +10,22 @@ import threading
 import unittest
 from pathlib import Path
 
+_TMP_VAULT = None
+
+
+def setUpModule():
+    """Hermetic environment: no printer guard from the developer's shell or real vault."""
+    global _TMP_VAULT
+    _TMP_VAULT = tempfile.TemporaryDirectory()
+    for var in ("REMOTE_HOSTS_FORCE", "REMOTE_HOSTS_PRINTERS"):
+        os.environ.pop(var, None)
+    os.environ["HOMELAB_VAULT"] = _TMP_VAULT.name
+
+
+def tearDownModule():
+    _TMP_VAULT.cleanup()
+
+
 SCRIPTS = Path(__file__).resolve().parent.parent / ".claude" / "skills" / "remote-hosts" / "scripts"
 
 
@@ -97,6 +113,14 @@ class RedactTests(unittest.TestCase):
                 for secret in ("abc123", "k9", "sid=zz"):
                     self.assertNotIn(secret, out)
         self.assertEqual(self.redact("curl -H 'Accept: json' http://x\n"), "curl -H 'Accept: json' http://x\n")
+
+    def test_attached_u_credentials_are_redacted(self):
+        cases = {"curl -ubackup:S3cret http://nas/": "S3cret", "curl -u'bob:two words' http://x": "words",
+                 'curl -u"bob:two words" http://x': "words", "mysql -uroot -psecret99 db": "secret99"}
+        for line, secret in cases.items():
+            with self.subTest(line=line):
+                self.assertNotIn(secret, self.redact(line + "\n"))
+        self.assertEqual(self.redact("mysql -uroot db\n"), "mysql -uroot db\n")   # a bare user name is not a secret
 
     def test_dash_led_values_and_more_key_names(self):
         cases = {"backup --password -Hunter2x": "Hunter2x", "OPENAI_KEY=sk-abc123": "sk-abc123",
@@ -260,6 +284,7 @@ class InventoryTests(StubSshCase):
         self.run_inventory("ok")
         last = Path(self.env["STUB_LOG"]).read_text().strip()
         self.assertTrue(last.startswith("timeout 90 sh -c '"), last)
+        self.assertTrue(last.endswith("; :'"), last)   # remote status neutralized, see inventory.sh
         self.assertEqual(subprocess.run(["sh", "-n", "-c", last]).returncode, 0)
 
     def test_output_directory_is_private_even_if_it_already_existed(self):
@@ -647,6 +672,11 @@ class PrintStateTests(unittest.TestCase):
     def test_ipv6_literal_is_accepted_by_the_validator(self):
         r = subprocess.run([str(SCRIPTS / "print-state.sh"), "[::1]:1"], capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 20)   # unreachable, not a usage error
+
+    def test_non_finite_progress_is_reported_as_zero(self):
+        r = self.run_against('{"result":{"status":{"print_stats":{"state":"printing"},"display_status":{"progress":NaN}}}}')
+        self.assertEqual(r.returncode, 10)
+        self.assertEqual(r.stdout.strip(), "state=printing progress=0.0%")
 
     def test_unreachable_host_is_unknown(self):
         r = subprocess.run([str(SCRIPTS / "print-state.sh"), "127.0.0.1:1"], capture_output=True, text=True, timeout=30)

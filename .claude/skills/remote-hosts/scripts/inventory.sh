@@ -33,27 +33,30 @@ else
   use_timeout=0; echo "note: remote has no 'timeout' (or is unreachable); commands run without a time limit" >&2
 fi
 # r <topic> <remote command>: data goes to <topic>.txt, ssh stderr to <topic>.err (both redacted).
-# ssh exits 255 on connection/auth failure and `timeout` exits 124; the remote command's own status
-# is ignored on purpose because probes are chained and may legitimately end on a missing optional tool.
+# ssh exits 255 on connection/auth failure and `timeout` exits 124. The remote command's own status
+# is neutralized (`; :` is appended) because probes are chained and may legitimately end on a missing
+# optional tool, or even return 124/255 themselves.
 # A failed topic never overwrites its previous <topic>.txt: new data is written to .new and moved in
 # only on success.
 r() { name=$1; shift
   # re-check before every topic: a print can start in the middle of a long run
   [ "$aborted" = 1 ] && return 0
   printer_guard "$h" || { aborted=1; return 0; }
-  if [ "$use_timeout" = 1 ]; then cmd="timeout 90 sh -c $(shell_quote "$*")"; else cmd=$*; fi
+  # The trailing `; :` makes the remote status 0 whatever the last chained probe returned, so the
+  # status we see is ssh's own (255) or the timeout wrapper's (124), never a probe's.
+  if [ "$use_timeout" = 1 ]; then cmd="timeout 90 sh -c $(shell_quote "$*; :")"; else cmd="$*; :"; fi
   ssh -n -T -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -- "$h" "$cmd" > "$out/$name.raw" 2> "$out/$name.err.raw"
   rc=$?   # taken directly from ssh, not from a pipeline
   # a failing redactor must never produce a "successful" topic
   # Order matters: redact (status checked), then strip control characters/cap lines, then prepend a marker.
   if redact < "$out/$name.raw" > "$out/$name.red" && sanitize_text < "$out/$name.red" > "$out/$name.body" \
-     && redact < "$out/$name.err.raw" | sanitize_text > "$out/$name.err.body"; then
+     && redact < "$out/$name.err.raw" > "$out/$name.err.red" && sanitize_text < "$out/$name.err.red" > "$out/$name.err.body"; then
     { printf '%s\n' "$untrusted_marker"; cat "$out/$name.body"; } > "$out/$name.new"
   else
     rc=255
   fi
   if [ -s "$out/$name.err.body" ]; then { printf '%s\n' "$untrusted_marker"; cat "$out/$name.err.body"; } > "$out/$name.err"; else rm -f "$out/$name.err"; fi
-  rm -f "$out/$name.raw" "$out/$name.err.raw" "$out/$name.red" "$out/$name.body" "$out/$name.err.body"
+  rm -f "$out/$name.raw" "$out/$name.err.raw" "$out/$name.red" "$out/$name.body" "$out/$name.err.body" "$out/$name.err.red"
   if [ "$rc" -eq 124 ]; then
     if [ ! -s "$out/$name.err" ]; then printf '%s\n' "$untrusted_marker" > "$out/$name.err"; fi
     echo "timed out after 90 s: some output may be missing" >> "$out/$name.err"
