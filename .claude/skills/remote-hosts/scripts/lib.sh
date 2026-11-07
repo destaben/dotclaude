@@ -48,14 +48,24 @@ shell_quote() {
 # set only after the user agrees.
 printer_guard() {
   cfg=${REMOTE_HOSTS_PRINTERS:-${HOMELAB_VAULT:-$HOME/homelab-vault}/config/printers.conf}
-  [ -e "$cfg" ] || return 0
+  if [ ! -e "$cfg" ]; then
+    # Without a list there is no way to know which aliases are printers, so the guard cannot act;
+    # say so once instead of staying silent.
+    if [ -z "${_PG_NOTED:-}" ]; then echo "note: printer guard inactive (no printers.conf at $cfg)" >&2; _PG_NOTED=1; fi
+    return 0
+  fi
   if [ ! -f "$cfg" ] || [ ! -r "$cfg" ]; then echo "refused: $cfg exists but is not a readable file, so the printer guard cannot be evaluated" >&2; return 3; fi
   want=$(ssh -n -G -- "$1" 2>/dev/null | awk '$1=="hostname"{print $2; exit}')
   target=""; matched=0
   while read -r a t _; do
     case "$a" in ''|'#'*) continue ;; esac
     other=$(ssh -n -G -- "$a" 2>/dev/null | awk '$1=="hostname"{print $2; exit}')
-    thost=${t%:[0-9]*}; thost=${thost#[}; thost=${thost%]}   # also [ipv6]:port
+    case "$t" in    # host part of host[:port], [ipv6][:port] or a bare ipv6 address
+      \[*\]*) thost=${t#\[}; thost=${thost%%\]*} ;;
+      *:*:*) thost=$t ;;
+      *:*) thost=${t%:*} ;;
+      *) thost=$t ;;
+    esac
     if [ "$a" = "$1" ] || { [ -n "$want" ] && { [ "$want" = "$other" ] || { [ -n "$thost" ] && [ "$want" = "$thost" ]; }; }; }; then target=$t; matched=1; break; fi
   done < "$cfg"
   [ "$matched" = 1 ] || return 0
@@ -68,11 +78,16 @@ printer_guard() {
   return 3
 }
 
-# sanitize_text: strip control characters (keeping tab and newline; carriage return is stripped so
-# device text cannot overwrite earlier terminal output) and cap every line at 1000 bytes.
+# sanitize_text [max]: strip control characters (keeping tab and newline; carriage return is stripped so
+# device text cannot overwrite earlier terminal output) and cap every line at max bytes (default 1000).
 # Device output is data, never instructions; this removes terminal escape tricks and giant lines.
 sanitize_text() {
-  LC_ALL=C tr -d '\000-\010\013-\037\177' | LC_ALL=C cut -c1-1000
+  LC_ALL=C tr -d '\000-\010\013-\037\177' | LC_ALL=C cut -c1-"${1:-1000}"
+}
+
+# cap_lines <max>: cap every line at max bytes.
+cap_lines() {
+  LC_ALL=C cut -c1-"$1"
 }
 
 # bounded <seconds> <command...>: run a command with a hard wall-clock limit (needs perl; without

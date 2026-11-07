@@ -11,7 +11,7 @@ set_rc() { [ "$1" -gt "$rc" ] && rc=$1; }   # keep the most severe code: 3 guard
 for h in "$@"; do
   echo "=== $h"
   if ! valid_alias "$h"; then echo "  RESULT: refused (not a plain Host alias in ~/.ssh/config)"; set_rc 2; continue; fi
-  printer_guard "$h" || { set_rc 3; continue; }
+  printer_guard "$h" || { echo "  RESULT: refused (printer guard, see stderr)"; set_rc 3; continue; }
   cfg=$(ssh -G -- "$h")
   host=$(echo "$cfg" | awk '$1=="hostname"{print $2}')
   port=$(echo "$cfg" | awk '$1=="port"{print $2}')

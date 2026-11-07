@@ -144,9 +144,17 @@ Recorded so a reviewer does not re-raise them as defects:
   file, lists the topic in the summary and makes the script exit 1. Ctrl-C stops the run.
 - **`mysql -p secret` (with a space) is not redacted on purpose**: mysql prompts and reads
   `secret` as the database name, so it is not a credential.
+- **Every remote line runs under `sh -c` and must end with a marker**: the login shell on the target may
+  be zsh or fish and reject a line POSIX sh accepts. A topic whose end marker is missing counts as failed
+  (it never replaces good data), and a failed topic leaves `<topic>.failed` next to the file it kept, so
+  stale data is recognizable.
+- **The guard says so when it has nothing to work with**: with no `printers.conf` it prints a note once and
+  cannot recognize printers (there is no other way to know which aliases are printers, and failing
+  closed would block every non-printer use). List the printers, every alias and every address form.
 - **Output is bounded**: each topic is limited to 2 MiB (`ulimit -f`); a host streaming more makes that
   topic fail with a note instead of filling the disk. Control characters are stripped and lines capped
-  *before* redaction, which keeps the redactor's input bounded.
+  at 8000 bytes *before* redaction (bounded input), and capped at 1000 after it, so a secret that
+  starts before byte 1000 is redacted whole.
 - **An unquoted value ends at whitespace**, tab included (`PASSWORD=ab<TAB>cd` redacts `ab` only), like
   a space; quote it to redact the whole string.
 - **A `kill -9` can leave `*.raw` files**; a trap cannot catch SIGKILL. They sit in a 0700

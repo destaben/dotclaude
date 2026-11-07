@@ -129,6 +129,12 @@ class RedactTests(unittest.TestCase):
                 self.assertNotIn(secret, self.redact(line + "\n"))
         self.assertEqual(self.redact("GET /x?keyboard=us&page=2\n"), "GET /x?keyboard=us&page=2\n")
 
+    def test_a_secret_crossing_the_1000_byte_line_cap_is_redacted_before_the_cut(self):
+        line = 'x=1 PASSWORD="' + "s3cr3t" * 200 + '" tail'     # value runs past byte 1000
+        out = sh(f". {SCRIPTS}/lib.sh; sanitize_text 8000 | redact | cap_lines 1000", line + "\n").stdout
+        self.assertNotIn("s3cr3t", out)
+        self.assertIn("PASSWORD=REDACTED", out)
+
     def test_an_unquoted_value_ends_at_whitespace_tab_included(self):
         self.assertEqual(self.redact("PASSWORD=ab\tcd\n"), "PASSWORD=REDACTED\tcd\n")   # documented non-goal, pinned
 
@@ -260,6 +266,7 @@ class StubSshCase(unittest.TestCase):
             'echo "debug1: Authenticated to box" >&2\n'
             'echo "DB_PASSWORD=hunter2 remote=https://u:tok@host/r.git"\n'
             'printf "\\033[2Jescape\\n"; head -c 3000 /dev/zero | tr "\\0" a; echo\n'
+            '[ "$STUB_MODE" = abort ] || { tok=$(printf "%s" "$last" | grep -o "__RH_END_[0-9_]*__" | head -1); [ -z "$tok" ] || echo "$tok"; }\n'
             'exit 0\n')
         stub.chmod(0o755)
         self.env = {**os.environ, "HOME": str(t / "home"), "PATH": f"{t / 'bin'}:{os.environ['PATH']}",
@@ -302,7 +309,8 @@ class InventoryTests(StubSshCase):
         self.run_inventory("ok")
         last = Path(self.env["STUB_LOG"]).read_text().strip()
         self.assertTrue(last.startswith("timeout 90 sh -c '"), last)
-        self.assertTrue(last.endswith("; :'"), last)   # remote status neutralized, see inventory.sh
+        self.assertIn("; :; echo; echo __RH_END_", last)   # status neutralized, then the end marker
+        self.assertTrue(last.endswith("__'"), last)
         self.assertEqual(subprocess.run(["sh", "-n", "-c", last]).returncode, 0)
 
     def test_output_directory_is_private_even_if_it_already_existed(self):
@@ -344,6 +352,20 @@ class InventoryTests(StubSshCase):
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn("os", r.stdout.split("failed", 1)[1])
         self.assertEqual((self.out / "box" / "os.txt").read_text(), before)
+
+    def test_a_run_whose_end_marker_is_missing_never_replaces_good_data(self):
+        self.run_inventory("ok")
+        before = (self.out / "box" / "os.txt").read_text()
+        r = self.run_inventory("abort")      # e.g. the remote login shell rejected the line
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("0 topics ok, 10 failed", r.stdout)
+        self.assertEqual((self.out / "box" / "os.txt").read_text(), before)
+        self.assertIn("end marker is missing", (self.out / "box" / "os.err").read_text())
+        self.assertTrue((self.out / "box" / "os.failed").exists())
+
+    def test_the_end_marker_is_removed_from_the_stored_output(self):
+        self.run_inventory("ok")
+        self.assertNotIn("__RH_END_", (self.out / "box" / "os.txt").read_text())
 
     def test_remote_timeout_counts_as_failed(self):
         r = self.run_inventory("timeout")
@@ -387,13 +409,18 @@ class InventoryTests(StubSshCase):
         self.assertIn("docker", r.stdout)
         self.assertEqual((self.out / "box" / "docker.txt").read_text(), before)
         self.assertIn("connection lost", (self.out / "box" / "docker.err").read_text())
+        self.assertIn("earlier run", (self.out / "box" / "docker.failed").read_text())   # stale marker
+        self.assertEqual(self.run_inventory("ok").returncode, 0)
+        self.assertFalse((self.out / "box" / "docker.failed").exists())               # cleared on success
 
     def test_missing_remote_timeout_runs_unwrapped_and_still_counts_ok(self):
         r = self.run_inventory("notimeout")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("10 topics ok, 0 failed", r.stdout)
         self.assertIn("no 'timeout'", r.stderr)
-        self.assertFalse(Path(self.env["STUB_LOG"]).read_text().startswith("timeout 90"))
+        last = Path(self.env["STUB_LOG"]).read_text()
+        self.assertTrue(last.startswith("sh -c '"), last)       # still POSIX sh, just no time limit
+        self.assertFalse(last.startswith("timeout 90"))
 
     def test_unwritable_output_location_is_an_error_not_a_success(self):
         blocker = Path(self.tmp.name, "afile")
@@ -465,6 +492,29 @@ class PrinterGuardTests(StubSshCase):
         Path(env["REMOTE_HOSTS_PRINTERS"]).write_text("other [::1]:1\n")
         r = self.run_script("probe.sh", env, "v6")
         self.assertEqual(r.returncode, 3, r.stdout + r.stderr)   # matched via the host part, then unreachable
+
+    def test_ipv6_forms_without_a_port_are_matched(self):
+        for entry in ("[::1]", "::1"):
+            with self.subTest(entry=entry):
+                env = self.conf(entry)
+                (Path(env["HOME"]) / ".ssh" / "config").write_text("Host box\n  HostName 127.0.0.1\nHost v6\n  HostName ::1\n")
+                stub = Path(self.tmp.name, "bin", "ssh")
+                if "v6) h=::1" not in stub.read_text():
+                    stub.write_text(stub.read_text().replace("other) h=10.0.0.77 ;;", "other) h=10.0.0.77 ;; v6) h=::1 ;;"))
+                Path(env["REMOTE_HOSTS_PRINTERS"]).write_text(f"other {entry}\n")
+                r = self.run_script("probe.sh", env, "v6")
+                self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+
+    def test_without_a_printer_list_the_guard_says_so_once(self):
+        env = {**self.env, "STUB_MODE": "ok", "REMOTE_HOSTS_PRINTERS": str(Path(self.tmp.name, "missing.conf"))}
+        r = self.run_script("inventory.sh", env, "box", str(self.out))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stderr.count("printer guard inactive"), 1)
+
+    def test_a_refused_printer_still_gets_a_result_line(self):
+        env = self.conf(f"127.0.0.1:{self.serve('printing')}")
+        r = self.run_script("probe.sh", env, "box")
+        self.assertIn("RESULT: refused (printer guard", r.stdout)
 
     def test_a_second_alias_for_the_same_host_is_guarded_too(self):
         port = self.serve("printing")
