@@ -16,6 +16,6 @@ for h in "$@"; do
   echo "  banner: $(nc -w 3 -- "$host" "$port" </dev/null 2>/dev/null | head -1)"
   out=$(ssh -n -v -T -o BatchMode=yes -o ConnectTimeout=5 -- "$h" true 2>&1)
   echo "$out" | grep -E "Authentications that can continue|Offering public key|Server accepts key|Authenticated to|Permission denied" | sed 's/^/  /'
-  if echo "$out" | grep -q "Authenticated to"; then echo "  RESULT: key auth OK"; else echo "  RESULT: key auth FAILED"; rc=1; fi
+  if echo "$out" | grep -q "Authenticated to"; then echo "  RESULT: key auth OK"; else echo "  RESULT: key auth FAILED"; [ "$rc" -lt 2 ] && rc=1; fi
 done
 exit $rc

@@ -53,6 +53,22 @@ class RedactTests(unittest.TestCase):
             with self.subTest(line=line):
                 self.assertNotIn(secret, self.redact(line + "\n"))
 
+    def test_quoted_multi_word_secrets_are_fully_redacted(self):
+        cases = ('PASSWORD="correct horse battery"', "--password \"correct horse\"", "password: 'a b c'",
+                 '{"password": "two words"}', "TOKEN='x y z'")
+        for line in cases:
+            with self.subTest(line=line):
+                out = self.redact(line + "\n")
+                for word in ("correct", "horse", "battery", "two", "words", "x y", "a b"):
+                    self.assertNotIn(word, out)
+
+    def test_bearer_without_digits_is_redacted_but_plain_words_are_not(self):
+        self.assertNotIn("sometokenwithoutdigits", self.redact("sent Bearer sometokenwithoutdigits\n"))
+        self.assertEqual(self.redact("Basic authentication failed\n"), "Basic authentication failed\n")
+
+    def test_mysql_space_form_is_a_database_name_not_a_secret(self):
+        self.assertEqual(self.redact("mysql -u root -p secretdb\n"), "mysql -u root -p secretdb\n")
+
     def test_url_userinfo_with_at_and_slash_in_the_secret(self):
         for url, leaked in (("https://bot:p@ss@git.example/x.git", "ss@"), ("https://bot:tok/en@host/x", "tok")):
             with self.subTest(url=url):
@@ -100,8 +116,17 @@ class AliasValidationTests(unittest.TestCase):
             self.assertEqual(list(Path(d).iterdir()), [])
 
 
-class InventoryTests(unittest.TestCase):
-    """inventory.sh against a stub `ssh` on PATH, so no network is touched."""
+class ShellQuoteTests(unittest.TestCase):
+    def test_round_trips_arbitrary_text_including_apostrophes(self):
+        for text in ("plain", "it's", "a'b'c", "$HOME `x` \"q\"", "", "  spaced  "):
+            with self.subTest(text=text):
+                r = subprocess.run(["sh", "-c", f'. {SCRIPTS}/lib.sh; q=$(shell_quote "$1"); eval "printf %s $q"', "_", text],
+                                   capture_output=True, text=True, timeout=30)
+                self.assertEqual(r.stdout, text)
+
+
+class StubSshCase(unittest.TestCase):
+    """Base: a temp HOME with one Host alias and a stub `ssh` first on PATH, so no network is touched."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -110,14 +135,21 @@ class InventoryTests(unittest.TestCase):
         (t / "home" / ".ssh" / "config").write_text("Host box\n  HostName 10.0.0.9\n")
         (t / "bin").mkdir()
         stub = t / "bin" / "ssh"
-        stub.write_text('#!/bin/sh\n'
-                        'for last; do :; done\n'
-                        'printf "%s\\n" "$last" > "$STUB_LOG"\n'
-                        '[ "$STUB_MODE" = timeout ] && exit 124\n'
-                        '[ "$STUB_MODE" = sleep ] && exec sleep 5\n'
-                        '[ "$STUB_MODE" = fail ] && { echo "Permission denied (publickey)." >&2; exit 255; }\n'
-                        'echo "DB_PASSWORD=hunter2 remote=https://u:tok@host/r.git"\n'
-                        'exit 0\n')
+        stub.write_text(
+            '#!/bin/sh\n'
+            'if [ "$1" = "-G" ]; then printf "hostname 127.0.0.1\\nport 1\\nuser x\\nidentityfile k\\n"; exit 0; fi\n'
+            'for last; do :; done\n'
+            'printf "%s\\n" "$last" > "$STUB_LOG"\n'
+            'case "$STUB_MODE" in\n'
+            '  fail) echo "Permission denied (publickey)." >&2; exit 255 ;;\n'
+            '  timeout) exit 124 ;;\n'
+            '  sleep) exec sleep 5 ;;\n'
+            '  notimeout) case "$last" in "command -v timeout"*) exit 1 ;; esac ;;\n'
+            '  partial) case "$last" in *"docker version"*) echo "ssh: connection lost" >&2; exit 255 ;; esac ;;\n'
+            'esac\n'
+            'echo "debug1: Authenticated to box" >&2\n'
+            'echo "DB_PASSWORD=hunter2 remote=https://u:tok@host/r.git"\n'
+            'exit 0\n')
         stub.chmod(0o755)
         self.env = {**os.environ, "HOME": str(t / "home"), "PATH": f"{t / 'bin'}:{os.environ['PATH']}",
                     "STUB_LOG": str(t / "last-command")}
@@ -127,6 +159,8 @@ class InventoryTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+
+class InventoryTests(StubSshCase):
     def run_inventory(self, mode):
         return subprocess.run([str(SCRIPTS / "inventory.sh"), "box", str(self.out)],
                               env={**self.env, "STUB_MODE": mode}, capture_output=True, text=True, timeout=60)
@@ -144,7 +178,7 @@ class InventoryTests(unittest.TestCase):
         r = self.run_inventory("fail")
         self.assertEqual(r.returncode, 1)
         self.assertIn("0 topics ok, 10 failed", r.stdout)
-        self.assertEqual((self.out / "box" / "os.txt").read_text(), "")
+        self.assertFalse((self.out / "box" / "os.txt").exists())
         self.assertIn("Permission denied", (self.out / "box" / "os.err").read_text())
 
     def test_output_dir_ignores_itself_and_callers_gitignore_is_untouched(self):
@@ -187,12 +221,49 @@ class InventoryTests(unittest.TestCase):
         self.assertNotEqual(rc, 0)
         self.assertEqual(list((self.out / "box").glob("*.raw")), [])
 
+    def test_failed_topic_keeps_its_previous_data_and_the_run_exits_nonzero(self):
+        self.assertEqual(self.run_inventory("ok").returncode, 0)
+        before = (self.out / "box" / "docker.txt").read_text()
+        self.assertTrue(before)
+        r = self.run_inventory("partial")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("9 topics ok, 1 failed", r.stdout)
+        self.assertIn("docker", r.stdout)
+        self.assertEqual((self.out / "box" / "docker.txt").read_text(), before)
+        self.assertIn("connection lost", (self.out / "box" / "docker.err").read_text())
+
+    def test_missing_remote_timeout_runs_unwrapped_and_still_counts_ok(self):
+        r = self.run_inventory("notimeout")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("10 topics ok, 0 failed", r.stdout)
+        self.assertIn("no 'timeout'", r.stderr)
+        self.assertFalse(Path(self.env["STUB_LOG"]).read_text().startswith("timeout 90"))
+
     def test_unwritable_output_location_is_an_error_not_a_success(self):
         blocker = Path(self.tmp.name, "afile")
         blocker.write_text("x")
         r = subprocess.run([str(SCRIPTS / "inventory.sh"), "box", str(blocker)], env={**self.env, "STUB_MODE": "ok"},
                            capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 2)
+
+
+class ProbeTests(StubSshCase):
+    def probe(self, mode, *aliases):
+        return subprocess.run([str(SCRIPTS / "probe.sh"), *aliases], env={**self.env, "STUB_MODE": mode},
+                              capture_output=True, text=True, timeout=60)
+
+    def test_reports_ok_and_failed_with_matching_exit_codes(self):
+        ok = self.probe("ok", "box")
+        self.assertEqual(ok.returncode, 0, ok.stdout)
+        self.assertIn("RESULT: key auth OK", ok.stdout)
+        bad = self.probe("fail", "box")
+        self.assertEqual(bad.returncode, 1)
+        self.assertIn("RESULT: key auth FAILED", bad.stdout)
+
+    def test_a_refused_alias_keeps_exit_code_2_even_if_a_later_alias_fails(self):
+        r = self.probe("fail", "-oProxyCommand=x", "box")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("refused", r.stdout)
 
 
 class PrintStateTests(unittest.TestCase):

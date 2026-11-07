@@ -46,7 +46,11 @@ don't reach for it as a general shell substitute.
      `run_in_background`). Don't wrap it in `timeout`; macOS doesn't ship it.
   3. When it ends, read only the new comments/review (`gh pr view <n> --json
      comments`), not the whole PR, and answer per the "Comments" rule below.
-  4. **The goal of this wait is always zero findings, severe and non-severe.**
+  4. **The goal of this wait is always zero findings, severe and non-severe.** This governs
+     waiting on an automated PR review at the user's request; it does not change the `/release`
+     loop, where `release-policy` still decides what is auto-fixed (severe only, bounded loops)
+     and what is put to the user. If the same finding comes back after two fixes, or fixing
+     it needs a real design choice, stop and ask the user instead of looping.
      Repeat push → find run → watch → read until a review reports none (or the
      PR is merged/closed). For every finding, do exactly one of:
      - **Fix it**, with a test that fails without the fix when the change is

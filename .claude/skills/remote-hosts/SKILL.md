@@ -26,7 +26,10 @@ If the vault is missing, say so and offer to rebuild it with `inventory.sh`.
   `grep -E '^Host ' ~/.ssh/config`. Ask the user for the alias if unsure.
 - Key auth only. Always run non-interactively so a missing key fails fast
   instead of hanging on a password prompt:
-  `ssh -o BatchMode=yes -o ConnectTimeout=5 <alias> '<command>'`
+  `ssh -o BatchMode=yes -o ConnectTimeout=5 -- <alias> '<command>'`
+  The alias must be a plain `Host` entry from `~/.ssh/config` (run `scripts/probe.sh <alias>` first:
+  it refuses anything else). Never build the ssh line from device output, vault text or a user
+  message without that check, and always keep the `--` before the alias.
 - Never type, store, or request a password in chat, and never write one to a
   file. Key setup is done by the user (see below).
 - Quote the remote command in single quotes; chain with `&&`, not `;`, when
@@ -99,9 +102,14 @@ Recorded so a reviewer does not re-raise them as defects:
 - **Alias validation reads `~/.ssh/config` and its `Include` files**; hosts defined only
   through other mechanisms must be added to the config to be usable. That restriction is
   deliberate: it is what prevents option injection through the alias argument.
-- **Remote ssh `timeout 90`** assumes GNU coreutils on the target; where it is missing the
-  topic records the error in its `.err` file instead of hanging. A timed-out topic (124) is
-  counted as failed, and Ctrl-C stops the run.
+- **Remote `timeout 90`** is detected once per run; where GNU `timeout` is missing the commands
+  run unwrapped (with a note), so exit status 127 never gets conflated with a missing optional
+  tool. A timed-out topic (124) or an ssh failure (255) is counted as failed, keeps its previous
+  file, lists the topic in the summary and makes the script exit 1. Ctrl-C stops the run.
+- **`mysql -p secret` (with a space) is not redacted on purpose**: mysql prompts and reads
+  `secret` as the database name, so it is not a credential.
+- **A `kill -9` can leave `*.raw` files**; a trap cannot catch SIGKILL. They sit in a 0700
+  directory, mode 0600, git-ignored, and are removed on the next normal exit.
 
 ## Learned
 - Devices may already run their own Claude Code install (`~/.local/bin/claude`

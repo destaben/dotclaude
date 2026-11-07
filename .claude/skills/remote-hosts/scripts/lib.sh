@@ -28,19 +28,29 @@ valid_alias() {
   done | grep -q y
 }
 
+# shell_quote <string>: print the string as one single-quoted shell word (safe for any content,
+# including apostrophes), for building a remote `sh -c '...'` command.
+shell_quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
 # redact: BEST-EFFORT removal of credentials from text on stdin. It is a safety net, not a
 # guarantee: output must still be treated as private. Covers URL userinfo (up to the last
 # "@" of the token), Authorization values, Bearer/Basic tokens, "--password X" style flags,
 # "curl -u user:pass", "mysql -pSECRET", and NAME=value / NAME: value for password, passwd,
 # passphrase, pass, pwd, token, secret, api/access/private key and credentials (including
-# prefixed names such as DB_PASSWORD or suffixed ones such as TOKEN_FILE).
+# prefixed names such as DB_PASSWORD or suffixed ones such as TOKEN_FILE). Values may be bare,
+# or quoted with spaces ("correct horse battery").
+# Deliberate non-goal: "mysql -p secret" (with a space) is NOT a password: mysql then prompts
+# and treats "secret" as the database name, so redacting it would only hide a diagnostic.
 redact() {
   perl -pe '
+    my $v = q{(?:"[^"]*"|\x27[^\x27]*\x27|[^\s,"\x27]+)};
     s{(://)\S*@}{$1}g;
     s{(?i)(authorization["\x27]?\s*[=:]\s*).*}{$1REDACTED}g;
-    s{(?i)\b(bearer|basic)\s+(?=[A-Za-z0-9._~+/=-]*[0-9._~+/=-])[A-Za-z0-9._~+/=-]{12,}}{$1 REDACTED}g;
-    s{(?i)(--?(?:password|passwd|passphrase|pass|pwd|token|secret|api-?key|access-?key)(?:\s+|=))(?!-)\S+}{$1REDACTED}g;
+    s{(?i)\b(bearer|basic)\s+(?:(?=[A-Za-z0-9._~+/=-]*[0-9._~+/=-])[A-Za-z0-9._~+/=-]{8,}|[A-Za-z0-9._~+/=-]{20,})}{$1 REDACTED}g;
+    s{(?i)(--?(?:password|passwd|passphrase|pass|pwd|token|secret|api-?key|access-?key)(?:\s+|=))(?!-)(?:"[^"]*"|\x27[^\x27]*\x27|\S+)}{$1REDACTED}g;
     s{(?i)(\s-u\s+)[^\s:]+:\S+}{$1REDACTED}g;
     s{(?i)(\bmysql\w*\b[^\n]*?\s)-p\S+}{$1-pREDACTED}g;
-    s{(?i)((?:(?:password|passwd|passphrase|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|credentials?)(?:[_-][A-Za-z0-9_-]*)?|pass|pwd)["\x27]?\s*[=:]\s*["\x27]?)[^\s,"\x27]+}{$1REDACTED}g'
+    s{(?i)((?:(?:password|passwd|passphrase|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|credentials?)(?:[_-][A-Za-z0-9_-]*)?|pass|pwd)["\x27]?\s*[=:]\s*)(?:"[^"]*"|\x27[^\x27]*\x27|[^\s,"\x27]+)}{$1REDACTED}g'
 }
