@@ -1,12 +1,14 @@
 # shellcheck shell=sh
 # Shared helpers, sourced by the other scripts (POSIX sh).
 
-# ssh_config_files: the main ssh config plus files pulled in by Include directives.
-ssh_config_files() {
-  c=$HOME/.ssh/config
-  [ -r "$c" ] || return 0
-  printf '%s\n' "$c"
-  awk 'tolower($1)=="include"{for(i=2;i<=NF;i++)print $i}' "$c" | while read -r p; do
+# ssh_config_files: the main ssh config plus files pulled in by Include directives, followed
+# recursively up to 3 levels deep (which also bounds include cycles).
+ssh_config_files() { _ssh_cfg "$HOME/.ssh/config" 0; }
+_ssh_cfg() {
+  [ -r "$1" ] || return 0
+  printf '%s\n' "$1"
+  [ "$2" -lt 3 ] || return 0
+  awk 'tolower($1)=="include"{for(i=2;i<=NF;i++)print $i}' "$1" | while read -r p; do
     case "$p" in
       /*) pre=""; pat=$p ;;
       "~"/*) pre="$HOME/"; pat=${p#"~"/} ;;
@@ -14,7 +16,7 @@ ssh_config_files() {
     esac
     # The prefix is quoted (HOME may contain spaces); only the user's glob pattern is expanded.
     # shellcheck disable=SC2086
-    for f in "$pre"$pat; do [ -f "$f" ] && printf '%s\n' "$f"; done
+    for f in "$pre"$pat; do [ -f "$f" ] && _ssh_cfg "$f" $(($2 + 1)); done
   done
 }
 
@@ -37,7 +39,7 @@ shell_quote() {
 # redact: BEST-EFFORT removal of credentials from text on stdin. It is a safety net, not a
 # guarantee: output must still be treated as private. Covers URL userinfo (up to the last
 # "@" of the token), Authorization values, Bearer/Basic tokens, "--password X" style flags,
-# "curl -u user:pass", "mysql -pSECRET", and NAME=value / NAME: value for password, passwd,
+# "curl -u/--user user:pass", "sshpass -p SECRET", "mysql -pSECRET", and NAME=value / NAME: value for password, passwd,
 # passphrase, pass, pwd, token, secret, auth, cookie, session, credentials and any NAME_KEY
 # (including prefixed names such as DB_PASSWORD or suffixed ones such as TOKEN_FILE). A value is
 # either one bare run of non-space characters (commas included) or a quoted string that may
@@ -53,7 +55,8 @@ redact() {
     s{(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}}{Bearer REDACTED}g;
     s{(?i)\bbasic\s+(?:(?=[A-Za-z0-9._~+/=-]*[0-9._~+/=-])[A-Za-z0-9._~+/=-]{8,}|[A-Za-z0-9._~+/=-]{20,})}{Basic REDACTED}g;
     s{(?i)(--?(?:password|passwd|passphrase|pass|pwd|token|secret|api-?key|access-?key)(?:\s+|=))(?!--[A-Za-z])(?:"[^"]*"|\x27[^\x27]*\x27|\S+)}{$1REDACTED}g;
-    s{(?i)(\s-u\s+)(?:"[^"]*"|\x27[^\x27]*\x27|[^\s:]+:\S+)}{$1REDACTED}g;
+    s{(?i)(\s(?:-u|--user|--proxy-user)(?:\s+|=))(?:"[^"]*"|\x27[^\x27]*\x27|[^\s:]+:\S+)}{$1REDACTED}g;
+    s{(?i)(\bsshpass\b[^\n]*?\s-p\s*)(?:\"[^\"]*\"|\x27[^\x27]*\x27|\S+)}{$1REDACTED}g;
     s{(?i)(\bmysql\w*\b[^\n]*?\s)-p(?:"[^"]*"|\x27[^\x27]*\x27|\S+)}{$1-pREDACTED}g;
     s{(?i)((?:(?:password|passwd|passphrase|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|credentials?)(?:[_-][A-Za-z0-9_-]*)?|pass|pwd|auth|cookie|session(?:[_-]?(?:id|token|key))?|[A-Za-z0-9]+[_-]key)["\x27]?\s*[=:]\s*)(?:"[^"]*"|\x27[^\x27]*\x27|[^\s"\x27]+)}{$1REDACTED}g'
 }

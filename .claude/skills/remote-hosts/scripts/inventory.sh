@@ -14,7 +14,8 @@ valid_alias "$h" && [ -n "$base" ] || { echo "usage: inventory.sh <alias> <outdi
 command -v perl >/dev/null 2>&1 || { echo "inventory.sh needs perl for redaction" >&2; exit 2; }
 umask 077
 out=$base/$h
-mkdir -p "$out" || { echo "cannot create $out" >&2; exit 2; }
+# chmod also tightens a pre-existing directory
+if ! mkdir -p "$out" || ! chmod 700 "$out"; then echo "cannot create $out" >&2; exit 2; fi
 # Raw (unredacted) files are removed on exit and on Ctrl-C/TERM. SIGKILL cannot be trapped, so
 # after a kill -9 they could remain: they live in a 0700 directory, mode 0600, and git-ignored.
 trap 'rm -f "$out"/*.raw "$out"/*.new' EXIT

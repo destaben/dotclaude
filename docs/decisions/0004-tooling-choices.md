@@ -30,3 +30,10 @@
    measured yet. A CLI also needs no connector configured. The version is
    pinned and bumped deliberately. If the measured cost is no better, switching
    back is a change confined to that skill.
+6. **`gh run watch` for waiting on a workflow run (2026-11-07).** Item 1 keeps the
+   GitHub MCP connector as the default; this is a deliberate exception, not a
+   change to it. The connector has no operation that waits for a run to finish,
+   and the alternative was fixed sleeps or timed wake-ups that either wait too
+   long or poll for nothing. The `github-ops` skill therefore uses `gh run list`
+   and `gh run watch` via Bash for this one operation, in the background, and
+   says so. Everything else stays on the connector.

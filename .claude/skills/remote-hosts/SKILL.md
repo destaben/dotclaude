@@ -16,9 +16,11 @@ skill). Before any task on a device: read `README.md`, then `hosts/<alias>.md`
 and the repo doc it points to; state which host and service the task touches;
 prefer changing the stack through its repo and deploy scripts. After any change
 or discovery, update the vault docs in the same session.
-Refresh facts with `scripts/inventory.sh <alias> ~/homelab-vault/raw` (never on a printer host
-unless `scripts/print-state.sh` exits 0, see the printers section)
-(read-only; credentials are redacted best-effort, remote commands run under a 90 s timeout when the target has GNU `timeout` (otherwise unbounded, with a note), and the per-host output directory ignores itself in git) and fix any drift in the docs.
+Refresh facts with `scripts/inventory.sh <alias> ~/homelab-vault/raw` and fix any drift in the
+docs. The script is read-only and redacts credentials best-effort; the per-host output directory is
+created 0700 and ignores itself in git; remote commands are bounded by a 90 s timeout when the target
+has GNU `timeout` (otherwise unbounded, with a note). On a printer host, run it only if
+`scripts/print-state.sh` exits 0 (see the printers section).
 If the vault is missing, say so and offer to rebuild it with `inventory.sh`.
 
 ## Conventions
@@ -107,7 +109,7 @@ Recorded so a reviewer does not re-raise them as defects:
   matching shell/env semantics; quote it to redact the whole string.
 - **The `*.raw`/`*.new` cleanup trap** only touches files with those names inside the per-alias output
   directory this script owns; they are its own temporary files, so deleting leftovers is intended.
-- **Alias validation reads `~/.ssh/config` and its `Include` files**; hosts defined only
+- **Alias validation reads `~/.ssh/config` and its `Include` files** (followed up to 3 levels); hosts defined only
   through other mechanisms must be added to the config to be usable. That restriction is
   deliberate: it is what prevents option injection through the alias argument.
 - **Remote `timeout 90`** is detected once per run; where GNU `timeout` is missing the commands
@@ -118,6 +120,10 @@ Recorded so a reviewer does not re-raise them as defects:
   `secret` as the database name, so it is not a credential.
 - **A `kill -9` can leave `*.raw` files**; a trap cannot catch SIGKILL. They sit in a 0700
   directory, mode 0600, git-ignored, and are removed on the next normal exit.
+
+- **Device-controlled text is never echoed verbatim**: `probe.sh` shows only `SSH-<ver>-<one token>`
+  from the banner and `print-state.sh` shows only a known state, a sanitized bounded file name and a
+  number. IPv6 hosts are passed as `[addr]:port`.
 
 ## Learned
 - Devices may already run their own Claude Code install (`~/.local/bin/claude`
