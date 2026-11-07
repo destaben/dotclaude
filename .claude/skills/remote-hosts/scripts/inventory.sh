@@ -8,10 +8,12 @@
 . "$(dirname "$0")/lib.sh"
 h=$1; base=$2
 valid_alias "$h" && [ -n "$base" ] || { echo "usage: inventory.sh <alias> <outdir> (alias must be a Host in ~/.ssh/config)" >&2; exit 2; }
+command -v perl >/dev/null 2>&1 || { echo "inventory.sh needs perl for redaction" >&2; exit 2; }
 umask 077
 out=$base/$h
 mkdir -p "$out" || { echo "cannot create $out" >&2; exit 2; }
-trap 'rm -f "$out"/*.raw' EXIT INT TERM   # never leave unredacted data behind
+trap 'rm -f "$out"/*.raw' EXIT            # never leave unredacted data behind
+trap 'exit 130' INT TERM                  # Ctrl-C stops the run (the EXIT trap cleans up)
 [ -e "$out/.gitignore" ] || printf '*\n' > "$out/.gitignore" || { echo "cannot write in $out" >&2; exit 2; }   # self-ignoring; never touches the caller's own .gitignore
 ok=0; fail=0
 # r <topic> <remote command>: data goes to <topic>.txt, ssh stderr to <topic>.err (both redacted).
@@ -22,11 +24,13 @@ r() { name=$1; shift
   q=$(printf '%s' "$*" | sed "s/'/'\\\\''/g")
   ssh -n -T -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -- "$h" "timeout 90 sh -c '$q'" > "$out/$name.raw" 2> "$out/$name.err.raw"
   rc=$?   # taken directly from ssh, not from a pipeline
-  redact < "$out/$name.raw" > "$out/$name.txt"
-  redact < "$out/$name.err.raw" > "$out/$name.err"
+  # a failing redactor must never produce a "successful" topic
+  redact < "$out/$name.raw" > "$out/$name.txt" && redact < "$out/$name.err.raw" > "$out/$name.err" || rc=255
   rm -f "$out/$name.raw" "$out/$name.err.raw"
+  [ "$rc" -eq 124 ] && echo "timed out after 90 s: some output may be missing" >> "$out/$name.err"
   [ -s "$out/$name.err" ] || rm -f "$out/$name.err"
-  if [ "$rc" -eq 255 ]; then fail=$((fail+1)); else ok=$((ok+1)); fi; }
+  # 255 = ssh connection/auth failure (or redaction failure), 124 = remote timeout
+  if [ "$rc" -eq 255 ] || [ "$rc" -eq 124 ]; then fail=$((fail+1)); else ok=$((ok+1)); fi; }
 r os 'hostnamectl 2>/dev/null; echo; cat /etc/os-release; echo; uname -a; echo; uptime; echo; cat /proc/device-tree/model 2>/dev/null; echo; lscpu | head -20; echo; free -h; echo; lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL; echo; df -hT -x tmpfs -x devtmpfs; echo; findmnt -t ext4,vfat,nfs,cifs,btrfs'
 r users 'id; echo; getent passwd | awk -F: "\$3>=1000 && \$3<65000"; echo; getent group sudo docker; echo; last -n 15 2>/dev/null; echo; ls -la ~ ~/.ssh | grep -v private'
 r network 'ip -br a; echo; ip r; echo; cat /etc/resolv.conf; echo; ss -tulpn 2>/dev/null; echo; nmcli -t dev status 2>/dev/null; ls /etc/netplan /etc/network/interfaces.d /etc/NetworkManager/system-connections 2>/dev/null'

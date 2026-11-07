@@ -34,6 +34,18 @@ don't reach for it as a general shell substitute.
     whether to extend a template rather than inventing a one-off shape.
 - **Check PR status:** ask for status/checks only, not the full diff, unless
   you specifically need to review code.
+- **Wait for a workflow run (e.g. an automated PR review) after a push:** don't
+  guess with fixed sleeps or timed wakeups. The MCP connector has no "watch", so
+  use `gh` via Bash for this one operation (and say so):
+  1. Find the run for the pushed commit:
+     `gh run list --branch <branch> --limit 5 --json databaseId,workflowName,status,headSha --jq '.[]|"\(.databaseId) \(.workflowName) \(.status) \(.headSha[0:7])"'`
+     — pick the run whose sha is your push (retry once after a few seconds if it
+     isn't listed yet).
+  2. Watch it **in the background** so you are notified when it finishes, with no
+     polling: `gh run watch <id> --exit-status --interval 10` (Bash with
+     `run_in_background`). Don't wrap it in `timeout`; macOS doesn't ship it.
+  3. When it ends, read only the new comments/review (`gh pr view <n> --json
+     comments`), not the whole PR, and answer per the "Comments" rule below.
 - **List issues/PRs:** request a narrow filter (author, label, state) rather
   than paging through everything.
 - **Comments:** post once, update in place on revision — don't accumulate

@@ -1,5 +1,7 @@
 import http.server
 import os
+import signal
+import time
 import shutil
 import subprocess
 import tempfile
@@ -78,6 +80,16 @@ class AliasValidationTests(unittest.TestCase):
                                        env={**os.environ, "HOME": home}, capture_output=True, timeout=30)
                     self.assertEqual(r.returncode == 0, ok)
 
+    def test_include_path_under_a_home_with_spaces_is_honoured(self):
+        with tempfile.TemporaryDirectory() as base:
+            home = Path(base, "My Home")
+            (home / ".ssh" / "conf.d").mkdir(parents=True)
+            (home / ".ssh" / "config").write_text("Include conf.d/*.conf\n")
+            (home / ".ssh" / "conf.d" / "a.conf").write_text("Host spaced\n  HostName 10.0.0.3\n")
+            r = subprocess.run(["sh", "-c", f". {SCRIPTS}/lib.sh; valid_alias spaced"],
+                               env={**os.environ, "HOME": str(home)}, capture_output=True, timeout=30)
+            self.assertEqual(r.returncode, 0)
+
     def test_probe_and_inventory_refuse_bad_alias_without_running_ssh(self):
         r = subprocess.run([str(SCRIPTS / "probe.sh"), "-oProxyCommand=false"], capture_output=True, text=True, timeout=30)
         self.assertNotEqual(r.returncode, 0)
@@ -101,6 +113,8 @@ class InventoryTests(unittest.TestCase):
         stub.write_text('#!/bin/sh\n'
                         'for last; do :; done\n'
                         'printf "%s\\n" "$last" > "$STUB_LOG"\n'
+                        '[ "$STUB_MODE" = timeout ] && exit 124\n'
+                        '[ "$STUB_MODE" = sleep ] && exec sleep 5\n'
                         '[ "$STUB_MODE" = fail ] && { echo "Permission denied (publickey)." >&2; exit 255; }\n'
                         'echo "DB_PASSWORD=hunter2 remote=https://u:tok@host/r.git"\n'
                         'exit 0\n')
@@ -144,6 +158,34 @@ class InventoryTests(unittest.TestCase):
         last = Path(self.env["STUB_LOG"]).read_text().strip()
         self.assertTrue(last.startswith("timeout 90 sh -c '"), last)
         self.assertEqual(subprocess.run(["sh", "-n", "-c", last]).returncode, 0)
+
+    def test_remote_timeout_counts_as_failed(self):
+        r = self.run_inventory("timeout")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("0 topics ok, 10 failed", r.stdout)
+        self.assertIn("timed out", (self.out / "box" / "os.err").read_text())
+
+    def test_failing_redactor_never_reports_success(self):
+        fake = Path(self.tmp.name, "bin", "perl")
+        fake.write_text("#!/bin/sh\nexit 1\n")
+        fake.chmod(0o755)
+        r = self.run_inventory("ok")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("0 topics ok", r.stdout)
+
+    def test_ctrl_c_stops_the_run_and_leaves_no_raw_files(self):
+        p = subprocess.Popen([str(SCRIPTS / "inventory.sh"), "box", str(self.out)],
+                             env={**self.env, "STUB_MODE": "sleep"}, start_new_session=True,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(1)
+        os.killpg(p.pid, signal.SIGINT)   # what Ctrl-C does: signals the whole foreground group
+        try:
+            rc = p.wait(timeout=4)
+        except subprocess.TimeoutExpired:
+            os.killpg(p.pid, signal.SIGKILL)
+            self.fail("inventory.sh kept running after SIGINT")
+        self.assertNotEqual(rc, 0)
+        self.assertEqual(list((self.out / "box").glob("*.raw")), [])
 
     def test_unwritable_output_location_is_an_error_not_a_success(self):
         blocker = Path(self.tmp.name, "afile")

@@ -7,9 +7,14 @@ ssh_config_files() {
   [ -r "$c" ] || return 0
   printf '%s\n' "$c"
   awk 'tolower($1)=="include"{for(i=2;i<=NF;i++)print $i}' "$c" | while read -r p; do
-    case "$p" in /*) ;; "~"/*) p=$HOME/${p#"~"/} ;; *) p=$HOME/.ssh/$p ;; esac
-    # shellcheck disable=SC2086  # the glob in an Include pattern must expand
-    for f in $p; do [ -f "$f" ] && printf '%s\n' "$f"; done
+    case "$p" in
+      /*) pre=""; pat=$p ;;
+      "~"/*) pre="$HOME/"; pat=${p#"~"/} ;;
+      *) pre="$HOME/.ssh/"; pat=$p ;;
+    esac
+    # The prefix is quoted (HOME may contain spaces); only the user's glob pattern is expanded.
+    # shellcheck disable=SC2086
+    for f in "$pre"$pat; do [ -f "$f" ] && printf '%s\n' "$f"; done
   done
 }
 

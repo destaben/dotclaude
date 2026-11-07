@@ -21,6 +21,7 @@ Refresh facts with `scripts/inventory.sh <alias> ~/homelab-vault/raw`
 If the vault is missing, say so and offer to rebuild it with `inventory.sh`.
 
 ## Conventions
+- Script paths such as `scripts/probe.sh` are relative to this skill's directory.
 - One alias per device, e.g. `printer`, `server`. List them with
   `grep -E '^Host ' ~/.ssh/config`. Ask the user for the alias if unsure.
 - Key auth only. Always run non-interactively so a missing key fails fast
@@ -32,9 +33,11 @@ If the vault is missing, say so and offer to rebuild it with `inventory.sh`.
   later steps depend on earlier ones.
 
 ## One-time setup per device (user runs it)
-Claude cannot answer a password prompt, so the user runs, once per alias:
+Claude cannot answer a password prompt, so the user runs, once per alias, **in
+their own terminal (not with `!` inside Claude Code**, which has no TTY; see
+"Diagnosing a connection"):
 
-    ! ssh-copy-id -i ~/.ssh/id_ed25519.pub <alias>
+    ssh-copy-id -i ~/.ssh/id_ed25519.pub <alias>
 
 Then verify: `ssh -o BatchMode=yes <alias> 'echo ok; uname -a'`.
 If it still fails, check `ssh -v <alias>` output for the offered key and the
@@ -97,7 +100,8 @@ Recorded so a reviewer does not re-raise them as defects:
   through other mechanisms must be added to the config to be usable. That restriction is
   deliberate: it is what prevents option injection through the alias argument.
 - **Remote ssh `timeout 90`** assumes GNU coreutils on the target; where it is missing the
-  topic records the error in its `.err` file instead of hanging.
+  topic records the error in its `.err` file instead of hanging. A timed-out topic (124) is
+  counted as failed, and Ctrl-C stops the run.
 
 ## Learned
 - Devices may already run their own Claude Code install (`~/.local/bin/claude`
