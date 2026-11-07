@@ -46,6 +46,20 @@ don't reach for it as a general shell substitute.
      `run_in_background`). Don't wrap it in `timeout`; macOS doesn't ship it.
   3. When it ends, read only the new comments/review (`gh pr view <n> --json
      comments`), not the whole PR, and answer per the "Comments" rule below.
+  4. **The goal of this wait is always zero findings, severe and non-severe.**
+     Repeat push → find run → watch → read until a review reports none (or the
+     PR is merged/closed). For every finding, do exactly one of:
+     - **Fix it**, with a test that fails without the fix when the change is
+       testable, and run the full suite before pushing.
+     - **Justify it** when it is not a real defect or is an accepted trade-off:
+       write the reason where a reviewer will see it next time (a code comment at
+       the spot, plus a "Design notes" or equivalent section in the relevant doc),
+       and state it in a PR comment. The aim is that the same finding is never
+       raised twice, so the justification must be specific (what, why, what
+       control makes it acceptable), not "by design".
+     Never skip, dismiss, or silently defer a finding, and never weaken a test
+     to make a review pass. Bundle the fixes for one review into a single push
+     so each push costs one review run.
 - **List issues/PRs:** request a narrow filter (author, label, state) rather
   than paging through everything.
 - **Comments:** post once, update in place on revision — don't accumulate
