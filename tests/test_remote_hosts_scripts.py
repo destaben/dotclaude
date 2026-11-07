@@ -17,9 +17,9 @@ def setUpModule():
     """Hermetic environment: no printer guard from the developer's shell or real vault."""
     global _TMP_VAULT
     _TMP_VAULT = tempfile.TemporaryDirectory()
-    for var in ("REMOTE_HOSTS_FORCE", "REMOTE_HOSTS_PRINTERS"):
+    for var in ("REMOTE_HOSTS_FORCE", "REMOTE_HOSTS_PRINTERS", "REMOTE_HOSTS_VAULT"):
         os.environ.pop(var, None)
-    os.environ["HOMELAB_VAULT"] = _TMP_VAULT.name
+    os.environ["XDG_CONFIG_HOME"] = _TMP_VAULT.name     # an empty config dir: the real one is never read
 
 
 def tearDownModule():
@@ -514,6 +514,23 @@ class PrinterGuardTests(StubSshCase):
                     stub.write_text(stub.read_text().replace("other) h=192.0.2.77 ;;", "other) h=192.0.2.77 ;; v6) h=::1 ;;"))
                 Path(env["REMOTE_HOSTS_PRINTERS"]).write_text(f"other {entry}\n")
                 r = self.run_script("probe.sh", env, "v6")
+                self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+
+    def test_printers_conf_is_found_without_any_environment_override(self):
+        port = self.serve("printing")
+        for label, extra, rel in (("xdg default", {}, "remote-hosts/printers.conf"),
+                                  ("vault variable", {"REMOTE_HOSTS_VAULT": "VAULT"}, "config/printers.conf")):
+            with self.subTest(label=label):
+                root = Path(self.tmp.name, label.replace(" ", "-"))
+                target = root / rel
+                target.parent.mkdir(parents=True)
+                target.write_text(f"box 127.0.0.1:{port}\n")
+                env = {**self.env, "STUB_MODE": "ok"}
+                if "REMOTE_HOSTS_VAULT" in extra:
+                    env["REMOTE_HOSTS_VAULT"] = str(root)
+                else:
+                    env["XDG_CONFIG_HOME"] = str(root)
+                r = self.run_script("probe.sh", env, "box")
                 self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
 
     def test_without_a_printer_list_the_guard_says_so_once(self):

@@ -38,8 +38,9 @@ shell_quote() {
 
 # printer_guard <alias>: if the alias is a printer, require print-state.sh to report it idle before
 # any ssh. Returns 3 (and explains) otherwise. The mapping file has lines "<alias> <host[:port]>"
-# (Moonraker address) and defaults to ${HOMELAB_VAULT:-$HOME/homelab-vault}/config/printers.conf
-# (override: REMOTE_HOSTS_PRINTERS). An alias counts as a printer if it is listed, OR if its
+# (Moonraker address). Location, first match wins: $REMOTE_HOSTS_PRINTERS, then
+# $REMOTE_HOSTS_VAULT/config/printers.conf, then ${XDG_CONFIG_HOME:-~/.config}/remote-hosts/printers.conf
+# (a symlink there to wherever the user keeps the file works). An alias counts as a printer if it is listed, OR if its
 # configured HostName (as `ssh -G` reports it, compared literally, no DNS lookup) equals the HostName
 # of a listed alias or the host part of a listed Moonraker address. No file: no guard. Everything
 # else fails closed: a path that exists but is not a readable regular file, or a listed printer
@@ -47,7 +48,10 @@ shell_quote() {
 # against mistakes and forgetting, not a barrier against a deliberate bypass: SKILL.md says it is
 # set only after the user agrees.
 printer_guard() {
-  cfg=${REMOTE_HOSTS_PRINTERS:-${HOMELAB_VAULT:-$HOME/homelab-vault}/config/printers.conf}
+  if [ -n "${REMOTE_HOSTS_PRINTERS:-}" ]; then cfg=$REMOTE_HOSTS_PRINTERS
+  elif [ -n "${REMOTE_HOSTS_VAULT:-}" ]; then cfg=$REMOTE_HOSTS_VAULT/config/printers.conf
+  else cfg=${XDG_CONFIG_HOME:-$HOME/.config}/remote-hosts/printers.conf
+  fi
   if [ ! -e "$cfg" ]; then
     # Without a list there is no way to know which aliases are printers, so the guard cannot act;
     # say so once instead of staying silent.

@@ -11,12 +11,12 @@ passwords, or keys. Those live only in `~/.ssh/config` and `~/.ssh/`.
 
 ## Knowledge base (read before acting)
 Instance knowledge (hosts, services, repos, restore plans, runbooks, tricks)
-lives in a **private** vault, default `~/homelab-vault` (never in this public
-skill). Before any task on a device: read `README.md`, then `hosts/<alias>.md`
+lives in a **private** vault: a repo or folder the user keeps outside this public skill (its
+location is in the user's own notes or memory; ask if you do not know it). Before any task on a device: read `README.md`, then `hosts/<alias>.md`
 and the repo doc it points to; state which host and service the task touches;
 prefer changing the stack through its repo and deploy scripts. After any change
 or discovery, update the vault docs in the same session.
-Refresh facts with `scripts/inventory.sh <alias> ~/homelab-vault/raw` and fix any drift in the
+Refresh facts with `scripts/inventory.sh <alias> <vault>/raw` and fix any drift in the
 docs. The script is read-only and redacts credentials best-effort; the per-host output directory is
 created 0700 and ignores itself in git; remote commands are bounded by a 90 s timeout when the target
 has GNU `timeout` (otherwise unbounded, with a note). On a printer host, run it only if
@@ -72,7 +72,7 @@ invasive check possible: one HTTP GET to Moonraker, no ssh.
 A Pi-class host can lose USB/serial timing under load, which ruins a print.
 
 The scripts apply this themselves (a safety net against forgetting, not a barrier against a
-deliberate bypass) for every alias in the vault's `config/printers.conf` and for any other alias whose
+deliberate bypass) for every alias in `printers.conf` and for any other alias whose
 configured `HostName` equals theirs (compared literally); a raw `ssh` command skips it, so use the scripts. List printers in `config/printers.conf`
 (lines `<alias> <host[:port]>`, the Moonraker address). `probe.sh` and `inventory.sh` then call
 `print-state.sh` themselves and refuse (exit 3) unless it reports idle. After the user agrees,
