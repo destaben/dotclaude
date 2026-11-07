@@ -6,15 +6,18 @@ change was made, not just what changed — the diff already shows what.
 ## 2026-11-07 — Administer LAN devices over SSH
 
 Added a `remote-hosts` skill so Claude can act as sysadmin for the user's own
-machines without any instance data entering this public repo. Access goes through
-named SSH aliases with key-only, non-interactive ssh, so a missing key fails fast
-instead of hanging on a prompt Claude cannot answer. Work is read-only by
-default, and state-changing steps need an explicit OK. Device facts (hosts,
-services, restore plans) live in a separate private vault that the skill points
-to. For 3D printers the first check is a single HTTP request to Moonraker rather
-than an ssh session, because heavy commands on a Pi-class host can disturb a
-running print. The helper scripts validate the alias against `~/.ssh/config`
-and redact credentials from inventory output on a best-effort basis. `github-ops` also gains a recipe for waiting on a workflow run (such as an automated PR review) with `gh run watch` in the background, which replaces guessing with fixed sleeps.
+machines without any instance data entering this public repo. Access goes
+through named SSH aliases with key-only, non-interactive ssh, so a missing key
+fails fast instead of hanging on a prompt Claude cannot answer. Work is read-
+only by default, and state-changing steps need an explicit OK. Device facts
+(hosts, services, restore plans) live in a separate private vault that the
+skill points to. For 3D printers the first check is a single HTTP request to
+Moonraker rather than an ssh session, because heavy commands on a Pi-class host
+can disturb a running print. The helper scripts validate the alias against
+`~/.ssh/config` and redact credentials from inventory output on a best-effort
+basis. `github-ops` also gains a recipe for waiting on a workflow run (such as
+an automated PR review) with `gh run watch` in the background, which replaces
+guessing with fixed sleeps.
 
 ## 2026-11-01 — Browser automation via agent-browser
 

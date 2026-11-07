@@ -66,6 +66,18 @@ class RedactTests(unittest.TestCase):
         self.assertNotIn("sometokenwithoutdigits", self.redact("sent Bearer sometokenwithoutdigits\n"))
         self.assertEqual(self.redact("Basic authentication failed\n"), "Basic authentication failed\n")
 
+    def test_dash_led_values_and_more_key_names(self):
+        cases = {"backup --password -Hunter2x": "Hunter2x", "OPENAI_KEY=sk-abc123": "sk-abc123",
+                 "cookie: sessionvalue99": "sessionvalue99", "auth=tok777": "tok777", "session_id=abcd1234": "abcd1234"}
+        for line, secret in cases.items():
+            with self.subTest(line=line):
+                self.assertNotIn(secret, self.redact(line + "\n"))
+        self.assertEqual(self.redact("primary: key\nmonkey: banana\n"), "primary: key\nmonkey: banana\n")
+
+    def test_unquoted_value_with_spaces_redacts_only_the_first_word(self):
+        # Documented non-goal: in shell/env semantics only the first word is the value.
+        self.assertEqual(self.redact("PASSWORD=correct horse\n"), "PASSWORD=REDACTED horse\n")
+
     def test_mysql_space_form_is_a_database_name_not_a_secret(self):
         self.assertEqual(self.redact("mysql -u root -p secretdb\n"), "mysql -u root -p secretdb\n")
 
@@ -79,7 +91,7 @@ class RedactTests(unittest.TestCase):
 
 class AliasValidationTests(unittest.TestCase):
     def test_option_like_and_unknown_aliases_are_refused(self):
-        for alias in ("-oProxyCommand=touch /tmp/x", "a b", "", "no-such-host-alias-xyz"):
+        for alias in ("-oProxyCommand=touch /tmp/x", "a b", "", ".", "..", ".hidden", "no-such-host-alias-xyz"):
             with self.subTest(alias=alias):
                 r = sh(f". {SCRIPTS}/lib.sh; valid_alias '{alias}'")
                 self.assertNotEqual(r.returncode, 0)
@@ -142,7 +154,7 @@ class StubSshCase(unittest.TestCase):
             'printf "%s\\n" "$last" > "$STUB_LOG"\n'
             'case "$STUB_MODE" in\n'
             '  fail) echo "Permission denied (publickey)." >&2; exit 255 ;;\n'
-            '  timeout) exit 124 ;;\n'
+            '  timeout) case "$last" in "command -v timeout"*) exit 0 ;; esac; exit 124 ;;\n'
             '  sleep) exec sleep 5 ;;\n'
             '  notimeout) case "$last" in "command -v timeout"*) exit 1 ;; esac ;;\n'
             '  partial) case "$last" in *"docker version"*) echo "ssh: connection lost" >&2; exit 255 ;; esac ;;\n'
@@ -198,6 +210,7 @@ class InventoryTests(StubSshCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn("0 topics ok, 10 failed", r.stdout)
         self.assertIn("timed out", (self.out / "box" / "os.err").read_text())
+        self.assertTrue(Path(self.env["STUB_LOG"]).read_text().startswith("timeout 90 sh -c '"))   # wrapper really used
 
     def test_failing_redactor_never_reports_success(self):
         fake = Path(self.tmp.name, "bin", "perl")
@@ -259,6 +272,20 @@ class ProbeTests(StubSshCase):
         bad = self.probe("fail", "box")
         self.assertEqual(bad.returncode, 1)
         self.assertIn("RESULT: key auth FAILED", bad.stdout)
+
+    def test_missing_nc_is_reported_as_not_checked_not_as_closed(self):
+        tools = Path(self.tmp.name, "tools")
+        tools.mkdir()
+        for name in ("sh", "dirname", "awk", "grep", "sed", "head", "cat"):
+            target = shutil.which(name)
+            if target:
+                (tools / name).symlink_to(target)
+        (tools / "ssh").symlink_to(Path(self.tmp.name, "bin", "ssh"))
+        r = subprocess.run([str(SCRIPTS / "probe.sh"), "box"], env={**self.env, "STUB_MODE": "ok", "PATH": str(tools)},
+                           capture_output=True, text=True, timeout=60)
+        self.assertIn("not checked (nc not installed)", r.stdout)
+        self.assertNotIn("CLOSED", r.stdout)
+        self.assertIn("RESULT: key auth OK", r.stdout)
 
     def test_a_refused_alias_keeps_exit_code_2_even_if_a_later_alias_fails(self):
         r = self.probe("fail", "-oProxyCommand=x", "box")

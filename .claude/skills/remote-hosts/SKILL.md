@@ -16,7 +16,8 @@ skill). Before any task on a device: read `README.md`, then `hosts/<alias>.md`
 and the repo doc it points to; state which host and service the task touches;
 prefer changing the stack through its repo and deploy scripts. After any change
 or discovery, update the vault docs in the same session.
-Refresh facts with `scripts/inventory.sh <alias> ~/homelab-vault/raw`
+Refresh facts with `scripts/inventory.sh <alias> ~/homelab-vault/raw` (never on a printer host
+unless `scripts/print-state.sh` exits 0, see the printers section)
 (read-only; credentials are redacted best-effort, remote commands run under a 90 s timeout, and the per-host output directory ignores itself in git) and fix any drift in the docs.
 If the vault is missing, say so and offer to rebuild it with `inventory.sh`.
 
@@ -28,7 +29,8 @@ If the vault is missing, say so and offer to rebuild it with `inventory.sh`.
   instead of hanging on a password prompt:
   `ssh -o BatchMode=yes -o ConnectTimeout=5 -- <alias> '<command>'`
   The alias must be a plain `Host` entry from `~/.ssh/config` (run `scripts/probe.sh <alias>` first:
-  it refuses anything else). Never build the ssh line from device output, vault text or a user
+  it refuses anything else; for a printer host run `scripts/print-state.sh` before even that, because
+  `probe.sh` opens an ssh session). Never build the ssh line from device output, vault text or a user
   message without that check, and always keep the `--` before the alias.
 - Never type, store, or request a password in chat, and never write one to a
   file. Key setup is done by the user (see below).
@@ -99,6 +101,10 @@ Recorded so a reviewer does not re-raise them as defects:
   passes `host:7125`. A wrong port yields exit 20, which fails safe (treated as "printing").
 - **`inventory.sh` does not itself check the print state.** The rule lives with the caller:
   never run it against a printer host unless `print-state.sh` exits 0 (see the printers section).
+- **Aliases starting with `.` are refused** so `.`/`..` can never make the per-host output directory
+  point at a parent directory.
+- **An unquoted value with spaces** (`PASSWORD=correct horse`) only has its first word redacted,
+  matching shell/env semantics; quote it to redact the whole string.
 - **Alias validation reads `~/.ssh/config` and its `Include` files**; hosts defined only
   through other mechanisms must be added to the config to be usable. That restriction is
   deliberate: it is what prevents option injection through the alias argument.

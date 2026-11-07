@@ -55,7 +55,9 @@ don't reach for it as a general shell substitute.
      PR is merged/closed). For every finding, do exactly one of:
      - **Fix it**, with a test that fails without the fix when the change is
        testable, and run the full suite before pushing.
-     - **Justify it** when it is not a real defect or is an accepted trade-off:
+     - **Justify it** only when it is not a real defect or is a documented trade-off, and never
+       for a severe finding (fix those). Every justification is listed to the user in your final
+       report, and the user can overrule it:
        write the reason where a reviewer will see it next time (a code comment at
        the spot, plus a "Design notes" or equivalent section in the relevant doc),
        and state it in a PR comment. The aim is that the same finding is never
