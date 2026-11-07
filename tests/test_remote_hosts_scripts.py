@@ -535,7 +535,7 @@ class PrinterGuardTests(StubSshCase):
         r = self.run_script("probe.sh", env, "twin")
         self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
 
-    @unittest.skipIf(os.geteuid() == 0, "root can read any file")
+    @unittest.skipIf(os.geteuid() == 0, "root can read any file; the FIFO test covers the same branch for root")
     def test_an_unreadable_config_fails_closed(self):
         env = self.conf("127.0.0.1:1")
         os.chmod(env["REMOTE_HOSTS_PRINTERS"], 0)
@@ -552,6 +552,21 @@ class PrinterGuardTests(StubSshCase):
         r = self.run_script("probe.sh", env, "box")
         self.assertEqual(r.returncode, 3)
         self.assertIn("without a Moonraker address", r.stderr)
+
+    def test_a_listed_printer_on_an_unterminated_last_line_is_still_guarded(self):
+        env = self.conf("")
+        Path(env["REMOTE_HOSTS_PRINTERS"]).write_text(f"box 127.0.0.1:{self.serve('printing')}")   # no trailing newline
+        r = self.run_script("probe.sh", env, "box")
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+
+    def test_a_fifo_instead_of_a_config_file_fails_closed_for_every_uid(self):
+        env = self.conf("127.0.0.1:1")
+        path = Path(env["REMOTE_HOSTS_PRINTERS"])
+        path.unlink()
+        os.mkfifo(path)
+        r = self.run_script("probe.sh", env, "box")
+        self.assertEqual(r.returncode, 3)
+        self.assertIn("not a readable file", r.stderr)
 
     def test_a_directory_instead_of_a_config_file_fails_closed(self):
         env = self.conf("127.0.0.1:1")

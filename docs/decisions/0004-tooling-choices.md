@@ -42,9 +42,11 @@
    in `~/.ssh/config` with key-only, non-interactive ssh (`BatchMode`), not a
    device-specific MCP: nothing to install or keep running, and a missing key fails
    fast instead of hanging on a prompt the agent cannot answer. Instance facts
-   (addresses, services, restore plans) live in a separate private repo, never here,
-   because this repo is public (see `0003-shipped-config-is-portable.md`). For
+   (addresses, services, restore plans) live in a separate private vault repo, never
+   here, because this repo is public (CLAUDE.md, "Public or shared projects"). For
    printers the first look is a single HTTP request to Moonraker, because heavy
-   commands on a Pi-class host can disturb a running print; the scripts enforce
-   that as a safety net for the aliases the user lists. Device output is treated as
+   commands on a Pi-class host can disturb a running print; the scripts apply that
+   as a safety net for the aliases the user lists (and aliases with the same
+   configured `HostName`), and the guard is inactive when no printer list exists.
+   Device output is treated as
    untrusted data (the skill's own section says how).

@@ -57,7 +57,7 @@ printer_guard() {
   if [ ! -f "$cfg" ] || [ ! -r "$cfg" ]; then echo "refused: $cfg exists but is not a readable file, so the printer guard cannot be evaluated" >&2; return 3; fi
   want=$(ssh -n -G -- "$1" 2>/dev/null | awk '$1=="hostname"{print $2; exit}')
   target=""; matched=0
-  while read -r a t _; do
+  while read -r a t _ || [ -n "$a" ]; do   # the || keeps an unterminated last line
     case "$a" in ''|'#'*) continue ;; esac
     other=$(ssh -n -G -- "$a" 2>/dev/null | awk '$1=="hostname"{print $2; exit}')
     case "$t" in    # host part of host[:port], [ipv6][:port] or a bare ipv6 address

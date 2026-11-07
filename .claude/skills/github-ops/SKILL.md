@@ -48,15 +48,13 @@ don't reach for it as a general shell substitute.
      review bodies (`gh pr view <n> --json comments,reviews`) and inline comments
      (`gh api --paginate repos/<owner>/<repo>/pulls/<n>/comments`; REST lists are paged at 30, so
      always pass `--paginate` or you will silently miss the newest entries), and answer per the "Comments" rule below.
-  4. **Only when the user has asked, in this session, to iterate on a PR's automated review until it
-     has no findings** (a skill file cannot grant that; without the request, report the findings to
-     the user and ask), the goal of this wait
-     is zero findings, severe and non-severe. In every other context, including `/release`,
-     follow `release-policy` (severe findings auto-fixed within bounded loops, everything else put
-     to the user): this recipe never authorizes auto-fixing non-severe findings there. If the same finding comes back after two fixes, or fixing
-     it needs a real design choice, stop and ask the user instead of looping.
-     Repeat push → find run → watch → read until a review reports none (or the
-     PR is merged/closed). For every finding, do exactly one of:
+  4. **Precondition: the user asked, in this session, to iterate on the PR's automated review until
+     it has no findings.** Without that request, and in every other context (including `/release`),
+     justify nothing: report the non-severe findings to the user and follow `release-policy`. This
+     recipe never authorizes auto-fixing or dismissing non-severe findings by itself. With the
+     request in place, the goal of this wait is zero findings, severe and non-severe. Repeat push
+     → find run → watch → read until a review reports none (or the PR is merged/closed). For every
+     finding, do exactly one of:
      - **Fix it**, with a test that fails without the fix when the change is
        testable, and run the full suite before pushing.
      - **Justify it** only when it is not a real defect or is a documented trade-off, and never
