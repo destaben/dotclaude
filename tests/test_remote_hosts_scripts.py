@@ -199,7 +199,11 @@ class StubSshCase(unittest.TestCase):
         stub = t / "bin" / "ssh"
         stub.write_text(
             '#!/bin/sh\n'
-            'if [ "$1" = "-G" ]; then printf "hostname 127.0.0.1\\nport ${STUB_PORT:-1}\\nuser x\\nidentityfile k\\n"; exit 0; fi\n'
+            'if [ "$1" = "-n" ] && [ "$2" = "-G" ]; then shift; fi\n'
+            'if [ "$1" = "-G" ]; then\n'
+            '  case "$3" in other) h=10.0.0.77 ;; *) h=127.0.0.1 ;; esac\n'
+            '  printf "hostname %s\\nport ${STUB_PORT:-1}\\nuser x\\nidentityfile k\\n" "$h"; exit 0\n'
+            'fi\n'
             'for last; do :; done\n'
             'printf "%s\\n" "$last" > "$STUB_LOG"\n'
             'case "$STUB_MODE" in\n'
@@ -213,6 +217,7 @@ class StubSshCase(unittest.TestCase):
             'esac\n'
             'echo "debug1: Authenticated to box" >&2\n'
             'echo "DB_PASSWORD=hunter2 remote=https://u:tok@host/r.git"\n'
+            'printf "\\033[2Jescape\\n"; head -c 3000 /dev/zero | tr "\\0" a; echo\n'
             'exit 0\n')
         stub.chmod(0o755)
         self.env = {**os.environ, "HOME": str(t / "home"), "PATH": f"{t / 'bin'}:{os.environ['PATH']}",
@@ -263,6 +268,14 @@ class InventoryTests(StubSshCase):
         self.assertEqual(self.run_inventory("ok").returncode, 0)
         self.assertEqual((self.out / "box").stat().st_mode & 0o777, 0o700)
         self.assertEqual((self.out / "box" / "os.txt").stat().st_mode & 0o777, 0o600)
+
+    def test_topics_are_marked_untrusted_stripped_of_control_characters_and_line_capped(self):
+        self.run_inventory("ok")
+        text = (self.out / "box" / "os.txt").read_text()
+        self.assertTrue(text.splitlines()[0].startswith("# UNTRUSTED DEVICE OUTPUT"))
+        self.assertNotIn("\x1b", text)
+        self.assertIn("escape", text)
+        self.assertLessEqual(max(len(line) for line in text.splitlines()), 1000)
 
     def test_remote_timeout_counts_as_failed(self):
         r = self.run_inventory("timeout")
@@ -376,6 +389,25 @@ class PrinterGuardTests(StubSshCase):
         self.assertEqual(r.returncode, 0)
         self.assertIn("bypassed", r.stderr)
 
+    def test_a_second_alias_for_the_same_host_is_guarded_too(self):
+        port = self.serve("printing")
+        env = self.conf(f"127.0.0.1:{port}")
+        cfgdir = Path(env["HOME"], ".ssh")
+        (cfgdir / "config").write_text("Host box\n  HostName 127.0.0.1\nHost twin\n  HostName 127.0.0.1\n")
+        r = self.run_script("probe.sh", env, "twin")
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+
+    @unittest.skipIf(os.geteuid() == 0, "root can read any file")
+    def test_an_unreadable_config_fails_closed(self):
+        env = self.conf("127.0.0.1:1")
+        os.chmod(env["REMOTE_HOSTS_PRINTERS"], 0)
+        try:
+            r = self.run_script("probe.sh", env, "box")
+        finally:
+            os.chmod(env["REMOTE_HOSTS_PRINTERS"], 0o600)
+        self.assertEqual(r.returncode, 3)
+        self.assertIn("not readable", r.stderr)
+
     def test_guard_exit_code_outranks_a_later_refused_alias(self):
         env = self.conf(f"127.0.0.1:{self.serve('printing')}")
         r = self.run_script("probe.sh", env, "box", "-oProxyCommand=x")
@@ -383,7 +415,7 @@ class PrinterGuardTests(StubSshCase):
 
     def test_alias_not_listed_or_no_file_means_no_guard(self):
         env = self.conf(f"127.0.0.1:{self.serve('printing')}")
-        Path(env["REMOTE_HOSTS_PRINTERS"]).write_text("other 127.0.0.1:1\n")
+        Path(env["REMOTE_HOSTS_PRINTERS"]).write_text("other 10.0.0.77:1\n")
         self.assertEqual(self.run_script("probe.sh", env, "box").returncode, 0)
         env["REMOTE_HOSTS_PRINTERS"] = str(Path(self.tmp.name, "absent.conf"))
         self.assertEqual(self.run_script("probe.sh", env, "box").returncode, 0)
@@ -448,6 +480,11 @@ class ProbeTests(StubSshCase):
         self.assertLess(time.time() - started, 20)
         self.assertIn("RESULT: key auth OK", r.stdout)
         self.assertIn("not an SSH identification string", r.stdout)
+
+    def test_probe_output_contains_no_address_user_or_key_path(self):
+        out = self.probe("ok", "box").stdout
+        for leaked in ("127.0.0.1", "user x", "identityfile", "/.ssh/"):
+            self.assertNotIn(leaked, out)
 
     def test_probe_without_arguments_is_a_usage_error(self):
         r = subprocess.run([str(SCRIPTS / "probe.sh")], env=self.env, capture_output=True, text=True, timeout=30)

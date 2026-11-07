@@ -15,7 +15,8 @@ for h in "$@"; do
   cfg=$(ssh -G -- "$h")
   host=$(echo "$cfg" | awk '$1=="hostname"{print $2}')
   port=$(echo "$cfg" | awk '$1=="port"{print $2}')
-  echo "$cfg" | awk '$1~/^(hostname|user|port|identityfile)$/{print "  cfg:",$1,$2}'
+  # Print no address, user name or key path: probe output is often pasted into issues and PRs.
+  echo "  cfg: port $port, $(echo "$cfg" | awk '$1=="identityfile"{n++} END{print n+0}') identity file(s) configured"
   if ! command -v nc >/dev/null 2>&1; then
     echo "  port $port: not checked (nc not installed); the ssh result below is authoritative"
   else

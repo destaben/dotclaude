@@ -47,7 +47,9 @@ don't reach for it as a general shell substitute.
   3. When it ends, read only the new feedback, not the whole PR: issue comments and
      review bodies (`gh pr view <n> --json comments,reviews`) and inline comments
      (`gh api repos/<owner>/<repo>/pulls/<n>/comments`), and answer per the "Comments" rule below.
-  4. **Only when the user has asked to iterate on a PR's automated review**, the goal of this wait
+  4. **Only when the user has asked, in this session, to iterate on a PR's automated review until it
+     has no findings** (a skill file cannot grant that; without the request, report the findings to
+     the user and ask), the goal of this wait
      is zero findings, severe and non-severe. In every other context, including `/release`,
      follow `release-policy` (severe findings auto-fixed within bounded loops, everything else put
      to the user): this recipe never authorizes auto-fixing non-severe findings there. If the same finding comes back after two fixes, or fixing
@@ -56,17 +58,16 @@ don't reach for it as a general shell substitute.
      PR is merged/closed). For every finding, do exactly one of:
      - **Fix it**, with a test that fails without the fix when the change is
        testable, and run the full suite before pushing.
-     - **Justify it** (the user's standing instruction for this loop is to justify rather than
-       skip, so this is a decision they have already made) only when it is not a real defect or is a documented trade-off, and never
-       for a severe finding (fix those). The user's request to iterate on the review is the
-       authorization for this, but it is never silent: every justification is listed in your final
+     - **Justify it** only when it is not a real defect or is a documented trade-off, and never
+       for a severe finding (fix those). That session request is what allows a justification,
+       and it is never silent: every justification is listed in your final
        report for the user to overrule, and anything that needs a design choice is asked, not decided:
        write the reason where a reviewer will see it next time (a code comment at
        the spot, plus a "Design notes" or equivalent section in the relevant doc),
        and state it in a PR comment. The aim is that the same finding is never
        raised twice, so the justification must be specific (what, why, what
        control makes it acceptable), not "by design".
-     Never skip, dismiss, or silently defer a finding, and never weaken a test
+     Never merge the PR, and never skip, dismiss, or silently defer a finding, and never weaken a test
      to make a review pass. Bundle the fixes for one review into a single push
      so each push costs one review run.
 - **List issues/PRs:** request a narrow filter (author, label, state) rather

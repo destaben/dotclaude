@@ -36,15 +36,27 @@ shell_quote() {
   printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }
 
-# printer_guard <alias>: if the alias is listed as a printer, require print-state.sh to report it
-# idle before any ssh. Returns 3 (and explains) otherwise. The mapping file has lines
-# "<alias> <host[:port]>" (Moonraker address) and defaults to
-# ${HOMELAB_VAULT:-$HOME/homelab-vault}/config/printers.conf (override: REMOTE_HOSTS_PRINTERS).
-# No file or no entry: no guard. REMOTE_HOSTS_FORCE=1 bypasses it after the user agreed.
+# printer_guard <alias>: if the alias is a printer, require print-state.sh to report it idle before
+# any ssh. Returns 3 (and explains) otherwise. The mapping file has lines "<alias> <host[:port]>"
+# (Moonraker address) and defaults to ${HOMELAB_VAULT:-$HOME/homelab-vault}/config/printers.conf
+# (override: REMOTE_HOSTS_PRINTERS). An alias counts as a printer if it is listed, OR if it
+# resolves (ssh -G) to the same host name as a listed alias or as a listed Moonraker address, so a
+# second alias for the same machine is covered too. No file: no guard. A file that exists but cannot
+# be read fails closed. REMOTE_HOSTS_FORCE=1 bypasses it; it is a safety net against mistakes and
+# forgetting, not a barrier against a deliberate bypass: SKILL.md says it is set only after the user
+# agrees.
 printer_guard() {
   cfg=${REMOTE_HOSTS_PRINTERS:-${HOMELAB_VAULT:-$HOME/homelab-vault}/config/printers.conf}
-  [ -r "$cfg" ] || return 0
-  target=$(awk -v a="$1" '$1==a{print $2; exit}' "$cfg")
+  [ -e "$cfg" ] || return 0
+  if [ ! -r "$cfg" ]; then echo "refused: $cfg exists but is not readable, so the printer guard cannot be evaluated" >&2; return 3; fi
+  want=$(ssh -n -G -- "$1" 2>/dev/null | awk '$1=="hostname"{print $2; exit}')
+  target=""
+  while read -r a t _; do
+    case "$a" in ''|'#'*) continue ;; esac
+    other=$(ssh -n -G -- "$a" 2>/dev/null | awk '$1=="hostname"{print $2; exit}')
+    thost=${t%:[0-9]*}
+    if [ "$a" = "$1" ] || { [ -n "$want" ] && { [ "$want" = "$other" ] || [ "$want" = "$thost" ]; }; }; then target=$t; break; fi
+  done < "$cfg"
   [ -n "$target" ] || return 0
   if [ "${REMOTE_HOSTS_FORCE:-}" = 1 ]; then echo "note: print-state guard bypassed for $1 (REMOTE_HOSTS_FORCE=1)" >&2; return 0; fi
   st=$("$(dirname "$0")/print-state.sh" "$target"); gs=$?
@@ -52,6 +64,12 @@ printer_guard() {
   echo "refused: $1 is a printer and its print state is '$st' (print-state exit $gs). Do not load the host;" >&2
   echo "confirm with the user, then rerun with REMOTE_HOSTS_FORCE=1 if they agree." >&2
   return 3
+}
+
+# sanitize_text: strip control characters (keeping tab and newline) and cap every line at 1000 bytes.
+# Device output is data, never instructions; this removes terminal escape tricks and giant lines.
+sanitize_text() {
+  LC_ALL=C tr -d '\000-\010\013\014\016-\037\177' | LC_ALL=C cut -c1-1000
 }
 
 # bounded <seconds> <command...>: run a command with a hard wall-clock limit (needs perl; without
