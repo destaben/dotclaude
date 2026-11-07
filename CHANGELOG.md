@@ -3,6 +3,19 @@
 All notable changes to this repo are recorded here. Entries explain why a
 change was made, not just what changed — the diff already shows what.
 
+## 2026-11-07 — Administer LAN devices over SSH
+
+Added a `remote-hosts` skill so Claude can act as sysadmin for the user's own
+machines without any instance data entering this public repo. Access goes
+through named SSH aliases with key-only, non-interactive ssh, so a missing key
+fails fast instead of hanging on a prompt Claude cannot answer. Work is
+read-only by default, and device facts live in a separate private vault that
+the skill points to. For 3D printers the first check is one HTTP request to
+Moonraker, because heavy commands on a Pi-class host can disturb a running
+print. `github-ops` also gains a recipe for waiting on a workflow run with
+`gh run watch` instead of guessing with fixed sleeps. The design choices are
+recorded in `docs/decisions/0004-tooling-choices.md`, items 6 and 7.
+
 ## 2026-11-01 — Browser automation via agent-browser
 
 Replaced the `playwright-ops` skill with `browser-ops`, which drives the

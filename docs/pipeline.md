@@ -44,6 +44,9 @@ Quick is 3 model calls, full is 6, so it is kept for real decisions. See
   automatically — invoke it when you want a bloat check.
 - `/pr`: skips the test/review/doc steps for a change you've already verified
   yourself.
+- `remote-hosts` (skill): administering the user's own LAN devices over ssh,
+  read-only by default. It is not part of the change pipeline; see
+  `docs/decisions/0004-tooling-choices.md`, item 7.
 
 ## GitHub PR review (`.github/workflows/claude-pr-review.yml`)
 This workflow is dotclaude's own project-specific CI — it is *not* installed
@@ -64,6 +67,10 @@ write tools. The review is advisory: a prompt-injected diff can still
 influence what it says. Inactive until you
 add a `CLAUDE_CODE_OAUTH_TOKEN` repository secret. There is no API-key
 fallback: when the subscription quota runs out, the review simply doesn't run.
+
+To wait for a run's review after a push, `github-ops` uses `gh run watch` (see
+`docs/decisions/0004-tooling-choices.md`, item 6); that wait does not change the
+severity routing of `/release`.
 
 ## PR and issue templates
 Unlike the workflow above, these *are* personal and portable — see

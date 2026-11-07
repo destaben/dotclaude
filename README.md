@@ -63,7 +63,7 @@ Personal overrides (API keys, local-only permissions) go in that project's
 | Command | `/council` | Decision council: quick by default, `full` on request |
 | Command | `/release` | Full pipeline: tests → bug-hunter → docs → PR |
 | Command | `/pr` | Commit and open a PR without the full pipeline |
-| Skill | `commit-and-pr`, `github-ops`, `testing-mindset`, `release-policy`, `council-policy`, `token-budget`, `session-cost-report`, `mcp-gmail-ops`, `mcp-drive-ops`, `mcp-calendar-ops`, `mcp-docs-ops`, `browser-ops`, `codebase-memory-ops` | See `.claude/skills/*/SKILL.md` |
+| Skill | `commit-and-pr`, `github-ops`, `testing-mindset`, `release-policy`, `council-policy`, `token-budget`, `session-cost-report`, `remote-hosts`, `mcp-gmail-ops`, `mcp-drive-ops`, `mcp-calendar-ops`, `mcp-docs-ops`, `browser-ops`, `codebase-memory-ops` | See `.claude/skills/*/SKILL.md` |
 
 See `docs/pipeline.md` for the prose walkthrough and `docs/references.md` for
 what was adapted from [awesome-copilot](https://github.com/github/awesome-copilot).
@@ -80,7 +80,8 @@ It runs automatically on every non-draft, same-repo PR (`opened`/`synchronize`/`
 `ready_for_review`; a newer push cancels the run in progress), using
 `claude-haiku-5-5` at low effort to keep the per-run cost down, plus the
 `@claude review` comment and manual dispatch as a fallback — see
-`docs/decisions/0002-cost-and-quota.md` for why.
+`docs/decisions/0002-cost-and-quota.md` for why. Waiting on that review from a session
+is described in `docs/pipeline.md`.
 
 The PR/issue templates are different: they're personal defaults, installed
 to `~/.claude/templates/` and used by `commit-and-pr`/`github-ops` in *any*
@@ -133,7 +134,7 @@ inside `/release` itself.
 
 ## Token efficiency
 
-- Keep `CLAUDE.md` under 150 lines; put detail in the skill that owns it.
+- Keep `CLAUDE.md` at most 150 lines; put detail in the skill that owns it.
 - Read files with `offset`/`limit`; delegate MCP-heavy or exploratory work to
   a Haiku subagent; run `/clear` between unrelated tasks.
 - Explore code graph-first when the `codebase-memory-mcp` tools are available
