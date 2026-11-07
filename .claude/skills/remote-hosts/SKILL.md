@@ -44,7 +44,7 @@ server's `PubkeyAuthentication`/`authorized_keys` permissions.
 Before opening **any** ssh session to a 3D-printer host, make the least
 invasive check possible: one HTTP GET to Moonraker, no ssh.
 
-    scripts/print-state.sh <host-or-ip>      # exit 0 idle, 10 printing/paused, 20 unknown
+    scripts/print-state.sh <host-or-ip>      # exit 0 idle, 10 printing/paused, 20 unknown/error
 
 - **Printing/paused (10):** do not load the host. No `docker stats`, `inventory.sh`,
   builds, `apt`, image pulls, restarts, reboots, firmware or config edits. Answer
@@ -52,7 +52,7 @@ invasive check possible: one HTTP GET to Moonraker, no ssh.
   essential, a tiny ssh read (`uptime`, `tail -n 50 <log>`). Anything heavier waits
   for the print to end or needs the user's explicit OK.
 - **Idle (0):** proceed with the normal rules below.
-- **Unknown (20):** treat like printing and ask.
+- **Unknown or Klipper in `error` (20):** treat like printing and ask.
 A Pi-class host can lose USB/serial timing under load, which ruins a print.
 
 ## Safety
