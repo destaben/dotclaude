@@ -49,9 +49,9 @@ of the plan. Low confidence is still a decision — record what would change it.
 - An unanswered security or data-loss flaw: it goes back to the user.
 
 ## When the council cannot resolve it
-The `ceo` agent sits above the chair, with the user as its only superior. When the chair's verdict is
+The `claudio` agent (the CEO) sits above the chair, with the user as its only superior. When the chair's verdict is
 low-confidence on something costly to reverse, or a fatal flaw went unanswered, the decision goes back
-to the user; if the `ceo-call` skill is set up, hand it to the `ceo` agent, which phones the user. The
+to the user; if the `ceo-call` skill is set up, hand it to the `claudio` agent, which phones the user. The
 user's answer is final. If it cannot reach them, the decision stays pending.
 
 ## Model and effort

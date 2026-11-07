@@ -59,7 +59,7 @@ Personal overrides (API keys, local-only permissions) go in that project's
 | Agent | `documenter` | Updates docs after review passes (Haiku, low) |
 | Agent | `token-auditor` | On-demand context-bloat report (Haiku, low) |
 | Agent | `council-*` (contrarian, outsider, first-principles, visionary, executor, chair) | Decision advisors and the binding chair (Sonnet or Haiku) |
-| Agent | `ceo` | Above the council: phones the user for a decision the council cannot resolve (Sonnet, medium) |
+| Agent | `claudio` | The CEO, above the council: phones the user for a decision the council cannot resolve (Sonnet, medium) |
 | Command | `/plan` | Entry point: planner → plan for approval |
 | Command | `/council` | Decision council: quick by default, `full` on request |
 | Command | `/release` | Full pipeline: tests → bug-hunter → docs → PR |
@@ -98,7 +98,7 @@ flowchart TD
     A[Change request] --> B["/plan (Sonnet, medium)"]
     B -.->|design choice| Q["/council quick: council-contrarian, council-outsider, then council-chair. /council full adds council-first-principles, council-visionary, council-executor"]
     Q -.-> B
-    Q -.->|unresolved| U["ceo: phones you for the decision"]
+    Q -.->|unresolved| U["claudio (the CEO): phones you for the decision"]
     U -.-> B
     B -->|you approve| C["Implement (Haiku, high)"]
     C --> D[Scoped tests]

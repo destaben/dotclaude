@@ -63,7 +63,7 @@ CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 # Spoken phrases (Spanish). They are data for the voice, not documentation.
 PHRASES = {
-    "intro": "Hola, soy el director. Necesito una decisión.",
+    "intro": "Hola, soy Claudio. Necesito una decisión.",
     "option": "Opción {n}: {text}.",
     "choose": "Pulsa el número de tu elección, o el nueve para repetir.",
     "confirm": "Has elegido la opción {n}: {text}. Pulsa uno para confirmar, o cualquier otra tecla para elegir de nuevo.",
@@ -351,7 +351,7 @@ def build_call_file(endpoint: str, call_id: str, option_count: int, ring_timeout
     return "\n".join(
         [
             "Channel: %s" % endpoint,
-            "CallerID: CEO <0>",
+            "CallerID: Claudio <0>",
             "MaxRetries: 0",
             "WaitTime: %d" % ring_timeout,
             "Context: ceo-ask",

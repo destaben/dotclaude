@@ -1,6 +1,6 @@
 ---
 name: ceo-call
-description: Phone the owner to settle a decision the council could not, using a spoken question with numbered options and a keypad answer that is read back and confirmed. Use only when the `ceo` agent is invoked or the user asks to be called.
+description: Phone the owner to settle a decision the council could not, using a spoken question with numbered options and a keypad answer that is read back and confirmed. Use only when the `claudio` agent is invoked or the user asks to be called.
 ---
 
 # Phone the owner for a decision
@@ -8,7 +8,7 @@ description: Phone the owner to settle a decision the council could not, using a
 `scripts/ceo_call.py` places a phone call, speaks a question with numbered options, captures **one
 keypad press**, reads the choice back, and reports it only after a second press confirms it. If the
 owner does not pick up it retries, then sends a chat message instead. It is the mechanism behind the
-`ceo` agent. Standard library only.
+`claudio` agent. Standard library only.
 
 ## What it needs (set up once, on the telephony host)
 - **Asterisk** with a SIP endpoint for the owner's phone, reachable the way the owner chooses (a VPN

@@ -3,9 +3,9 @@
 All notable changes to this repo are recorded here. Entries explain why a
 change was made, not just what changed — the diff already shows what.
 
-## 2026-11-07 — A CEO agent that phones the user
+## 2026-11-07 — Claudio, a CEO agent that phones the user
 
-Added a `ceo` agent above the council and a `ceo-call` skill, so a decision the council cannot
+Added `claudio`, a CEO agent above the council and a `ceo-call` skill, so a decision the council cannot
 resolve reaches the user by phone instead of waiting in a terminal. The first version asks with
 text-to-speech and takes a keypad answer, not spoken words: a decision-council review of the
 design (recorded on the tracking issue) found that speech recognition on telephone audio is least reliable on exactly the short words (yes, no, numbers) that

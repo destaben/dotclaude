@@ -135,6 +135,7 @@ class ValidateRequestTests(unittest.TestCase):
 class PromptTests(unittest.TestCase):
     def test_each_option_has_a_readback_prompt_naming_it(self):
         prompts = ceo.build_prompts("Ship it?", ["Yes", "No"])
+        self.assertTrue(prompts["prompt"].startswith("Hola, soy Claudio."))
         self.assertIn("Opción 1: Yes", prompts["prompt"])
         self.assertIn("Opción 2: No", prompts["prompt"])
         self.assertIn("opción 2: No", prompts["confirm_2"])
