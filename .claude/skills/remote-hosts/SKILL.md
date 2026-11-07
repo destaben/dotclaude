@@ -17,7 +17,7 @@ and the repo doc it points to; state which host and service the task touches;
 prefer changing the stack through its repo and deploy scripts. After any change
 or discovery, update the vault docs in the same session.
 Refresh facts with `scripts/inventory.sh <alias> ~/homelab-vault/raw`
-(read-only; output git-ignored) and fix any drift in the docs.
+(read-only; credentials are redacted and the output directory ignores itself in git) and fix any drift in the docs.
 If the vault is missing, say so and offer to rebuild it with `inventory.sh`.
 
 ## Conventions
@@ -40,6 +40,21 @@ Then verify: `ssh -o BatchMode=yes <alias> 'echo ok; uname -a'`.
 If it still fails, check `ssh -v <alias>` output for the offered key and the
 server's `PubkeyAuthentication`/`authorized_keys` permissions.
 
+## Printers (Klipper/Moonraker): check the print state first
+Before opening **any** ssh session to a 3D-printer host, make the least
+invasive check possible: one HTTP GET to Moonraker, no ssh.
+
+    scripts/print-state.sh <host-or-ip>      # exit 0 idle, 10 printing/paused, 20 unknown
+
+- **Printing/paused (10):** do not load the host. No `docker stats`, `inventory.sh`,
+  builds, `apt`, image pulls, restarts, reboots, firmware or config edits. Answer
+  from HTTP reads (Moonraker `/printer/objects/query`, `/server/info`) or, only if
+  essential, a tiny ssh read (`uptime`, `tail -n 50 <log>`). Anything heavier waits
+  for the print to end or needs the user's explicit OK.
+- **Idle (0):** proceed with the normal rules below.
+- **Unknown (20):** treat like printing and ask.
+A Pi-class host can lose USB/serial timing under load, which ruins a print.
+
 ## Safety
 - Default to **read-only** commands (status, logs, `ls`, `cat`, `df`, `uptime`,
   `systemctl status`, `journalctl --no-pager -n 100`).
@@ -51,9 +66,9 @@ server's `PubkeyAuthentication`/`authorized_keys` permissions.
 - Large or exploratory sessions go to a Haiku subagent (see CLAUDE.md token rules).
 
 ## First contact with a new device
-Run these read-only probes and record the findings (non-sensitive, generic)
-below in a device-agnostic way, or in the user's private notes if they name
-the device:
+Run these read-only probes. Record device-specific findings (names, IPs,
+services) in the user's **private vault**, never in this public skill; only
+generic, device-agnostic lessons go in "Learned" below:
 `uname -a`, `cat /etc/os-release`, `uptime`, `df -h`, `ps -e | head`,
 and for printers also look for the control software (Klipper/Moonraker,
 OctoPrint, vendor firmware) with `ls /home` and `systemctl list-units --type=service --no-pager | head -40`.
