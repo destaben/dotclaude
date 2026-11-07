@@ -34,7 +34,8 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 SPOOL = "/var/spool/asterisk"
-SAMPLE_RATE = 16000
+# Asterisk's WAV format only opens 8 kHz files, which is also the rate of the ulaw/alaw phone codecs.
+SAMPLE_RATE = 8000
 MAX_OPTIONS = 8
 MAX_QUESTION_CHARS = 500
 MAX_OPTION_CHARS = 200
@@ -238,7 +239,9 @@ def synthesize(host: str, port: int, text: str, timeout: int = 120) -> Tuple[int
     return fmt[0], fmt[1], fmt[2], bytes(pcm)
 
 
-def resample_linear(samples, src_rate: int, dst_rate: int):
+def resample(samples, src_rate: int, dst_rate: int):
+    """Resample 16-bit mono audio. Down-sampling averages the source samples under each output
+    sample, which acts as a cheap low-pass filter so the extra high frequencies do not alias."""
     if src_rate == dst_rate or not len(samples):
         return samples
     out_len = int(len(samples) * dst_rate / src_rate)
@@ -246,17 +249,22 @@ def resample_linear(samples, src_rate: int, dst_rate: int):
     out = array.array("h")
     step = src_rate / dst_rate
     for i in range(out_len):
-        pos = i * step
-        j = int(pos)
-        frac = pos - j
-        a = samples[j]
-        b = samples[j + 1] if j < last else a
-        out.append(int(a + (b - a) * frac))
+        start = i * step
+        if step > 1:
+            lo = int(start)
+            hi = min(max(int(start + step), lo + 1), len(samples))
+            window = samples[lo:hi]
+            out.append(int(sum(window) / len(window)))
+        else:
+            j = int(start)
+            a = samples[j]
+            b = samples[j + 1] if j < last else a
+            out.append(int(a + (b - a) * (start - j)))
     return out
 
 
-def to_wav16k(rate: int, width: int, channels: int, pcm: bytes) -> bytes:
-    """Convert 16-bit PCM to a mono 16 kHz WAV, which Asterisk plays and down-converts for the phone."""
+def to_wav(rate: int, width: int, channels: int, pcm: bytes) -> bytes:
+    """Convert 16-bit PCM to a mono 8 kHz WAV, the only WAV rate Asterisk can open."""
     if width != 2:
         raise CallError("expected 16-bit speech audio")
     samples = array.array("h")
@@ -266,7 +274,7 @@ def to_wav16k(rate: int, width: int, channels: int, pcm: bytes) -> bytes:
     if channels > 1:
         frames = len(samples) // channels
         samples = array.array("h", [sum(samples[i * channels:(i + 1) * channels]) // channels for i in range(frames)])
-    samples = resample_linear(samples, rate, SAMPLE_RATE)
+    samples = resample(samples, rate, SAMPLE_RATE)
     tail = array.array("h", [0] * (SAMPLE_RATE // 4))  # a quarter second of silence after each prompt
     samples.extend(tail)
     if sys.byteorder == "big":
@@ -460,7 +468,7 @@ def ask(
         asterisk.sweep_stale()
         asterisk.make_dir(base)
         for name, text in build_prompts(clean["question"], options).items():
-            wav = to_wav16k(*synth(config["piper_host"], config["piper_port"], text))
+            wav = to_wav(*synth(config["piper_host"], config["piper_port"], text))
             asterisk.write_file("%s/%s.wav" % (base, name), wav)
         outcome = {"status": "unanswered"}
         for attempt in range(1, config["attempts"] + 1):

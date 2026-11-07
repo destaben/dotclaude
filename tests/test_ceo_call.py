@@ -145,24 +145,31 @@ class PromptTests(unittest.TestCase):
 
 
 class AudioTests(unittest.TestCase):
-    def test_wav_is_mono_16k_and_resampled(self):
-        wav = ceo.to_wav16k(22050, 2, 1, b"\x10\x00" * 22050)  # one second
+    def test_wav_is_mono_8k_because_asterisk_opens_no_other_wav_rate(self):
+        wav = ceo.to_wav(22050, 2, 1, b"\x10\x00" * 22050)  # one second
         with wave.open(io.BytesIO(wav)) as handle:
-            self.assertEqual((handle.getnchannels(), handle.getsampwidth(), handle.getframerate()), (1, 2, 16000))
-            self.assertAlmostEqual(handle.getnframes(), 16000 + 4000, delta=5)  # 1 s + 0.25 s silence
+            self.assertEqual((handle.getnchannels(), handle.getsampwidth(), handle.getframerate()), (1, 2, 8000))
+            self.assertAlmostEqual(handle.getnframes(), 8000 + 2000, delta=5)  # 1 s + 0.25 s silence
+
+    def test_downsampling_keeps_a_steady_level_and_averages_out_fast_noise(self):
+        import array
+        steady = ceo.resample(array.array("h", [1000] * 2205), 22050, 8000)
+        self.assertTrue(all(v == 1000 for v in steady))
+        noisy = ceo.resample(array.array("h", [3000, -3000] * 2205), 22050, 8000)
+        self.assertLess(max(abs(v) for v in noisy), 1500)
 
     def test_stereo_is_mixed_down_to_mono(self):
         left, right = (100).to_bytes(2, "little", signed=True), (300).to_bytes(2, "little", signed=True)
-        wav = ceo.to_wav16k(16000, 2, 2, (left + right) * 1600)
+        wav = ceo.to_wav(16000, 2, 2, (left + right) * 1600)
         with wave.open(io.BytesIO(wav)) as handle:
             self.assertEqual(handle.getnchannels(), 1)
-            self.assertAlmostEqual(handle.getnframes(), 1600 + 4000, delta=5)
+            self.assertAlmostEqual(handle.getnframes(), 800 + 2000, delta=5)
             first = int.from_bytes(handle.readframes(1), "little", signed=True)
         self.assertEqual(first, 200)
 
     def test_rejects_non_16_bit_audio(self):
         with self.assertRaises(ceo.CallError):
-            ceo.to_wav16k(22050, 1, 1, b"\x00" * 100)
+            ceo.to_wav(22050, 1, 1, b"\x00" * 100)
 
 
 class WyomingServer:
