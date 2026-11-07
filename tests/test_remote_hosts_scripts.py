@@ -1,4 +1,5 @@
 import http.server
+import os
 import shutil
 import subprocess
 import tempfile
@@ -33,7 +34,29 @@ class RedactTests(unittest.TestCase):
         self.assertNotIn("abcdefgh12345", self.redact("sent Bearer abcdefgh12345 here\n"))
 
     def test_ordinary_text_is_untouched(self):
-        self.assertEqual(self.redact("passenger: ok\nplain line\n"), "passenger: ok\nplain line\n")
+        text = "passenger: ok\nplain line\nBasic authentication failed\nMax tokens: 4096\n"
+        self.assertEqual(self.redact(text), text)
+
+    def test_space_separated_and_flag_style_secrets(self):
+        cases = {
+            "0 3 * * * /usr/local/bin/backup --password hunter2": "hunter2",
+            "curl -u bob:hunter2 http://x": "hunter2",
+            "mysql -u root -psecret123 db": "secret123",
+            "backup --token=abcd1234 --x": "abcd1234",
+            "ACCESS_KEY=AKIAEXAMPLE1": "AKIAEXAMPLE1",
+            "PASS=letmein": "letmein",
+            "pwd = letmein2": "letmein2",
+        }
+        for line, secret in cases.items():
+            with self.subTest(line=line):
+                self.assertNotIn(secret, self.redact(line + "\n"))
+
+    def test_url_userinfo_with_at_and_slash_in_the_secret(self):
+        for url, leaked in (("https://bot:p@ss@git.example/x.git", "ss@"), ("https://bot:tok/en@host/x", "tok")):
+            with self.subTest(url=url):
+                out = self.redact(url + "\n")
+                self.assertNotIn(leaked, out)
+                self.assertIn("host" if "host" in url else "git.example", out)
 
 
 class AliasValidationTests(unittest.TestCase):
@@ -43,6 +66,18 @@ class AliasValidationTests(unittest.TestCase):
                 r = sh(f". {SCRIPTS}/lib.sh; valid_alias '{alias}'")
                 self.assertNotEqual(r.returncode, 0)
 
+    def test_real_alias_is_accepted_case_insensitively_and_through_include(self):
+        with tempfile.TemporaryDirectory() as home:
+            ssh = Path(home, ".ssh")
+            ssh.mkdir()
+            (ssh / "config").write_text("Include extra.conf\nHOST printer # server\n  HostName 10.0.0.1\n")
+            (ssh / "extra.conf").write_text("Host viainclude\n  HostName 10.0.0.2\n")
+            for alias, ok in (("printer", True), ("viainclude", True), ("server", False), ("nope", False)):
+                with self.subTest(alias=alias):
+                    r = subprocess.run(["sh", "-c", f". {SCRIPTS}/lib.sh; valid_alias '{alias}'"],
+                                       env={**os.environ, "HOME": home}, capture_output=True, timeout=30)
+                    self.assertEqual(r.returncode == 0, ok)
+
     def test_probe_and_inventory_refuse_bad_alias_without_running_ssh(self):
         r = subprocess.run([str(SCRIPTS / "probe.sh"), "-oProxyCommand=false"], capture_output=True, text=True, timeout=30)
         self.assertNotEqual(r.returncode, 0)
@@ -51,6 +86,71 @@ class AliasValidationTests(unittest.TestCase):
             r = subprocess.run([str(SCRIPTS / "inventory.sh"), "-oProxyCommand=false", d], capture_output=True, text=True, timeout=30)
             self.assertEqual(r.returncode, 2)
             self.assertEqual(list(Path(d).iterdir()), [])
+
+
+class InventoryTests(unittest.TestCase):
+    """inventory.sh against a stub `ssh` on PATH, so no network is touched."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        t = Path(self.tmp.name)
+        (t / "home" / ".ssh").mkdir(parents=True)
+        (t / "home" / ".ssh" / "config").write_text("Host box\n  HostName 10.0.0.9\n")
+        (t / "bin").mkdir()
+        stub = t / "bin" / "ssh"
+        stub.write_text('#!/bin/sh\n'
+                        'for last; do :; done\n'
+                        'printf "%s\\n" "$last" > "$STUB_LOG"\n'
+                        '[ "$STUB_MODE" = fail ] && { echo "Permission denied (publickey)." >&2; exit 255; }\n'
+                        'echo "DB_PASSWORD=hunter2 remote=https://u:tok@host/r.git"\n'
+                        'exit 0\n')
+        stub.chmod(0o755)
+        self.env = {**os.environ, "HOME": str(t / "home"), "PATH": f"{t / 'bin'}:{os.environ['PATH']}",
+                    "STUB_LOG": str(t / "last-command")}
+        self.out = t / "out"
+        self.out.mkdir()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_inventory(self, mode):
+        return subprocess.run([str(SCRIPTS / "inventory.sh"), "box", str(self.out)],
+                              env={**self.env, "STUB_MODE": mode}, capture_output=True, text=True, timeout=60)
+
+    def test_happy_path_writes_redacted_topics_and_leaves_no_raw_files(self):
+        r = self.run_inventory("ok")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("10 topics ok, 0 failed", r.stdout)
+        topic = (self.out / "box" / "os.txt").read_text()
+        self.assertNotIn("hunter2", topic)
+        self.assertNotIn("tok@", topic)
+        self.assertEqual(list((self.out / "box").glob("*.raw")), [])
+
+    def test_all_ssh_failures_exit_nonzero_and_keep_errors_out_of_data_files(self):
+        r = self.run_inventory("fail")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("0 topics ok, 10 failed", r.stdout)
+        self.assertEqual((self.out / "box" / "os.txt").read_text(), "")
+        self.assertIn("Permission denied", (self.out / "box" / "os.err").read_text())
+
+    def test_output_dir_ignores_itself_and_callers_gitignore_is_untouched(self):
+        (self.out / ".gitignore").write_text("keep\n")
+        self.run_inventory("ok")
+        self.assertEqual((self.out / ".gitignore").read_text(), "keep\n")
+        self.assertEqual((self.out / "box" / ".gitignore").read_text(), "*\n")
+
+    def test_remote_command_is_wrapped_in_a_timeout_with_balanced_quoting(self):
+        self.run_inventory("ok")
+        last = Path(self.env["STUB_LOG"]).read_text().strip()
+        self.assertTrue(last.startswith("timeout 90 sh -c '"), last)
+        self.assertEqual(subprocess.run(["sh", "-n", "-c", last]).returncode, 0)
+
+    def test_unwritable_output_location_is_an_error_not_a_success(self):
+        blocker = Path(self.tmp.name, "afile")
+        blocker.write_text("x")
+        r = subprocess.run([str(SCRIPTS / "inventory.sh"), "box", str(blocker)], env={**self.env, "STUB_MODE": "ok"},
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 2)
 
 
 class PrintStateTests(unittest.TestCase):
@@ -105,9 +205,13 @@ class PrintStateTests(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
 
 
-@unittest.skipUnless(shutil.which("shellcheck"), "shellcheck not installed")
 class ShellcheckTests(unittest.TestCase):
     def test_scripts_are_shellcheck_clean(self):
+        if not shutil.which("shellcheck"):
+            # Locally this is optional; in CI a missing linter must fail, not silently pass.
+            if os.environ.get("CI"):
+                self.fail("shellcheck is required in CI")
+            self.skipTest("shellcheck not installed")
         for script in sorted(SCRIPTS.glob("*.sh")):
             with self.subTest(script=script.name):
                 r = subprocess.run(["shellcheck", str(script)], capture_output=True, text=True)

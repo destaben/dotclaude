@@ -17,7 +17,7 @@ and the repo doc it points to; state which host and service the task touches;
 prefer changing the stack through its repo and deploy scripts. After any change
 or discovery, update the vault docs in the same session.
 Refresh facts with `scripts/inventory.sh <alias> ~/homelab-vault/raw`
-(read-only; credentials are redacted and the output directory ignores itself in git) and fix any drift in the docs.
+(read-only; credentials are redacted best-effort, remote commands run under a 90 s timeout, and the per-host output directory ignores itself in git) and fix any drift in the docs.
 If the vault is missing, say so and offer to rebuild it with `inventory.sh`.
 
 ## Conventions
@@ -44,7 +44,7 @@ server's `PubkeyAuthentication`/`authorized_keys` permissions.
 Before opening **any** ssh session to a 3D-printer host, make the least
 invasive check possible: one HTTP GET to Moonraker, no ssh.
 
-    scripts/print-state.sh <host-or-ip>      # exit 0 idle, 10 printing/paused, 20 unknown/error
+    scripts/print-state.sh <host-or-ip>[:port]   # exit 0 idle, 10 printing/paused, 20 unknown/error, 2 bad usage
 
 - **Printing/paused (10):** do not load the host. No `docker stats`, `inventory.sh`,
   builds, `apt`, image pulls, restarts, reboots, firmware or config edits. Answer
@@ -80,6 +80,24 @@ OctoPrint, vendor firmware) with `ls /home` and `systemctl list-units --type=ser
 runs `ssh-copy-id` **in a real terminal**, because `!` inside Claude Code has
 no TTY and the password prompt receives empty input, producing an instant
 "Permission denied, please try again" twice.
+
+## Design notes and accepted trade-offs
+Recorded so a reviewer does not re-raise them as defects:
+- **Redaction is best-effort, not a guarantee** (`redact` in `scripts/lib.sh`). It is a safety
+  net on top of two other controls: the output directory is git-ignored and created with
+  mode 0700, and instance data belongs in the private vault. We prefer over-redaction
+  (e.g. a word like `pass:` followed by text) to leaking, so some diagnostic text may be
+  hidden; patterns are covered by `tests/test_remote_hosts_scripts.py`.
+- **`print-state.sh` defaults to port 80** because that is how this skill's reference
+  setup exposes Moonraker (behind a reverse proxy). A printer serving Moonraker directly
+  passes `host:7125`. A wrong port yields exit 20, which fails safe (treated as "printing").
+- **`inventory.sh` does not itself check the print state.** The rule lives with the caller:
+  never run it against a printer host unless `print-state.sh` exits 0 (see the printers section).
+- **Alias validation reads `~/.ssh/config` and its `Include` files**; hosts defined only
+  through other mechanisms must be added to the config to be usable. That restriction is
+  deliberate: it is what prevents option injection through the alias argument.
+- **Remote ssh `timeout 90`** assumes GNU coreutils on the target; where it is missing the
+  topic records the error in its `.err` file instead of hanging.
 
 ## Learned
 - Devices may already run their own Claude Code install (`~/.local/bin/claude`

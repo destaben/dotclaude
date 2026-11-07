@@ -1,6 +1,8 @@
 #!/bin/sh
 # Least-invasive check of a Klipper/Moonraker printer: ONE plain HTTP GET, no ssh.
-# Usage: print-state.sh <host-or-ip>      (default port 80; use host:port if needed)
+# Usage: print-state.sh <host-or-ip>[:port]
+#   Port 80 assumes Moonraker sits behind a reverse proxy on the default port; a printer
+#   serving Moonraker directly needs <host>:7125. A wrong port reports unknown (20).
 # Exit: 0  = idle/standby/complete/cancelled (safe for normal work)
 #       10 = printing or paused (do not load the host)
 #       20 = unknown: unreachable, malformed answer, python3 missing, or Klipper in "error"

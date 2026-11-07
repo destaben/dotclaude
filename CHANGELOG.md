@@ -14,7 +14,7 @@ services, restore plans) live in a separate private vault that the skill points
 to. For 3D printers the first check is a single HTTP request to Moonraker rather
 than an ssh session, because heavy commands on a Pi-class host can disturb a
 running print. The helper scripts validate the alias against `~/.ssh/config`
-and redact credentials from inventory output.
+and redact credentials from inventory output on a best-effort basis.
 
 ## 2026-11-01 — Browser automation via agent-browser
 

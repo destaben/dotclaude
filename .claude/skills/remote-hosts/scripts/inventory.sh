@@ -8,14 +8,19 @@
 . "$(dirname "$0")/lib.sh"
 h=$1; base=$2
 valid_alias "$h" && [ -n "$base" ] || { echo "usage: inventory.sh <alias> <outdir> (alias must be a Host in ~/.ssh/config)" >&2; exit 2; }
-out=$base/$h; mkdir -p "$out"
-[ -e "$out/.gitignore" ] || printf '*\n' > "$out/.gitignore"   # self-ignoring; never touches the caller's own .gitignore
+umask 077
+out=$base/$h
+mkdir -p "$out" || { echo "cannot create $out" >&2; exit 2; }
+trap 'rm -f "$out"/*.raw' EXIT INT TERM   # never leave unredacted data behind
+[ -e "$out/.gitignore" ] || printf '*\n' > "$out/.gitignore" || { echo "cannot write in $out" >&2; exit 2; }   # self-ignoring; never touches the caller's own .gitignore
 ok=0; fail=0
 # r <topic> <remote command>: data goes to <topic>.txt, ssh stderr to <topic>.err (both redacted).
 # ssh exits 255 on connection/auth failure; the remote command's own status is ignored on purpose
 # because probes are chained and may legitimately end on a missing optional tool.
 r() { name=$1; shift
-  ssh -n -T -o BatchMode=yes -o ConnectTimeout=8 -- "$h" "$@" > "$out/$name.raw" 2> "$out/$name.err.raw"
+  # remote commands run under `timeout 90` so a wedged one cannot block the whole run
+  q=$(printf '%s' "$*" | sed "s/'/'\\\\''/g")
+  ssh -n -T -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -- "$h" "timeout 90 sh -c '$q'" > "$out/$name.raw" 2> "$out/$name.err.raw"
   rc=$?   # taken directly from ssh, not from a pipeline
   redact < "$out/$name.raw" > "$out/$name.txt"
   redact < "$out/$name.err.raw" > "$out/$name.err"
