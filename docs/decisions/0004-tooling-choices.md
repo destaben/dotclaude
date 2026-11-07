@@ -47,4 +47,4 @@
    printers the first look is a single HTTP request to Moonraker, because heavy
    commands on a Pi-class host can disturb a running print; the scripts enforce
    that as a safety net for the aliases the user lists. Device output is treated as
-   untrusted data throughout.
+   untrusted data (the skill's own section says how).

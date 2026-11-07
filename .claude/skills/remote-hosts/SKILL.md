@@ -144,6 +144,11 @@ Recorded so a reviewer does not re-raise them as defects:
   file, lists the topic in the summary and makes the script exit 1. Ctrl-C stops the run.
 - **`mysql -p secret` (with a space) is not redacted on purpose**: mysql prompts and reads
   `secret` as the database name, so it is not a credential.
+- **Output is bounded**: each topic is limited to 2 MiB (`ulimit -f`); a host streaming more makes that
+  topic fail with a note instead of filling the disk. Control characters are stripped and lines capped
+  *before* redaction, which keeps the redactor's input bounded.
+- **An unquoted value ends at whitespace**, tab included (`PASSWORD=ab<TAB>cd` redacts `ab` only), like
+  a space; quote it to redact the whole string.
 - **A `kill -9` can leave `*.raw` files**; a trap cannot catch SIGKILL. They sit in a 0700
   directory, mode 0600, git-ignored, and are removed on the next normal exit.
 
@@ -151,7 +156,7 @@ Recorded so a reviewer does not re-raise them as defects:
   bytes cannot stall `probe.sh`; without perl the banner is not read at all.
 - **Device-controlled text is never echoed verbatim**: `probe.sh` maps the banner to a fixed
   vocabulary (`OpenSSH <digits>`, `Dropbear <digits>` or a generic label), takes its verdict only from
-  ssh's exit status and lists just allow-listed auth-method names; `print-state.sh` prints only a known
+  ssh's exit status and lists just allow-listed auth-method names (informational only: a hostile server can misreport them); `print-state.sh` prints only a known
   state and a number, and never the file name, because any name can be uploaded to a printer. IPv6 hosts are passed as `[addr]:port`.
 
 ## Learned

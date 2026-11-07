@@ -36,11 +36,12 @@ for h in "$@"; do
     echo "  banner: $banner"
     fi
   fi
-  # The verdict comes from ssh's exit status only; nothing the device sends is parsed for it or
-  # echoed. From the verbose log we extract just the names of the auth methods the server offers,
-  # restricted to a fixed vocabulary.
+  # The verdict (RESULT) comes from ssh's exit status only; nothing the device sends can change it.
+  # The "server offers" line is informational: it is limited to a fixed vocabulary of method names, but
+  # a hostile server could still misreport it (the verbose log also contains its pre-auth banner), so
+  # do not rely on it for decisions.
   out=$(ssh -n -v -T -o BatchMode=yes -o ConnectTimeout=5 -- "$h" true 2>&1); status=$?
-  methods=$(printf '%s\n' "$out" | grep -m1 'Authentications that can continue' | grep -oE 'publickey|password|keyboard-interactive|gssapi-with-mic|hostbased' | sort -u | tr '\n' ' ')
+  methods=$(printf '%s\n' "$out" | grep -m1 '^debug1: Authentications that can continue' | grep -oE 'publickey|password|keyboard-interactive|gssapi-with-mic|hostbased' | sort -u | tr '\n' ' ')
   [ -n "$methods" ] && echo "  server offers: $methods"
   if [ "$status" -eq 0 ]; then echo "  RESULT: key auth OK"; else echo "  RESULT: key auth FAILED (ssh exit $status)"; set_rc 1; fi
 done

@@ -55,7 +55,7 @@ printer_guard() {
   while read -r a t _; do
     case "$a" in ''|'#'*) continue ;; esac
     other=$(ssh -n -G -- "$a" 2>/dev/null | awk '$1=="hostname"{print $2; exit}')
-    thost=${t%:[0-9]*}
+    thost=${t%:[0-9]*}; thost=${thost#[}; thost=${thost%]}   # also [ipv6]:port
     if [ "$a" = "$1" ] || { [ -n "$want" ] && { [ "$want" = "$other" ] || { [ -n "$thost" ] && [ "$want" = "$thost" ]; }; }; }; then target=$t; matched=1; break; fi
   done < "$cfg"
   [ "$matched" = 1 ] || return 0
@@ -106,5 +106,6 @@ redact() {
     s{(?i)(?:-H|--header)(?:\s+|=)([\"\x27])(?=[^\"\x27]*(?:auth|token|key|secret|cookie|passw))[^\"\x27]*\1}{-H REDACTED}g;
     s{(?i)(\bsshpass\b[^\n]*?\s-p\s*)(?:\"[^\"]*\"|\x27[^\x27]*\x27|\S+)}{$1REDACTED}g;
     s{(?i)(\bmysql\w*\b[^\n]*?\s)-p(?:"[^"]*"|\x27[^\x27]*\x27|\S+)}{$1-pREDACTED}g;
-    s{(?i)((?:(?:password|passwd|passphrase|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|credentials?)(?:[_-][A-Za-z0-9_-]*)?|pass|pwd|auth|cookie|session(?:[_-]?(?:id|token|key))?|[A-Za-z0-9]+[_-]key)["\x27]?\s*[=:]\s*)(?:"[^"]*"|\x27[^\x27]*\x27|[^\s"\x27]+)}{$1REDACTED}g'
+    s{(?i)([?&](?:key|api_?key|access_?token|token|auth|password|passwd|secret|sig|signature)=)[^&\s"\x27]+}{$1REDACTED}g;
+    s{(?i)((?:(?:password|passwd|passphrase|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|credentials?)(?:[_-][A-Za-z0-9_-]*)?|pass|pwd|auth|cookie|session(?:[_-]?(?:id|token|key))?|(?<![A-Za-z0-9])[A-Za-z0-9]+[_-]key)["\x27]?\s*[=:]\s*)(?:"[^"]*"|\x27[^\x27]*\x27|[^\s"\x27]+)}{$1REDACTED}g'
 }
