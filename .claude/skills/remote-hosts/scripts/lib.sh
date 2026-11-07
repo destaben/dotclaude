@@ -78,7 +78,7 @@ redact() {
     s{(://)\S*@}{$1}g;
     s{(?i)(authorization["\x27]?\s*[=:]\s*).*}{$1REDACTED}g;
     s{(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}}{Bearer REDACTED}g;
-    s{(?i)\bbasic\s+(?:(?=[A-Za-z0-9._~+/=-]*[0-9._~+/=-])[A-Za-z0-9._~+/=-]{8,}|[A-Za-z0-9._~+/=-]{20,})}{Basic REDACTED}g;
+    s{(?i)\bbasic\s+(?:(?=[A-Za-z0-9._~+/=-]*[0-9._~+/=-])[A-Za-z0-9._~+/=-]{8,}|(?-i)(?=[A-Za-z0-9+/=]*[a-z][A-Za-z0-9+/=]*[A-Z])[A-Za-z0-9+/=]{12,}|[A-Za-z0-9._~+/=-]{20,})}{Basic REDACTED}g;
     s{(?i)(--?(?:password|passwd|passphrase|pass|pwd|token|secret|api-?key|access-?key)(?:\s+|=))(?!--[A-Za-z])(?:"[^"]*"|\x27[^\x27]*\x27|\S+)}{$1REDACTED}g;
     s{(?i)(\s(?:-u|--user|--proxy-user)(?:\s+|=))(?:"[^"]*"|\x27[^\x27]*\x27|[^\s:]+:\S+)}{$1REDACTED}g;
     s{(?i)(?:-H|--header)(?:\s+|=)([\"\x27])(?=[^\"\x27]*(?:auth|token|key|secret|cookie|passw))[^\"\x27]*\1}{-H REDACTED}g;

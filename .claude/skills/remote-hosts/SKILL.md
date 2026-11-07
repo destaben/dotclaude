@@ -65,7 +65,9 @@ invasive check possible: one HTTP GET to Moonraker, no ssh.
 - **Unknown or Klipper in `error` (20):** treat like printing and ask.
 A Pi-class host can lose USB/serial timing under load, which ruins a print.
 
-This is enforced, not only advised: list printers in the vault's `config/printers.conf`
+This is enforced by the scripts, not only advised, for every alias listed in the vault's
+`config/printers.conf`; a raw `ssh` command bypasses it, so keep every printer listed and use the
+scripts. List printers in `config/printers.conf`
 (lines `<alias> <host[:port]>`, the Moonraker address). `probe.sh` and `inventory.sh` then call
 `print-state.sh` themselves and refuse (exit 3) unless it reports idle. After the user agrees,
 `REMOTE_HOSTS_FORCE=1` bypasses the guard for one run. Without that file there is no guard.
@@ -95,6 +97,11 @@ OctoPrint, vendor firmware) with `ls /home` and `systemctl list-units --type=ser
 runs `ssh-copy-id` **in a real terminal**, because `!` inside Claude Code has
 no TTY and the password prompt receives empty input, producing an instant
 "Permission denied, please try again" twice.
+
+## Script exit codes
+`probe.sh`: 0 all ok, 1 key auth failed, 2 usage or refused alias, 3 printer guard refused (the most
+severe code wins across several aliases). `inventory.sh`: 0 ok, 1 a topic failed, 2 usage or setup
+problem, 3 printer guard refused. `print-state.sh`: 0 idle, 10 printing/paused, 20 unknown/error, 2 usage.
 
 ## Design notes and accepted trade-offs
 Recorded so a reviewer does not re-raise them as defects:
@@ -131,9 +138,10 @@ Recorded so a reviewer does not re-raise them as defects:
   other prose such as `token abc123` is not matched because that would also hide ordinary text.
 - **The banner read is bounded** (hard 4 s limit via perl, 120 bytes), so a device that streams
   bytes cannot stall `probe.sh`.
-- **Device-controlled text is never echoed verbatim**: `probe.sh` shows only `SSH-<ver>-<one token>`
-  from the banner and `print-state.sh` shows only a known state, a sanitized bounded file name and a
-  number. IPv6 hosts are passed as `[addr]:port`.
+- **Device-controlled text is never echoed verbatim**: `probe.sh` maps the banner to a fixed
+  vocabulary (`OpenSSH <digits>`, `Dropbear <digits>` or a generic label), takes its verdict only from
+  ssh's exit status and lists just allow-listed auth-method names; `print-state.sh` prints only a known
+  state and a number, and never the file name, because any name can be uploaded to a printer. IPv6 hosts are passed as `[addr]:port`.
 
 ## Learned
 - Devices may already run their own Claude Code install (`~/.local/bin/claude`

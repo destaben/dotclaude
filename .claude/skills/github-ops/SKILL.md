@@ -44,8 +44,9 @@ don't reach for it as a general shell substitute.
   2. Watch it **in the background** so you are notified when it finishes, with no
      polling: `gh run watch <id> --exit-status --interval 10` (Bash with
      `run_in_background`). Don't wrap it in `timeout`; macOS doesn't ship it.
-  3. When it ends, read only the new comments/review (`gh pr view <n> --json
-     comments`), not the whole PR, and answer per the "Comments" rule below.
+  3. When it ends, read only the new feedback, not the whole PR: issue comments and
+     review bodies (`gh pr view <n> --json comments,reviews`) and inline comments
+     (`gh api repos/<owner>/<repo>/pulls/<n>/comments`), and answer per the "Comments" rule below.
   4. **Only when the user has asked to iterate on a PR's automated review**, the goal of this wait
      is zero findings, severe and non-severe. In every other context, including `/release`,
      follow `release-policy` (severe findings auto-fixed within bounded loops, everything else put
@@ -55,7 +56,8 @@ don't reach for it as a general shell substitute.
      PR is merged/closed). For every finding, do exactly one of:
      - **Fix it**, with a test that fails without the fix when the change is
        testable, and run the full suite before pushing.
-     - **Justify it** only when it is not a real defect or is a documented trade-off, and never
+     - **Justify it** (the user's standing instruction for this loop is to justify rather than
+       skip, so this is a decision they have already made) only when it is not a real defect or is a documented trade-off, and never
        for a severe finding (fix those). The user's request to iterate on the review is the
        authorization for this, but it is never silent: every justification is listed in your final
        report for the user to overrule, and anything that needs a design choice is asked, not decided:
