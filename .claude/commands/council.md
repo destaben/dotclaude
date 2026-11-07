@@ -30,7 +30,7 @@ decision; otherwise use quick mode.
    run on its own, report it and wait. If the chair's Dissent says a fatal
    flaw from the contrarian went unanswered, or its Confidence is low on
    something costly to reverse, hand the decision back to the user instead
-   of acting.
+   of acting (through the `ceo` agent if the `ceo-call` skill is set up).
 
 If an advisor fails to answer, rerun that one rather than deciding with fewer.
 Run at most one council per task unless the user asks for another.

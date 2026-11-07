@@ -1,0 +1,575 @@
+#!/usr/bin/env python3
+"""Phone the owner for a decision.
+
+Speaks a question with numbered options over a phone call, captures one keypad answer, reads it
+back and records it only after the owner confirms with a second key press. If the owner does not
+pick up, it retries and finally sends a chat message instead.
+
+Standard library only. It runs on the host that runs Asterisk (in Docker) and a Piper
+text-to-speech server (Wyoming protocol over TCP). See SKILL.md for the setup.
+
+Subcommands:
+  ask               place the call (request JSON on --request, or "-" for stdin)
+  check             verify that speech synthesis and the phone endpoint are reachable
+  telegram-setup    print the chat id of whoever last messaged the bot
+"""
+
+import argparse
+import array
+import io
+import json
+import os
+import re
+import secrets
+import signal
+import socket
+import subprocess
+import sys
+import time
+import urllib.parse
+import urllib.request
+import wave
+from datetime import datetime
+from pathlib import Path
+from typing import Callable, Dict, List, Optional, Tuple
+
+SPOOL = "/var/spool/asterisk"
+SAMPLE_RATE = 16000
+MAX_OPTIONS = 8
+MAX_QUESTION_CHARS = 500
+MAX_OPTION_CHARS = 200
+MAX_WYOMING_PAYLOAD = 16 * 1024 * 1024
+
+DEFAULT_CONFIG = {
+    "container": "asterisk",
+    "piper_host": "127.0.0.1",
+    "piper_port": 10200,
+    "endpoint": "PJSIP/phone",
+    "attempts": 3,
+    "retry_delay_s": 300,
+    "ring_timeout_s": 30,
+    "call_timeout_s": 300,
+    "poll_interval_s": 2,
+    "env_file": "~/.config/ceo-call/env",
+    "quiet_start": None,  # "HH:MM" host-local time; with quiet_end, no calls are placed in between
+    "quiet_end": None,
+}
+
+TIME_RE = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
+ENDPOINT_RE = re.compile(r"^PJSIP/[A-Za-z0-9_.-]+$")
+CONTAINER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+# Spoken phrases (Spanish). They are data for the voice, not documentation.
+PHRASES = {
+    "intro": "Hola, soy el director. Necesito una decisión.",
+    "option": "Opción {n}: {text}.",
+    "choose": "Pulsa el número de tu elección, o el nueve para repetir.",
+    "confirm": "Has elegido la opción {n}: {text}. Pulsa uno para confirmar, o cualquier otra tecla para elegir de nuevo.",
+    "thanks": "Decisión registrada. Gracias.",
+    "giveup": "No he recibido una confirmación. Dejo la decisión pendiente. Hasta luego.",
+}
+NOTIFY = {
+    "unanswered": "No contestaste a la llamada.",
+    "hangup": "Colgaste antes de confirmar una decisión.",
+    "undecided": "Contestaste, pero no llegaste a confirmar una opción.",
+    "deferred": "Estamos en horas de silencio, así que no llamé.",
+}
+
+
+class CallError(Exception):
+    """An infrastructure or input problem; the message never contains secrets."""
+
+
+# ---------------------------------------------------------------------------------- request
+
+
+def validate_request(request) -> Dict:
+    """Return a cleaned request or raise CallError. Text only ever reaches the voice engine."""
+    if not isinstance(request, dict):
+        raise CallError("request must be a JSON object")
+    question = request.get("question")
+    options = request.get("options")
+    if not isinstance(question, str) or not question.strip():
+        raise CallError("request needs a non-empty 'question' string")
+    if len(question) > MAX_QUESTION_CHARS:
+        raise CallError("question is longer than %d characters" % MAX_QUESTION_CHARS)
+    if not isinstance(options, list) or not 2 <= len(options) <= MAX_OPTIONS:
+        raise CallError("request needs 2 to %d options" % MAX_OPTIONS)
+    clean = []
+    for option in options:
+        if not isinstance(option, str) or not option.strip():
+            raise CallError("every option must be a non-empty string")
+        if len(option) > MAX_OPTION_CHARS:
+            raise CallError("an option is longer than %d characters" % MAX_OPTION_CHARS)
+        clean.append(option.strip())
+    for text in [question] + clean:
+        if CONTROL_RE.search(text):
+            raise CallError("text must not contain control characters")
+    return {"question": question.strip(), "options": clean}
+
+
+def build_prompts(question: str, options: List[str]) -> Dict[str, str]:
+    """Map a prompt file name to the text that is spoken."""
+    spoken = [PHRASES["intro"], question.rstrip(".!? ") + "."]
+    for number, text in enumerate(options, 1):
+        spoken.append(PHRASES["option"].format(n=number, text=text.rstrip(".!? ")))
+    spoken.append(PHRASES["choose"])
+    prompts = {"prompt": " ".join(spoken)}
+    for number, text in enumerate(options, 1):
+        prompts["confirm_%d" % number] = PHRASES["confirm"].format(n=number, text=text.rstrip(".!? "))
+    prompts["thanks"] = PHRASES["thanks"]
+    prompts["giveup"] = PHRASES["giveup"]
+    return prompts
+
+
+# ---------------------------------------------------------------------------------- config / env
+
+
+def load_config(path: Optional[str]) -> Dict:
+    config = dict(DEFAULT_CONFIG)
+    if path:
+        try:
+            with open(os.path.expanduser(path), "r", encoding="utf-8") as handle:
+                loaded = json.load(handle)
+        except (OSError, ValueError):
+            raise CallError("cannot read the config file")
+        if not isinstance(loaded, dict):
+            raise CallError("the config file must hold a JSON object")
+        unknown = set(loaded) - set(DEFAULT_CONFIG)
+        if unknown:
+            raise CallError("unknown config keys: %s" % ", ".join(sorted(unknown)))
+        config.update(loaded)
+    if not ENDPOINT_RE.match(str(config["endpoint"])):
+        raise CallError("endpoint must look like PJSIP/<name>")
+    if not CONTAINER_RE.match(str(config["container"])):
+        raise CallError("container is not a valid Docker container name")
+    quiet = (config["quiet_start"], config["quiet_end"])
+    if any(quiet) and not all(isinstance(v, str) and TIME_RE.match(v) for v in quiet):
+        raise CallError("quiet_start and quiet_end must both be HH:MM")
+    for key in ("piper_port", "attempts", "retry_delay_s", "ring_timeout_s", "call_timeout_s", "poll_interval_s"):
+        if not isinstance(config[key], int) or isinstance(config[key], bool) or config[key] < 0:
+            raise CallError("%s must be a non-negative integer" % key)
+    if not 1 <= config["attempts"] <= 10:
+        raise CallError("attempts must be between 1 and 10")
+    if config["ring_timeout_s"] < 5 or config["call_timeout_s"] < 60:
+        # A call must be allowed to ring and to finish; otherwise a retry could overlap a live call.
+        raise CallError("ring_timeout_s must be at least 5 and call_timeout_s at least 60")
+    for key in ("piper_host", "env_file"):
+        if not isinstance(config[key], str) or not config[key]:
+            raise CallError("%s must be a non-empty string" % key)
+    return config
+
+
+def load_env_file(path: str) -> Dict[str, str]:
+    """Read KEY=VALUE lines from a private file. The file must not be readable by others."""
+    resolved = Path(os.path.expanduser(path))
+    try:
+        mode = resolved.stat().st_mode & 0o777
+    except FileNotFoundError:
+        return {}
+    except OSError:
+        raise CallError("cannot read the env file")
+    if mode & 0o077:
+        raise CallError("the env file must have mode 0600")
+    try:
+        lines = resolved.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        raise CallError("cannot read the env file")
+    values = {}
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        values[key.strip()] = value.strip().strip("'\"")
+    return values
+
+
+# ---------------------------------------------------------------------------------- speech (Piper)
+
+
+def _read_event(handle):
+    line = handle.readline()
+    if not line:
+        return None
+    header = json.loads(line)
+    data = header.get("data") or {}
+    extra = header.get("data_length", 0)
+    payload_len = header.get("payload_length", 0)
+    if extra > MAX_WYOMING_PAYLOAD or payload_len > MAX_WYOMING_PAYLOAD:
+        raise CallError("speech server sent an oversized message")
+    if extra:
+        data = dict(data, **json.loads(handle.read(extra)))
+    payload = handle.read(payload_len) if payload_len else b""
+    return header["type"], data, payload
+
+
+def synthesize(host: str, port: int, text: str, timeout: int = 120) -> Tuple[int, int, int, bytes]:
+    """Return (rate, width, channels, pcm) for one text using the Wyoming protocol."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            handle = sock.makefile("rwb")
+            request = {"type": "synthesize", "data": {"text": text}}
+            handle.write((json.dumps(request) + "\n").encode("utf-8"))
+            handle.flush()
+            fmt = None
+            pcm = bytearray()
+            deadline = time.monotonic() + timeout
+            while True:
+                if time.monotonic() > deadline:
+                    raise CallError("speech server took too long")
+                event = _read_event(handle)
+                if event is None:
+                    raise CallError("speech server closed the connection early")
+                kind, data, payload = event
+                if kind == "audio-start":
+                    fmt = (int(data["rate"]), int(data["width"]), int(data["channels"]))
+                elif kind == "audio-chunk":
+                    pcm += payload
+                elif kind == "audio-stop":
+                    break
+                elif kind == "error":
+                    raise CallError("speech server reported an error")
+    except (OSError, ValueError, KeyError):
+        raise CallError("cannot get speech from the speech server")
+    if fmt is None or not pcm:
+        raise CallError("speech server returned no audio")
+    return fmt[0], fmt[1], fmt[2], bytes(pcm)
+
+
+def resample_linear(samples, src_rate: int, dst_rate: int):
+    if src_rate == dst_rate or not len(samples):
+        return samples
+    out_len = int(len(samples) * dst_rate / src_rate)
+    last = len(samples) - 1
+    out = array.array("h")
+    step = src_rate / dst_rate
+    for i in range(out_len):
+        pos = i * step
+        j = int(pos)
+        frac = pos - j
+        a = samples[j]
+        b = samples[j + 1] if j < last else a
+        out.append(int(a + (b - a) * frac))
+    return out
+
+
+def to_wav16k(rate: int, width: int, channels: int, pcm: bytes) -> bytes:
+    """Convert 16-bit PCM to a mono 16 kHz WAV, which Asterisk plays and down-converts for the phone."""
+    if width != 2:
+        raise CallError("expected 16-bit speech audio")
+    samples = array.array("h")
+    samples.frombytes(pcm[: len(pcm) - (len(pcm) % 2)])
+    if sys.byteorder == "big":
+        samples.byteswap()
+    if channels > 1:
+        frames = len(samples) // channels
+        samples = array.array("h", [sum(samples[i * channels:(i + 1) * channels]) // channels for i in range(frames)])
+    samples = resample_linear(samples, rate, SAMPLE_RATE)
+    tail = array.array("h", [0] * (SAMPLE_RATE // 4))  # a quarter second of silence after each prompt
+    samples.extend(tail)
+    if sys.byteorder == "big":
+        samples.byteswap()
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(SAMPLE_RATE)
+        out.writeframes(samples.tobytes())
+    return buffer.getvalue()
+
+
+# ---------------------------------------------------------------------------------- Asterisk (Docker)
+
+
+class DockerAsterisk:
+    """Talks to Asterisk by running small commands inside its container as the asterisk user."""
+
+    def __init__(self, container: str, run: Callable = subprocess.run):
+        self.container = container
+        self._run = run
+
+    def _exec(self, args: List[str], data: Optional[bytes] = None, check: bool = True):
+        command = ["docker", "exec", "-i", "-u", "asterisk", self.container] + args
+        try:
+            result = self._run(command, input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        except (OSError, subprocess.TimeoutExpired):
+            raise CallError("cannot run docker")
+        if check and result.returncode != 0:
+            raise CallError("a command inside the Asterisk container failed")
+        return result
+
+    def make_dir(self, path: str) -> None:
+        self._exec(["mkdir", "-p", path])
+
+    def write_file(self, path: str, data: bytes) -> None:
+        self._exec(["sh", "-c", 'cat > "$1"', "sh", path], data=data)
+
+    def read_file(self, path: str) -> Optional[str]:
+        result = self._exec(["cat", path], check=False)
+        if result.returncode == 0:
+            return result.stdout.decode("utf-8", "replace").strip()
+        if b"No such file" in (result.stderr or b""):
+            return None
+        # Anything else (container stopped, docker unavailable) must not look like "no marker yet".
+        raise CallError("cannot read call state from the Asterisk container")
+
+    def remove(self, *paths: str) -> None:
+        self._exec(["rm", "-rf"] + list(paths), check=False)
+
+    def sweep_stale(self) -> None:
+        """Remove prompt folders left behind by a killed run (older than a day). Best effort."""
+        self._exec(["find", SPOOL + "/ceo", "-mindepth", "1", "-maxdepth", "1", "-mmin", "+1440", "-exec", "rm", "-rf", "{}", "+"], check=False)
+
+    def originate(self, name: str, call_file: str) -> None:
+        """Write the call file outside the watched folder, then move it in atomically."""
+        staging = "%s/tmp/%s.call" % (SPOOL, name)
+        target = "%s/outgoing/%s.call" % (SPOOL, name)
+        self.write_file(staging, call_file.encode("utf-8"))
+        self._exec(["mv", staging, target])
+
+    def endpoint_available(self, endpoint: str) -> bool:
+        name = endpoint.split("/", 1)[1]
+        result = self._exec(["asterisk", "-rx", "pjsip show contacts"], check=False)
+        text = result.stdout.decode("utf-8", "replace")
+        pattern = re.compile(r"^\s*Contact:\s+%s/" % re.escape(name))
+        return any(pattern.match(line) and "Avail" in line for line in text.splitlines())
+
+
+def build_call_file(endpoint: str, call_id: str, option_count: int, ring_timeout: int) -> str:
+    if not ENDPOINT_RE.match(endpoint) or not re.match(r"^[0-9a-f]{16,64}$", call_id):
+        raise CallError("invalid call parameters")
+    return "\n".join(
+        [
+            "Channel: %s" % endpoint,
+            "CallerID: CEO <0>",
+            "MaxRetries: 0",
+            "WaitTime: %d" % ring_timeout,
+            "Context: ceo-ask",
+            "Extension: s",
+            "Priority: 1",
+            "Setvar: CEO_ID=%s" % call_id,
+            "Setvar: CEO_OPTIONS=%d" % option_count,
+            "",
+        ]
+    )
+
+
+def in_quiet_hours(now_hm: str, start: Optional[str], end: Optional[str]) -> bool:
+    """True when now_hm ("HH:MM") falls in [start, end), where the window may wrap past midnight."""
+    if not start or not end or start == end:
+        return False
+    if start < end:
+        return start <= now_hm < end
+    return now_hm >= start or now_hm < end
+
+
+# ---------------------------------------------------------------------------------- one attempt
+
+
+def run_attempt(asterisk, config: Dict, call_id: str, option_count: int, sleep=time.sleep, clock=time.monotonic) -> Dict:
+    """Place one call and wait for its outcome. Never trusts the result file beyond a digit check."""
+    base = "%s/ceo/%s" % (SPOOL, call_id)
+    asterisk.remove(*["%s/%s" % (base, marker) for marker in ("answered", "result", "done")])
+    asterisk.originate(
+        "ceo-%s" % call_id,
+        build_call_file(config["endpoint"], call_id, option_count, config["ring_timeout_s"]),
+    )
+    started = clock()
+    answer_deadline = started + config["ring_timeout_s"] + 15
+    total_deadline = started + config["ring_timeout_s"] + config["call_timeout_s"]
+    answered = False
+    result = None
+    while clock() < total_deadline:
+        result = asterisk.read_file(base + "/result")
+        if result is not None:
+            break
+        if asterisk.read_file(base + "/done") is not None:
+            break
+        if not answered:
+            answered = asterisk.read_file(base + "/answered") is not None
+            if not answered and clock() > answer_deadline:
+                return {"status": "unanswered"}
+        sleep(config["poll_interval_s"])
+    if result is not None:
+        # Let the thank-you message finish before the audio files are removed.
+        for _ in range(8):
+            if asterisk.read_file(base + "/done") is not None:
+                break
+            sleep(config["poll_interval_s"])
+    else:
+        result = asterisk.read_file(base + "/result")
+    if result is None:
+        if not answered and asterisk.read_file(base + "/answered") is None:
+            return {"status": "unanswered"}
+        return {"status": "hangup"}
+    if result == "undecided":
+        return {"status": "undecided"}
+    if re.fullmatch(r"[1-8]", result) and int(result) <= option_count:
+        return {"status": "decided", "choice": int(result)}
+    raise CallError("unexpected value in the call result")
+
+
+# ---------------------------------------------------------------------------------- notification
+
+
+def send_telegram(token: str, chat_id: str, text: str, opener: Callable = urllib.request.urlopen, silent: bool = False) -> bool:
+    """Send a chat message. Returns False on any failure; the token never appears in output."""
+    url = "https://api.telegram.org/bot%s/sendMessage" % token
+    fields = {"chat_id": chat_id, "text": text}
+    if silent:
+        fields["disable_notification"] = "true"
+    body = urllib.parse.urlencode(fields).encode("utf-8")
+    try:
+        with opener(urllib.request.Request(url, data=body), timeout=15) as response:
+            return bool(json.loads(response.read().decode("utf-8")).get("ok"))
+    except Exception:  # noqa: BLE001 - any failure means "not sent"; details could contain the token
+        return False
+
+
+def notification_text(question: str, options: List[str], status: str) -> str:
+    lines = ["Decisión pendiente. " + NOTIFY.get(status, ""), "", question, ""]
+    lines += ["%d. %s" % (n, text) for n, text in enumerate(options, 1)]
+    return "\n".join(lines).strip()
+
+
+# ---------------------------------------------------------------------------------- the whole flow
+
+
+def ask(
+    request,
+    config: Dict,
+    env: Dict[str, str],
+    asterisk,
+    synth: Optional[Callable] = None,
+    notifier: Optional[Callable] = None,
+    sleep=time.sleep,
+    clock=time.monotonic,
+    now: Callable = datetime.now,
+) -> Dict:
+    synth = synth or synthesize
+    notifier = notifier or send_telegram
+    clean = validate_request(request)
+    options = clean["options"]
+    if in_quiet_hours(now().strftime("%H:%M"), config.get("quiet_start"), config.get("quiet_end")):
+        return notify_outcome({"status": "deferred"}, clean, env, notifier, silent=True)
+    call_id = secrets.token_hex(8)
+    base = "%s/ceo/%s" % (SPOOL, call_id)
+    try:
+        asterisk.sweep_stale()
+        asterisk.make_dir(base)
+        for name, text in build_prompts(clean["question"], options).items():
+            wav = to_wav16k(*synth(config["piper_host"], config["piper_port"], text))
+            asterisk.write_file("%s/%s.wav" % (base, name), wav)
+        outcome = {"status": "unanswered"}
+        for attempt in range(1, config["attempts"] + 1):
+            outcome = run_attempt(asterisk, config, call_id, len(options), sleep=sleep, clock=clock)
+            outcome["attempt"] = attempt
+            if outcome["status"] in ("decided", "undecided"):
+                break
+            if attempt < config["attempts"]:
+                sleep(config["retry_delay_s"])
+    finally:
+        asterisk.remove(base)
+    if outcome["status"] == "decided":
+        outcome["option"] = options[outcome["choice"] - 1]
+        return outcome
+    return notify_outcome(outcome, clean, env, notifier)
+
+
+def notify_outcome(outcome: Dict, clean: Dict, env: Dict[str, str], notifier: Callable, silent: bool = False) -> Dict:
+    """Tell the owner by chat message that the decision is still pending."""
+    token, chat_id = env.get("CEO_TELEGRAM_TOKEN"), env.get("CEO_TELEGRAM_CHAT_ID")
+    outcome["notified"] = False
+    if token and chat_id:
+        text = notification_text(clean["question"], clean["options"], outcome["status"])
+        sent = notifier(token, chat_id, text, silent=True) if silent else notifier(token, chat_id, text)
+        outcome["notified"] = bool(sent)
+    return outcome
+
+
+# ---------------------------------------------------------------------------------- CLI
+
+
+def cmd_ask(args) -> int:
+    config = load_config(args.config)
+    env = load_env_file(config["env_file"])
+    # Turn a polite kill into a normal exit so the per-call folder is still removed.
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(143))
+    try:
+        raw = sys.stdin.read() if args.request == "-" else Path(args.request).read_text(encoding="utf-8")
+    except OSError:
+        raise CallError("cannot read the request file")
+    try:
+        request = json.loads(raw)
+    except ValueError:
+        raise CallError("the request is not valid JSON")
+    outcome = ask(request, config, env, DockerAsterisk(config["container"]))
+    print(json.dumps(outcome, ensure_ascii=False))
+    return 0 if outcome["status"] == "decided" else 3
+
+
+def cmd_check(args) -> int:
+    config = load_config(args.config)
+    ok = True
+    try:
+        synthesize(config["piper_host"], config["piper_port"], "prueba")
+        print("speech: ok")
+    except CallError as error:
+        ok = False
+        print("speech: FAILED (%s)" % error)
+    try:
+        available = DockerAsterisk(config["container"]).endpoint_available(config["endpoint"])
+        print("phone endpoint: %s" % ("registered" if available else "NOT registered"))
+        ok = ok and available
+    except CallError as error:
+        ok = False
+        print("asterisk: FAILED (%s)" % error)
+    env = load_env_file(config["env_file"])
+    print("telegram: %s" % ("configured" if env.get("CEO_TELEGRAM_TOKEN") and env.get("CEO_TELEGRAM_CHAT_ID") else "not configured"))
+    return 0 if ok else 1
+
+
+def cmd_telegram_setup(args) -> int:
+    config = load_config(args.config)
+    token = load_env_file(config["env_file"]).get("CEO_TELEGRAM_TOKEN")
+    if not token:
+        raise CallError("put CEO_TELEGRAM_TOKEN in the env file first")
+    try:
+        with urllib.request.urlopen("https://api.telegram.org/bot%s/getUpdates" % token, timeout=15) as response:
+            updates = json.loads(response.read().decode("utf-8")).get("result", [])
+    except Exception:  # noqa: BLE001 - the URL holds the token, so report nothing specific
+        raise CallError("cannot reach the chat service")
+    seen = {}
+    for update in updates:
+        chat = (update.get("message") or {}).get("chat") or {}
+        if "id" in chat:
+            seen[chat["id"]] = chat.get("type", "?")
+    if not seen:
+        print("No messages found. Send any message to the bot, then run this again.")
+        return 1
+    for chat_id, kind in seen.items():
+        print("CEO_TELEGRAM_CHAT_ID=%s  (chat type: %s)" % (chat_id, kind))
+    return 0
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("--config", help="JSON config file (see SKILL.md); defaults are used without it")
+    sub = parser.add_subparsers(dest="command", required=True)
+    ask_parser = sub.add_parser("ask", help="place the call")
+    ask_parser.add_argument("--request", required=True, help="request JSON file, or - for stdin")
+    ask_parser.set_defaults(func=cmd_ask)
+    sub.add_parser("check", help="verify speech and the phone endpoint").set_defaults(func=cmd_check)
+    sub.add_parser("telegram-setup", help="find the chat id for the bot").set_defaults(func=cmd_telegram_setup)
+    args = parser.parse_args(argv)
+    try:
+        return args.func(args)
+    except CallError as error:
+        print("ERROR: %s" % error, file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

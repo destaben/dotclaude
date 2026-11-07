@@ -48,6 +48,12 @@ of the plan. Low confidence is still a decision — record what would change it.
 - The git rules and the severity gates in `release-policy`.
 - An unanswered security or data-loss flaw: it goes back to the user.
 
+## When the council cannot resolve it
+The `ceo` agent sits above the chair, with the user as its only superior. When the chair's verdict is
+low-confidence on something costly to reverse, or a fatal flaw went unanswered, the decision goes back
+to the user; if the `ceo-call` skill is set up, hand it to the `ceo` agent, which phones the user. The
+user's answer is final. If it cannot reach them, the decision stays pending.
+
 ## Model and effort
 The contrarian, first principles, and the chair run on Sonnet at medium
 effort. The rest run on Haiku at low effort. Change these in the agents'

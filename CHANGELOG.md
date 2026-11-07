@@ -3,6 +3,17 @@
 All notable changes to this repo are recorded here. Entries explain why a
 change was made, not just what changed — the diff already shows what.
 
+## 2026-11-07 — A CEO agent that phones the user
+
+Added a `ceo` agent above the council and a `ceo-call` skill, so a decision the council cannot
+resolve reaches the user by phone instead of waiting in a terminal. The first version asks with
+text-to-speech and takes a keypad answer, not spoken words: a decision-council review of the
+design (recorded on the tracking issue) found that speech recognition on telephone audio is least reliable on exactly the short words (yes, no, numbers) that
+binding decisions depend on. Every choice is read back and recorded only after a second key press
+confirms it. If the user does not pick up it retries, then sends a chat message. Quiet hours stop
+night calls. Understanding free speech is deferred until it passes an accuracy test on real
+recordings. No instance data enters this repo; the telephony setup lives in the user's private notes.
+
 ## 2026-11-07 — Administer LAN devices over SSH
 
 Added a `remote-hosts` skill so Claude can act as sysadmin for the user's own
