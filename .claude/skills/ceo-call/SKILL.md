@@ -25,11 +25,15 @@ alias as `remote-hosts` describes, and run the script there.
 ## Configuration
 - **Config file** (`--config`, JSON, optional). Keys: `container`, `piper_host`, `piper_port`,
   `endpoint` (`PJSIP/<name>`), `attempts` (1-10), `retry_delay_s`, `ring_timeout_s`,
-  `call_timeout_s`, `poll_interval_s`, `env_file`, and `quiet_start` / `quiet_end` (`HH:MM`, host
-  local time; both or neither). Unknown keys are rejected, and `ring_timeout_s` must be at least 5 and `call_timeout_s` at
+  `call_timeout_s`, `poll_interval_s`, `env_file`, and `quiet_start` / `quiet_end` (`HH:MM`; both or
+  neither), `timezone` (IANA name such as `Europe/Madrid`; default is the host's local time) and
+  `heads_up_s` (default 90). Unknown keys are rejected, and `ring_timeout_s` must be at least 5 and `call_timeout_s` at
   least 60 so a retry can never overlap a call that is still live.
 - **Quiet hours:** inside the window no call is placed; a silent chat message is sent instead and the
   status is `deferred`.
+- **Heads-up:** if the phone is not registered when a call is due (typical for an iPhone softphone that
+  the OS suspended while the screen was locked), the owner gets a chat message asking to open the app,
+  and the call waits up to `heads_up_s` for the registration. A registered phone is called at once.
 - **Env file** (default `~/.config/ceo-call/env`, mode `0600`, refused otherwise): `CEO_TELEGRAM_TOKEN`
   and `CEO_TELEGRAM_CHAT_ID`. Create the bot with the chat service's bot manager yourself; never
   paste the token into a chat or a tracked file. After messaging the bot once, `ceo_call.py
@@ -53,6 +57,18 @@ it is spoken aloud. Result (one JSON line on stdout):
 
 Exit 1 means an infrastructure or input problem (message on stderr). Only `decided` is a decision;
 every other status leaves the decision pending.
+
+## Setting up the chat bot
+1. In the chat app, talk to the bot manager, create a bot and copy its token.
+2. On the telephony host, put `CEO_TELEGRAM_TOKEN=<token>` in the env file (mode `0600`).
+3. Send the new bot any message, run `ceo_call.py telegram-setup`, and add the printed
+   `CEO_TELEGRAM_CHAT_ID=<id>` line to the same file.
+4. `ceo_call.py check` should now say `telegram: configured`.
+
+## Trying it
+`ceo_call.py test-call` phones the owner and reads a passage of *Don Quijote* (Cervantes, public
+domain) to judge the voice, then asks for a key press: 1 sounds fine, 2 a problem. Quiet hours apply;
+`--ignore-quiet-hours` bypasses them for one test.
 
 ## Rules
 - Call only for a decision the council could not resolve and that the user's own rules say needs them.

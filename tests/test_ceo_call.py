@@ -44,11 +44,16 @@ class FakeAsterisk:
         self.dirs = set()
         self.originated = 0
         self.swept = 0
+        self.registered = True
         self.timeline = {}
         self.reads = 0
 
     def sweep_stale(self):
         self.swept += 1
+
+    def endpoint_available(self, endpoint):
+        value = self.registered
+        return value() if callable(value) else value
 
     def make_dir(self, path):
         self.dirs.add(path)
@@ -121,7 +126,7 @@ class ValidateRequestTests(unittest.TestCase):
             {"question": "q", "options": [str(i) for i in range(9)]},
             {"question": "q", "options": ["a", ""]},
             {"question": "q", "options": ["a", 3]},
-            {"question": "x" * 501, "options": ["a", "b"]},
+            {"question": "x" * 801, "options": ["a", "b"]},
             {"question": "q", "options": ["a", "b" * 201]},
             {"question": "q\x00", "options": ["a", "b"]},
             {"question": "q", "options": ["a", "b\nc"]},
@@ -456,6 +461,34 @@ class QuietHoursTests(unittest.TestCase):
         result, asterisk, sent = run_ask(["1"], env=self.ENV, config={"quiet_start": "23:00", "quiet_end": "08:00"}, clock_time=(12, 0))
         self.assertEqual(result["status"], "decided")
 
+    def test_timezone_must_be_a_known_zone(self):
+        for bad in ('{"timezone": "Mars/Base"}', '{"timezone": 3}'):
+            with self.subTest(bad=bad):
+                handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+                handle.write(bad)
+                handle.close()
+                self.addCleanup(os.unlink, handle.name)
+                with self.assertRaises(ceo.CallError):
+                    ceo.load_config(handle.name)
+
+    def test_quiet_hours_use_the_configured_timezone(self):
+        import unittest.mock as mock
+
+        class FakeDatetime:
+            seen = []
+
+            @staticmethod
+            def now(zone=None):
+                FakeDatetime.seen.append(zone)
+                return datetime(2026, 1, 1, 23, 30)
+
+        asterisk = FakeAsterisk([])
+        config = dict(ceo.DEFAULT_CONFIG, quiet_start="22:00", quiet_end="07:00", timezone="Europe/Madrid")
+        with mock.patch.object(ceo, "datetime", FakeDatetime):
+            result = ceo.ask({"question": "q", "options": ["a", "b"]}, config, {}, asterisk, synth=fake_synth)
+        self.assertEqual(result["status"], "deferred")
+        self.assertEqual(str(FakeDatetime.seen[0]), "Europe/Madrid")
+
     def test_config_requires_both_ends(self):
         for cfg in ('{"quiet_start": "23:00"}', '{"quiet_start": "25:00", "quiet_end": "08:00"}', '{"quiet_start": "23:00", "quiet_end": 8}'):
             with self.subTest(cfg=cfg):
@@ -465,6 +498,74 @@ class QuietHoursTests(unittest.TestCase):
                 self.addCleanup(os.unlink, handle.name)
                 with self.assertRaises(ceo.CallError):
                     ceo.load_config(handle.name)
+
+
+class HeadsUpTests(unittest.TestCase):
+    ENV = {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"}
+
+    def setup(self, registered, env=None, heads_up_s=90):
+        asterisk = FakeAsterisk([])
+        asterisk.registered = registered
+        clock = FakeClock()
+        sent = []
+        config = dict(ceo.DEFAULT_CONFIG, heads_up_s=heads_up_s, poll_interval_s=2)
+        result = ceo.wait_for_phone(asterisk, config, self.ENV if env is None else env,
+                                    lambda token, chat, text, silent=False: sent.append(text), clock.sleep, clock)
+        return result, sent, clock
+
+    def test_a_registered_phone_gets_no_message_and_no_wait(self):
+        result, sent, clock = self.setup(True)
+        self.assertEqual((result, sent, clock.now), (True, [], 0))
+
+    def test_an_unregistered_phone_is_messaged_once_and_waited_for(self):
+        reads = iter([False, False, False, True])
+        result, sent, clock = self.setup(lambda: next(reads))
+        self.assertTrue(result)
+        self.assertEqual(sent, [ceo.HEADS_UP])
+        self.assertGreater(clock.now, 0)
+
+    def test_giving_up_after_the_window(self):
+        result, sent, clock = self.setup(False)
+        self.assertFalse(result)
+        self.assertEqual(len(sent), 1)
+        self.assertGreaterEqual(clock.now, 90)
+        self.assertLess(clock.now, 95)
+
+    def test_without_chat_settings_or_with_the_window_off_nothing_is_sent_or_waited(self):
+        for env, heads_up in (({}, 90), (None, 0)):
+            with self.subTest(env=env, heads_up=heads_up):
+                result, sent, clock = self.setup(False, env=env, heads_up_s=heads_up)
+                self.assertEqual((result, sent, clock.now), (False, [], 0))
+
+    def test_the_message_goes_out_before_the_call_and_only_when_the_phone_is_missing(self):
+        events = []
+
+        def notifier(token, chat, text, silent=False):
+            events.append("message: " + text)
+            return True
+
+        original_originate, original_init = FakeAsterisk.originate, FakeAsterisk.__init__
+
+        def originate(self_, name, call_file):
+            events.append("call")
+            original_originate(self_, name, call_file)
+
+        def init(self_, script):
+            original_init(self_, script)
+            reads = iter([False, True, True, True])
+            self_.registered = lambda: next(reads)
+
+        FakeAsterisk.originate, FakeAsterisk.__init__ = originate, init
+        try:
+            result, _, _ = run_ask(["1"], env=self.ENV, notifier=notifier)
+        finally:
+            FakeAsterisk.originate, FakeAsterisk.__init__ = original_originate, original_init
+        self.assertEqual(result["status"], "decided")
+        self.assertEqual(events, ["message: " + ceo.HEADS_UP, "call"])
+
+    def test_a_registered_phone_is_called_without_any_message(self):
+        result, _, sent = run_ask(["1"], env=self.ENV)
+        self.assertEqual((result["status"], sent), ("decided", []))
 
 
 class DockerStateTests(unittest.TestCase):
@@ -604,6 +705,28 @@ class CliTests(unittest.TestCase):
         code, _, err = self.run_main(["ask", "--request", str(bad)])
         self.assertEqual(code, 1)
         self.assertTrue(err.startswith("ERROR:"))
+
+    def test_test_call_reads_the_public_domain_passage_and_can_ignore_quiet_hours(self):
+        import unittest.mock as mock
+
+        class FakeDatetime:
+            @staticmethod
+            def now(zone=None):
+                return datetime(2026, 1, 1, 3, 0)
+
+        self.config.write_text(json.dumps({"env_file": str(Path(self.tmp.name) / "env"), "quiet_start": "22:00", "quiet_end": "07:00"}))
+        spoken = []
+        ceo.synthesize = lambda host, port, text, **kw: spoken.append(text) or fake_synth(host, port, text)
+        with mock.patch.object(ceo, "datetime", FakeDatetime):
+            code, out, _ = self.run_main(["test-call"], script=["1"])
+            self.assertEqual((code, json.loads(out)["status"]), (3, "deferred"))
+            code, out, _ = self.run_main(["test-call", "--ignore-quiet-hours"], script=["1"])
+        self.assertEqual((code, json.loads(out)["status"]), (0, "decided"))
+        self.assertTrue(any("Cervantes" in text and "En un lugar de la Mancha" in text for text in spoken))
+
+    def test_the_test_passage_is_a_valid_request(self):
+        clean = ceo.validate_request({"question": ceo.TEST_PASSAGE, "options": ceo.TEST_OPTIONS})
+        self.assertIn("dominio público", clean["question"])
 
     def test_check_reports_a_registered_phone(self):
         for registered, expected in ((True, 0), (False, 1)):

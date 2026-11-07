@@ -11,6 +11,7 @@ text-to-speech server (Wyoming protocol over TCP). See SKILL.md for the setup.
 Subcommands:
   ask               place the call (request JSON on --request, or "-" for stdin)
   check             verify that speech synthesis and the phone endpoint are reachable
+  test-call         phone the owner and read a public-domain passage to judge the voice
   telegram-setup    print the chat id of whoever last messaged the bot
 """
 
@@ -30,6 +31,7 @@ import urllib.parse
 import urllib.request
 import wave
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -37,7 +39,7 @@ SPOOL = "/var/spool/asterisk"
 # Asterisk's WAV format only opens 8 kHz files, which is also the rate of the ulaw/alaw phone codecs.
 SAMPLE_RATE = 8000
 MAX_OPTIONS = 8
-MAX_QUESTION_CHARS = 500
+MAX_QUESTION_CHARS = 800
 MAX_OPTION_CHARS = 200
 MAX_WYOMING_PAYLOAD = 16 * 1024 * 1024
 
@@ -54,6 +56,8 @@ DEFAULT_CONFIG = {
     "env_file": "~/.config/ceo-call/env",
     "quiet_start": None,  # "HH:MM" host-local time; with quiet_end, no calls are placed in between
     "quiet_end": None,
+    "timezone": None,  # IANA name such as "Europe/Madrid"; default is the host's local time
+    "heads_up_s": 90,  # when the phone is not registered, message the owner and wait this long
 }
 
 TIME_RE = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
@@ -156,6 +160,11 @@ def load_config(path: Optional[str]) -> Dict:
     if config["ring_timeout_s"] < 5 or config["call_timeout_s"] < 60:
         # A call must be allowed to ring and to finish; otherwise a retry could overlap a live call.
         raise CallError("ring_timeout_s must be at least 5 and call_timeout_s at least 60")
+    if config["timezone"] is not None:
+        try:
+            ZoneInfo(str(config["timezone"]))
+        except Exception:  # noqa: BLE001 - unknown zone names raise several error types
+            raise CallError("timezone is not a known IANA zone name")
     for key in ("piper_host", "env_file"):
         if not isinstance(config[key], str) or not config[key]:
             raise CallError("%s must be a non-empty string" % key)
@@ -442,6 +451,26 @@ def notification_text(question: str, options: List[str], status: str) -> str:
     return "\n".join(lines).strip()
 
 
+HEADS_UP = "Claudio te va a llamar en un momento. Abre Linphone y déjalo en primer plano."
+
+
+def wait_for_phone(asterisk, config: Dict, env: Dict[str, str], notifier: Callable, sleep, clock) -> bool:
+    """Make sure the phone is registered before calling. A phone that is not registered (for
+    example an iPhone app that went to sleep) gets a chat message, then we wait a while."""
+    if asterisk.endpoint_available(config["endpoint"]):
+        return True
+    token, chat_id = env.get("CEO_TELEGRAM_TOKEN"), env.get("CEO_TELEGRAM_CHAT_ID")
+    if not (token and chat_id) or not config["heads_up_s"]:
+        return False
+    notifier(token, chat_id, HEADS_UP)
+    deadline = clock() + config["heads_up_s"]
+    while clock() < deadline:
+        sleep(config["poll_interval_s"])
+        if asterisk.endpoint_available(config["endpoint"]):
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------------- the whole flow
 
 
@@ -454,10 +483,13 @@ def ask(
     notifier: Optional[Callable] = None,
     sleep=time.sleep,
     clock=time.monotonic,
-    now: Callable = datetime.now,
+    now: Optional[Callable] = None,
 ) -> Dict:
     synth = synth or synthesize
     notifier = notifier or send_telegram
+    if now is None:
+        zone = ZoneInfo(config["timezone"]) if config.get("timezone") else None
+        now = lambda: datetime.now(zone)  # noqa: E731
     clean = validate_request(request)
     options = clean["options"]
     if in_quiet_hours(now().strftime("%H:%M"), config.get("quiet_start"), config.get("quiet_end")):
@@ -472,6 +504,7 @@ def ask(
             asterisk.write_file("%s/%s.wav" % (base, name), wav)
         outcome = {"status": "unanswered"}
         for attempt in range(1, config["attempts"] + 1):
+            wait_for_phone(asterisk, config, env, notifier, sleep, clock)
             outcome = run_attempt(asterisk, config, call_id, len(options), sleep=sleep, clock=clock)
             outcome["attempt"] = attempt
             if outcome["status"] in ("decided", "undecided"):
@@ -513,6 +546,30 @@ def cmd_ask(args) -> int:
         request = json.loads(raw)
     except ValueError:
         raise CallError("the request is not valid JSON")
+    outcome = ask(request, config, env, DockerAsterisk(config["container"]))
+    print(json.dumps(outcome, ensure_ascii=False))
+    return 0 if outcome["status"] == "decided" else 3
+
+
+# Public-domain text (Miguel de Cervantes, Don Quijote de la Mancha, 1605) for test calls: it is
+# long enough to judge the voice and free of any copyright.
+TEST_PASSAGE = (
+    "Esto es una llamada de prueba. Te leo un fragmento del Quijote, de Cervantes, que es de dominio público. "
+    "En un lugar de la Mancha, de cuyo nombre no quiero acordarme, no ha mucho tiempo que vivía un hidalgo "
+    "de los de lanza en astillero, adarga antigua, rocín flaco y galgo corredor. "
+    "Una olla de algo más vaca que carnero, salpicón las más noches, duelos y quebrantos los sábados, "
+    "lentejas los viernes, algún palomino de añadidura los domingos, consumían las tres partes de su hacienda."
+)
+TEST_OPTIONS = ["Suena bien", "Hay un problema con el sonido"]
+
+
+def cmd_test_call(args) -> int:
+    config = load_config(args.config)
+    if args.ignore_quiet_hours:
+        config["quiet_start"] = config["quiet_end"] = None
+    env = load_env_file(config["env_file"])
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(143))
+    request = {"question": TEST_PASSAGE, "options": TEST_OPTIONS}
     outcome = ask(request, config, env, DockerAsterisk(config["container"]))
     print(json.dumps(outcome, ensure_ascii=False))
     return 0 if outcome["status"] == "decided" else 3
@@ -569,6 +626,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     ask_parser = sub.add_parser("ask", help="place the call")
     ask_parser.add_argument("--request", required=True, help="request JSON file, or - for stdin")
     ask_parser.set_defaults(func=cmd_ask)
+    test_parser = sub.add_parser("test-call", help="phone the owner and read a public-domain passage")
+    test_parser.add_argument("--ignore-quiet-hours", action="store_true", help="call even inside the quiet hours")
+    test_parser.set_defaults(func=cmd_test_call)
     sub.add_parser("check", help="verify speech and the phone endpoint").set_defaults(func=cmd_check)
     sub.add_parser("telegram-setup", help="find the chat id for the bot").set_defaults(func=cmd_telegram_setup)
     args = parser.parse_args(argv)
