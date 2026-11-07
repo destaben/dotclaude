@@ -145,6 +145,17 @@ class RedactTests(unittest.TestCase):
         self.assertEqual(out, text)
         self.assertLess(time.time() - started, 10)
 
+    def test_cookie_headers_are_redacted_whole_including_every_pair(self):
+        for line in ("Cookie: lang=en; sid=abc123; theme=dark", "Set-Cookie: sid=abc123; Path=/; HttpOnly",
+                     "cookie = lang=en; sid=abc123"):
+            with self.subTest(line=line):
+                out = self.redact(line + "\n")
+                self.assertNotIn("abc123", out)
+                self.assertNotIn("lang=en", out)
+
+    def test_a_flag_value_that_looks_like_a_flag_is_still_redacted(self):
+        self.assertNotIn("Hunter2", self.redact("backup --password --Hunter2 /data\n"))
+
     def test_dash_led_values_and_more_key_names(self):
         cases = {"backup --password -Hunter2x": "Hunter2x", "OPENAI_KEY=sk-abc123": "sk-abc123",
                  "cookie: sessionvalue99": "sessionvalue99", "auth=tok777": "tok777", "session_id=abcd1234": "abcd1234"}

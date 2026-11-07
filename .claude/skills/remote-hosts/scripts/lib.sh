@@ -99,7 +99,7 @@ bounded() {
 
 # redact: BEST-EFFORT removal of credentials from text on stdin. It is a safety net, not a
 # guarantee: output must still be treated as private. Covers URL userinfo (up to the last
-# "@" of the token), Authorization values, Bearer/Basic tokens, "--password X" style flags,
+# "@" of the token), Authorization and Cookie/Set-Cookie values (whole line), Bearer/Basic tokens, "--password X" style flags,
 # "curl -u/--user user:pass" (also the attached form -ubob:pw), whole `-H/--header` values naming a credential, "sshpass -p SECRET", "mysql -pSECRET", and NAME=value / NAME: value for password, passwd,
 # passphrase, pass, pwd, token, secret, auth, cookie, session, credentials and any NAME_KEY
 # (including prefixed names such as DB_PASSWORD or suffixed ones such as TOKEN_FILE). A value is
@@ -107,15 +107,18 @@ bounded() {
 # contain spaces ("correct horse battery"); the same holds for `-u` and mysql `-p` forms.
 # Deliberate non-goal: an UNQUOTED value with spaces (PASSWORD=correct horse) is not a single value
 # in shell/env semantics, only the first word is the value, so only that word is redacted.
+# A flag value is always redacted, even if it looks like another flag (`--password --Hunter2`): hiding
+# a following flag is preferred to leaking.
 # Deliberate non-goal: "mysql -p secret" (with a space) is NOT a password: mysql then prompts
 # and treats "secret" as the database name, so redacting it would only hide a diagnostic.
 redact() {
   perl -pe '
     s{(://)\S*@}{$1}g;
+    s{(?i)((?:set-)?cookie["\x27]?\s*[:=]\s*).*}{$1REDACTED}g;
     s{(?i)(authorization["\x27]?\s*[=:]\s*).*}{$1REDACTED}g;
     s{(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}}{Bearer REDACTED}g;
     s{(?i)\bbasic\s+(?:(?=[A-Za-z0-9._~+/=-]*[0-9._~+/=-])[A-Za-z0-9._~+/=-]{8,}|(?-i)(?=[A-Za-z0-9+/=]*[a-z][A-Za-z0-9+/=]*[A-Z])[A-Za-z0-9+/=]{12,}|[A-Za-z0-9._~+/=-]{20,})}{Basic REDACTED}g;
-    s{(?i)(--?(?:password|passwd|passphrase|pass|pwd|token|secret|api-?key|access-?key)(?:\s+|=))(?!--[A-Za-z])(?:"[^"]*"|\x27[^\x27]*\x27|\S+)}{$1REDACTED}g;
+    s{(?i)(--?(?:password|passwd|passphrase|pass|pwd|token|secret|api-?key|access-?key)(?:\s+|=))(?:"[^"]*"|\x27[^\x27]*\x27|\S+)}{$1REDACTED}g;
     s{(?i)(\s(?:-u|--user|--proxy-user)(?:\s+|=))(?:"[^"]*"|\x27[^\x27]*\x27|[^\s:]+:\S+)}{$1REDACTED}g;
     s{(\s-u)(?:"[^"]*"|\x27[^\x27]*\x27|[^\s:]+:\S+)}{$1REDACTED}g;
     s{(?i)(?:-H|--header)(?:\s+|=)([\"\x27])(?=[^\"\x27]*(?:auth|token|key|secret|cookie|passw))[^\"\x27]*\1}{-H REDACTED}g;

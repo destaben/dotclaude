@@ -44,8 +44,8 @@ Quick is 3 model calls, full is 6, so it is kept for real decisions. See
   automatically — invoke it when you want a bloat check.
 - `/pr`: skips the test/review/doc steps for a change you've already verified
   yourself.
-- `remote-hosts` (skill): administering the user's own LAN devices over ssh, read-only by
-  default. It is not part of the change pipeline; see
+- `remote-hosts` (skill): administering the user's own LAN devices over ssh,
+  read-only by default. It is not part of the change pipeline; see
   `docs/decisions/0004-tooling-choices.md`, item 7.
 
 ## GitHub PR review (`.github/workflows/claude-pr-review.yml`)
