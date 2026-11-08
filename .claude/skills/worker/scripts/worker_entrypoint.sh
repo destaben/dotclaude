@@ -327,7 +327,8 @@ collect_handoff() {
     if [ "$(wc -c < "$src" | tr -d ' ')" -gt "$HANDOFF_OUT_MAX" ]; then
       echo "worker: the worker's HANDOFF-OUT.md is larger than the limit; it was not taken" >&2
     elif [ "$(head -n 1 "$src")" = "---" ] && [ "$(fm_get "$src" version)" = "1" ] && valid_out_status "$(fm_get "$src" status)"; then
-      mv -f "$src" "$OUT_FILE"
+      # origin marks the file as written by a worker run, so a later --handoff of it is refused without consent.
+      awk 'NR == 1 { print; print "origin: worker"; next } { print }' "$src" > "$OUT_FILE" && rm -f "$src"
     else
       echo "worker: the worker's HANDOFF-OUT.md is not valid version 1 with a known status; it was kept aside as HANDOFF-OUT.invalid.md" >&2
       # Kept for the owner to inspect (scrubbed of login values); the fallback handoff replaces it.
@@ -393,15 +394,28 @@ run_claude() {
   cd "$WORK/tree"
   build_tool_rules "$CONFIG_DIR" "$WORK/repo"
   mkdir -p "$WORK/tree/$WORKER_OUT_DIR"
-  CLAUDE_RAN=1
   # Official binary, plain headless run. Never --bare: bare mode skips the subscription login.
+  # Job control gives the pipeline its own process group, so a TERM from the host reaches claude itself. The
+  # exit status goes to a file, because a pipeline's status is not available for a background job.
+  CLAUDE_EXIT_FILE="$RUN_DIR/claude.exit"
+  rm -f "$CLAUDE_EXIT_FILE"
+  set -m
+  ( "${claude_env[@]}" claude -p "$PROMPT" --output-format stream-json --verbose --max-turns "$MAX_TURNS" \
+      --permission-mode acceptEdits --permission-prompts none \
+      --allowedTools "${TOOL_ALLOWLIST[@]}" --disallowedTools "${TOOL_DENYLIST[@]}" 2>&1
+    echo $? > "$CLAUDE_EXIT_FILE" ) | token_filter | tee "$LOG" &
+  CLAUDE_JOB=$!
+  set +m
+  CLAUDE_RAN=1
   set +e
-  "${claude_env[@]}" claude -p "$PROMPT" --output-format stream-json --verbose --max-turns "$MAX_TURNS" \
-    --permission-mode acceptEdits --permission-prompts none \
-    --allowedTools "${TOOL_ALLOWLIST[@]}" --disallowedTools "${TOOL_DENYLIST[@]}" \
-    2>&1 | token_filter | tee "$LOG"
-  CLAUDE_EXIT=${PIPESTATUS[0]}
+  wait "$CLAUDE_JOB"
   set -e
+  # No exit file means claude was stopped before it could write one: that counts as a failed run.
+  if [ -s "$CLAUDE_EXIT_FILE" ]; then
+    CLAUDE_EXIT=$(digits_or "$(cat "$CLAUDE_EXIT_FILE")")
+  else
+    CLAUDE_EXIT=143
+  fi
   after=$(creds_stamp "$CREDS_PATH")
   [ "$before" = "$after" ] || CREDS_CHANGED=yes
   collect_handoff
@@ -431,7 +445,7 @@ run_claude() {
 
 # write_minimal_out <status> <note>: a HANDOFF-OUT.md with no git state, for when the scrubber cannot run.
 write_minimal_out() {
-  printf '%s\n' "---" "version: 1" "repo: $REPO" "base: $BASE" "branch: $BRANCH" "issue: $ISSUE_FIELD" \
+  printf '%s\n' "---" "version: 1" "origin: worker" "repo: $REPO" "base: $BASE" "branch: $BRANCH" "issue: $ISSUE_FIELD" \
     "status: $1" "---" "" "## Task" "" "Not carried over." "" "## Context" "" "$2" "" \
     "## Acceptance" "" "- Not assessed." "" "## Untrusted input" "" "Not carried over." "" "## Checkpoint" "" \
     "Withheld: the log scrubber could not run, so no worker output was written." > "$OUT_FILE"
@@ -445,6 +459,7 @@ write_fallback() {  # write_fallback <status> <note>: a minimal HANDOFF-OUT.md b
   if {
     echo "---"
     echo "version: 1"
+    echo "origin: worker"
     echo "repo: $REPO"
     echo "base: $BASE"
     echo "branch: $BRANCH"
@@ -512,6 +527,33 @@ append_usage() {
       creds_changed: $creds_changed, commits: $commits, at: $at}' >> "$RUNS_DIR/usage.jsonl"
 }
 
+# force_blocked <file> <claimed-status>: the run failed, so the worker's own status cannot stand. The front
+# matter says blocked and keeps the worker's status as worker_status; the worker's text stays, with a note.
+force_blocked() {
+  local file=$1 claimed=$2 tmp="$1.tmp"
+  awk -v claimed="$claimed" '
+    NR == 1 { print; infm = 1; next }
+    infm && $0 == "---" { infm = 0; print "worker_status: " claimed; print; next }
+    infm && /^status:/ { print "status: blocked"; next }
+    { print }
+  ' "$file" > "$tmp" || { rm -f "$tmp"; return 1; }
+  printf '\n## Entrypoint note\n\nThe worker reported status: %s, but the run failed (login check: %s; claude exit: %s), so the status is blocked. The worker text above is kept for the owner to read.\n' "$claimed" "$AUTH" "$CLAUDE_EXIT" >> "$tmp"
+  mv "$tmp" "$file"
+}
+
+# on_term: the host stops a run with TERM (docker stop). Before claude starts, the run ends now, and finalize
+# writes the blocked handoff. Once claude runs, claude is stopped and the rest of the run still finishes: the
+# worker's file, the commit of what it changed, and the bundle are written, so the owner keeps the work.
+on_term() {
+  if [ "$CLAUDE_RAN" = 1 ]; then
+    kill %1 2>/dev/null || true
+  else
+    REASON="the run was stopped before the worker started"
+    STATUS=error
+    exit 143
+  fi
+}
+
 # finalize runs on every exit. It guarantees HANDOFF-OUT.md and summary.env exist (a fallback is written when
 # the worker did not produce a valid one). The worker's file is scrubbed again here, with the login values
 # read at this moment, so a token refreshed during the run is also removed.
@@ -521,7 +563,13 @@ finalize() {
   if [ -n "$RUN_DIR" ] && [ -d "$RUN_DIR" ]; then
     if [ -f "$OUT_FILE" ]; then st=$(fm_get "$OUT_FILE" status); fi
     if [ -f "$OUT_FILE" ] && valid_out_status "$st" && scrub_in_place "$OUT_FILE"; then
-      [ "$CLAUDE_RAN" = 1 ] && STATUS=$st
+      if [ "$CLAUDE_RAN" = 1 ] && { [ "$AUTH" = failed ] || [ "$CLAUDE_EXIT" != 0 ]; }; then
+        # A failed run cannot end as done or checkpoint, whatever the worker wrote.
+        STATUS=blocked
+        force_blocked "$OUT_FILE" "$st"
+      elif [ "$CLAUDE_RAN" = 1 ]; then
+        STATUS=$st
+      fi
     else
       if [ -f "$OUT_FILE" ]; then scrub_move "$OUT_FILE" "$RUN_DIR/HANDOFF-OUT.invalid.md" || true; fi
       if [ "$CLAUDE_RAN" = 1 ]; then
@@ -542,6 +590,7 @@ finalize() {
 
 main() {
   trap finalize EXIT
+  trap on_term TERM INT
   validate
   preflight
   setup_repo

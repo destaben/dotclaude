@@ -14,6 +14,7 @@ on PATH) runs it with an empty login and an empty config directory: nothing reac
 
 Run: python3 -m unittest tests/test_worker_scripts.py
 """
+import hashlib
 import json
 import os
 import re
@@ -21,7 +22,9 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 SKILL = Path(__file__).resolve().parent.parent / ".claude" / "skills" / "worker"
@@ -58,15 +61,51 @@ STUB_DOCKER = r'''#!/usr/bin/env python3
 #   STUB_TAMPER_BUNDLE="<refs>"       replaces the run's bundle with one holding those refs;
 #   STUB_TAMPER_SYMLINK="<name>=<t>"  replaces a run file with a symbolic link to <t>;
 #   STUB_TAMPER_BIG="<name>"          makes a run file larger than the copy limit.
-import os, subprocess, sys
+# "stop -t N NAME" sends SIGTERM to the started entrypoint and waits N seconds; an entrypoint still alive then
+# is killed and recorded as left behind, which "ps -aq" reports until "rm -f" removes it. STUB_IGNORE_TERM=1
+# starts the entrypoint with SIGTERM ignored, the way a stuck container behaves.
+import os, signal, subprocess, sys, time
 args = sys.argv[1:]
 with open(os.environ["STUB_LOG"], "a") as log:
     log.write("docker " + " ".join(args) + "\n")
+containers = os.path.join(os.environ["FAKE_REMOTE_HOME"], "containers")
+os.makedirs(containers, exist_ok=True)
 if args[:1] == ["ps"]:
+    if "-aq" in args:
+        name = args[args.index("--filter") + 1].split("=", 1)[1].strip("^$")
+        if os.path.exists(os.path.join(containers, name + ".left")):
+            print(name)
+        sys.exit(0)
     if os.environ.get("STUB_DOCKER_BUSY") == "1":
         print("abc123")
     sys.exit(0)
+if args[:1] == ["stop"]:
+    name = args[-1]
+    pidfile = os.path.join(containers, name + ".pid")
+    if not os.path.exists(pidfile):
+        sys.exit(0)
+    with open(pidfile) as handle:
+        pid = int(handle.read())
+    grace = float(args[args.index("-t") + 1]) if "-t" in args else 10.0
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        sys.exit(0)
+    deadline = time.time() + grace
+    while time.time() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            sys.exit(0)
+        time.sleep(0.05)
+    open(os.path.join(containers, name + ".left"), "w").close()
+    os.kill(pid, signal.SIGKILL)
+    sys.exit(0)
 if args[:1] == ["rm"]:
+    name = args[-1]
+    left = os.path.join(containers, name + ".left")
+    if os.path.exists(left):
+        os.remove(left)
     sys.exit(0)
 if args[:2] != ["compose", "run"]:
     sys.exit(2)
@@ -85,7 +124,17 @@ env = dict(os.environ)
 env.update(values)
 env["HANDOFF"] = home + values["HANDOFF"]
 env["WORKER_RUNS_DIR"] = os.path.join(home, "runs")
-status = subprocess.call([os.environ["STUB_ENTRYPOINT"]], env=env)
+name = args[args.index("--name") + 1]
+spawn = {}
+if os.environ.get("STUB_IGNORE_TERM") == "1":
+    spawn["preexec_fn"] = lambda: signal.signal(signal.SIGTERM, signal.SIG_IGN)
+entry = subprocess.Popen([os.environ["STUB_ENTRYPOINT"]], env=env, **spawn)
+pidfile = os.path.join(containers, name + ".pid")
+with open(pidfile, "w") as handle:
+    handle.write(str(entry.pid))
+status = entry.wait()
+if os.path.exists(pidfile):
+    os.remove(pidfile)
 run_dir = os.path.join(home, "runs", values["RUN_ID"])
 tamper = os.environ.get("STUB_TAMPER_BUNDLE")
 if tamper:
@@ -199,7 +248,7 @@ out = knobs.get("out", "none")
 checkpoint = knobs.get("checkpoint", "Added feature.txt; tests pass.")
 if out_path and out in ("done", "blocked"):
     with open(out_path, "w") as handoff:
-        handoff.write("---\nversion: 1\nrepo: x\nbase: main\nbranch: y\nissue: 15\nstatus: " + out + "\n---\n\n"
+        handoff.write("---\nversion: 1\nrepo: owner/project\nbase: main\nbranch: worker/fix-widget-15\nissue: 15\nstatus: " + out + "\n---\n\n"
                       "## Task\n\nReported by the stub.\n\n## Checkpoint\n\n" + checkpoint + "\n")
 elif out_path and out == "escalate":
     with open(out_path, "w") as handoff:
@@ -211,6 +260,11 @@ elif out_path and out == "escalate":
 elif out_path and out == "invalid":
     with open(out_path, "w") as handoff:
         handoff.write("no front matter here\n")
+elif out_path and out == "symlink":
+    target = os.path.join(config_dir, "elsewhere.md")
+    with open(target, "w") as handoff:
+        handoff.write("---\nversion: 1\nstatus: blocked\n---\n\n## Task\n\nLinked elsewhere.\n")
+    os.symlink(target, out_path)
 if knobs.get("refresh") == "1":
     with open(os.path.join(config_dir, ".credentials.json"), "w") as creds:
         creds.write('{"token": "REFRESHED-VALUE", "padding": "xxxxxxxx"}')
@@ -225,7 +279,7 @@ elif result == "401":
     emit({"type": "result", "subtype": "success", "is_error": True, "api_error_status": 401,
           "num_turns": 1, "duration_ms": 900, "total_cost_usd": 0})
     sys.exit(1)
-sys.exit(0)
+sys.exit(int(knobs.get("exit", "0")))
 '''
 
 STUB_GIT = r'''#!/bin/sh
@@ -610,25 +664,69 @@ class HandoffTests(WorkerCase):
 
 
 class LockTests(WorkerCase):
-    def lock_dir(self):
+    """The lock is a symbolic link whose target is the holder's pid (see acquire_lock in worker_run.sh)."""
+
+    def lock_path(self):
         return self.state / "dotclaude-worker" / "run.lock"
 
+    def dead_pid(self):
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        return dead.pid
+
+    def race(self, count, env=None):
+        """Starts count worker runs at once. Each run's claude stub sleeps, so the first run holds the lock long
+        enough for the others to find it taken. Returns the exit codes and the stderr of each run."""
+        run_env = {**self.env, "STUB_CLAUDE_SLEEP": "3", **(env or {})}
+        self.write_claude_knobs(run_env)
+        procs = []
+        for number in range(count):
+            cmd = [str(RUN_SCRIPT), "box", REPO, "--config", str(self.config), "--handoff", str(self.handoff_src),
+                   "--out", str(self.tmp / ("race-%d" % number))]
+            procs.append(subprocess.Popen(cmd, env=run_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                          text=True, cwd=str(self.tmp)))
+        results = []
+        for proc in procs:
+            stdout, stderr = proc.communicate(timeout=180)
+            results.append((proc.returncode, stderr))
+        return results
+
     def test_a_live_lock_refuses_a_second_run(self):
-        self.lock_dir().mkdir(parents=True)
-        (self.lock_dir() / "pid").write_text(str(os.getpid()))
+        self.lock_path().parent.mkdir(parents=True)
+        os.symlink(str(os.getpid()), self.lock_path())
         result = self.run_worker("--handoff", str(self.handoff_src))
         self.assertEqual(result.returncode, 5, result.stderr)
         self.assertFalse(self.log.exists())
-        self.assertTrue(self.lock_dir().exists(), "a live lock must not be removed")
+        self.assertTrue(os.path.islink(self.lock_path()), "a live lock must not be removed")
 
     def test_a_stale_lock_is_reclaimed_and_released(self):
-        dead = subprocess.Popen(["true"])
-        dead.wait()
-        self.lock_dir().mkdir(parents=True)
-        (self.lock_dir() / "pid").write_text(str(dead.pid))
+        self.lock_path().parent.mkdir(parents=True)
+        os.symlink(str(self.dead_pid()), self.lock_path())
         result = self.run_worker("--handoff", str(self.handoff_src))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertFalse(self.lock_dir().exists())
+        self.assertFalse(os.path.lexists(self.lock_path()))
+
+    def test_a_lock_whose_holder_is_not_a_pid_is_treated_as_busy(self):
+        self.lock_path().parent.mkdir(parents=True)
+        os.symlink("not-a-pid", self.lock_path())
+        result = self.run_worker("--handoff", str(self.handoff_src))
+        self.assertEqual(result.returncode, 5, result.stderr)
+
+    def test_many_concurrent_runs_exactly_one_proceeds(self):
+        results = self.race(8)
+        codes = sorted(code for code, _ in results)
+        self.assertEqual(codes.count(0), 1, codes)
+        self.assertEqual(codes.count(5), 7, codes)
+        for code, stderr in results:
+            if code == 5:
+                self.assertIn("busy", stderr)
+
+    def test_racing_reclaimers_of_a_stale_lock_leave_exactly_one_winner(self):
+        self.lock_path().parent.mkdir(parents=True)
+        os.symlink(str(self.dead_pid()), self.lock_path())
+        codes = sorted(code for code, _ in self.race(8))
+        self.assertEqual(codes.count(0), 1, codes)
+        self.assertEqual(codes.count(5), 7, codes)
 
 
 class OutDirTests(WorkerCase):
@@ -696,13 +794,6 @@ class RunTests(WorkerCase):
         text = (self.out / "HANDOFF-OUT.md").read_text()
         self.assertIn("status: checkpoint", text)
         self.assertIn("did not write", text)
-
-    def test_a_timeout_is_enforced_and_the_container_is_removed(self):
-        result = self.run_worker("--handoff", str(self.handoff_src), "--timeout", "1s",
-                                 env={"STUB_CLAUDE_SLEEP": "3"})
-        self.assertEqual(result.returncode, 124, result.stderr)
-        self.assertIn("status=timeout", result.stdout)
-        self.assertTrue(any(call.startswith("docker rm -f worker-") for call in self.calls("docker")))
 
     def test_a_busy_remote_host_is_refused_before_compose_runs(self):
         result = self.run_worker("--handoff", str(self.handoff_src), env={"STUB_DOCKER_BUSY": "1"})
@@ -904,6 +995,8 @@ class EntrypointTests(WorkerCase):
         self.assertIn("do not guess", prompt)
         self.assertIn("Write and edit files only inside the current directory", prompt)
         self.assertNotIn("git push -u origin", prompt)
+        self.assertIn("/.worker-out/HANDOFF-OUT.md", prompt)
+        self.assertNotIn("/runs/", prompt.split("Before you finish", 1)[1].split("\n")[0])
 
     def test_the_worker_runs_in_a_new_worktree_on_its_branch(self):
         result, _, _ = self.run_entry(branch="worker/fix-widget-15")
@@ -1124,6 +1217,18 @@ class ToolPolicyTests(WorkerCase):
         for word in ("curl", "wget", "ssh", "docker", "sudo", "rm", "gh", "cat", "find", "ls", "jq"):
             self.assertFalse(any(rule.startswith("Bash(%s" % word) for rule in allow), word)
 
+    def test_shellcheck_is_not_allowed_because_it_echoes_source_lines_of_any_file(self):
+        allow = tool_rules(self.worker_args(), "--allowedTools")
+        self.assertFalse(any("shellcheck" in rule for rule in allow), allow)
+        self.assertIn("Bash(python3 -m unittest:*)", allow)
+        self.assertIn("Bash(python3 -m pytest:*)", allow)
+
+    def test_the_git_directory_is_denied_for_reading_and_editing_under_every_form(self):
+        deny = tool_rules(self.worker_args(), "--disallowedTools")
+        for expected in ("Read(**/.git)", "Read(**/.git/**)", "Edit(**/.git)", "Edit(**/.git/**)",
+                         "Read(**/.git/config)", "Edit(**/.git/config)"):
+            self.assertIn(expected, deny)
+
     def test_the_allowlist_has_no_push_and_no_gh_rule(self):
         allow = tool_rules(self.worker_args(), "--allowedTools")
         self.assertFalse(any("push" in rule for rule in allow), allow)
@@ -1219,6 +1324,269 @@ class RealClaudeFlagTests(WorkerCase):
         self.assertNotIn("unknown command", lowered)
 
 
+ESCALATION_HANDOFF = ("---\nversion: 1\nrepo: owner/project\nbase: main\nbranch: worker/fix-widget-15\nissue: 15\n"
+                      "status: blocked\n---\n\n## Task\n\nStopped at a design choice.\n\n## Escalation\n\n"
+                      "Question: Which storage backend should the widget use?\n\n"
+                      "1. Option A: keep the file store.\n2. Option B: move to the database.\n")
+
+
+def message_start():
+    return ("message_start", {"type": "message_start", "message": {
+        "id": "msg_test", "type": "message", "role": "assistant", "model": "test", "content": [],
+        "stop_reason": None, "stop_sequence": None, "usage": {"input_tokens": 1, "output_tokens": 1}}})
+
+
+def text_events(text):
+    return [message_start(),
+            ("content_block_start", {"type": "content_block_start", "index": 0,
+                                     "content_block": {"type": "text", "text": ""}}),
+            ("content_block_delta", {"type": "content_block_delta", "index": 0,
+                                     "delta": {"type": "text_delta", "text": text}}),
+            ("content_block_stop", {"type": "content_block_stop", "index": 0}),
+            ("message_delta", {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                               "usage": {"output_tokens": 1}}),
+            ("message_stop", {"type": "message_stop"})]
+
+
+def tool_events(name, tool_input):
+    return [message_start(),
+            ("content_block_start", {"type": "content_block_start", "index": 0,
+                                     "content_block": {"type": "tool_use", "id": "toolu_test", "name": name,
+                                                       "input": {}}}),
+            ("content_block_delta", {"type": "content_block_delta", "index": 0,
+                                     "delta": {"type": "input_json_delta", "partial_json": json.dumps(tool_input)}}),
+            ("content_block_stop", {"type": "content_block_stop", "index": 0}),
+            ("message_delta", {"type": "message_delta", "delta": {"stop_reason": "tool_use", "stop_sequence": None},
+                               "usage": {"output_tokens": 1}}),
+            ("message_stop", {"type": "message_stop"})]
+
+
+class MockAnthropic:
+    """A local stand-in for the Anthropic messages API, at the network boundary (the one boundary this suite does
+    not own). The first request that offers tools gets one scripted tool call. The request that carries the
+    tool's result gets a final answer. A file_path of "{HANDOFF}" stands for the handoff path the prompt names:
+    that is the path a model reads from its prompt, so the mock finds it there too."""
+
+    HANDOFF_RE = re.compile(r"(/[^\s\"\\]+/\.worker-out/HANDOFF-OUT\.md)")
+
+    def __init__(self):
+        self.tool = None
+        self.results = []
+        mock = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers.get("content-length", 0))) or b"{}")
+                messages = body.get("messages", [])
+                last = messages[-1] if messages else {}
+                content = last.get("content")
+                if isinstance(content, list) and any(c.get("type") == "tool_result" for c in content):
+                    mock.results.extend(c for c in content if c.get("type") == "tool_result")
+                    events = text_events("done")
+                elif body.get("tools") and mock.tool:
+                    name, tool_input = mock.tool
+                    if tool_input.get("file_path") == "{HANDOFF}":
+                        found = MockAnthropic.HANDOFF_RE.search(json.dumps(body))
+                        tool_input = dict(tool_input, file_path=found.group(1) if found else "/nowhere")
+                    events = tool_events(name, tool_input)
+                else:
+                    events = text_events("ok")
+                data = "".join("event: %s\ndata: %s\n\n" % (name, json.dumps(payload))
+                               for name, payload in events).encode()
+                self.send_response(200)
+                self.send_header("content-type", "text/event-stream")
+                self.send_header("content-length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+        self.server = ThreadingHTTPServer(("localhost", 0), Handler)
+        self.url = "http://localhost:%d" % self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def rule_regex(rule, home):
+    """A Claude Code path rule, in the forms this worker writes, as a regular expression over absolute paths:
+    //x is /x, ~/x is under HOME, and a relative pattern matches anywhere (a leading **/ means any directories)."""
+    pattern = rule[rule.index("(") + 1:-1]
+    if pattern.startswith("//"):
+        body = "/" + pattern[2:]
+    elif pattern.startswith("~/"):
+        body = home + "/" + pattern[2:]
+    else:
+        body = pattern
+    prefix = ""
+    if body.startswith("**/"):
+        prefix, body = "(?:.*/)?", body[3:]
+    regex = ".*".join("[^/]*".join(re.escape(part) for part in piece.split("*")) for piece in body.split("**"))
+    return re.compile("^" + prefix + regex + "$")
+
+
+class TermTests(WorkerCase):
+    def test_a_stopped_run_gets_term_and_still_writes_its_handoff_summary_and_bundle(self):
+        result = self.run_worker("--handoff", str(self.handoff_src), "--timeout", "3s", env={"STUB_CLAUDE_SLEEP": "30"})
+        self.assertEqual(result.returncode, 124, result.stderr)
+        self.assertIn("status=timeout", result.stdout)
+        summary = read_summary(self.out / "summary.env")
+        self.assertEqual(summary["STATUS"], "blocked")
+        self.assertIn("status: blocked", (self.out / "HANDOFF-OUT.md").read_text())
+        calls = self.calls("docker")
+        self.assertTrue(any(call.startswith("docker stop -t ") for call in calls), calls)
+        self.assertFalse(any(call.startswith("docker rm -f") for call in calls),
+                         "a container that exited within the grace period is not removed by force")
+
+    def test_an_entrypoint_that_ignores_term_is_killed_after_the_grace_period_and_removed(self):
+        result = self.run_worker("--handoff", str(self.handoff_src), "--timeout", "2s", env={
+            "STUB_CLAUDE_SLEEP": "4", "STUB_IGNORE_TERM": "1", "WORKER_STOP_GRACE": "1"})
+        self.assertEqual(result.returncode, 124, result.stderr)
+        calls = self.calls("docker")
+        self.assertTrue(any(call.startswith("docker stop -t 1 ") for call in calls), calls)
+        self.assertTrue(any(call.startswith("docker rm -f worker-") for call in calls), calls)
+
+
+class HandoffOutTests(WorkerCase):
+    def test_the_workers_handoff_is_moved_into_the_run_directory_and_removed_from_the_worktree(self):
+        result, _, run_dir = self.run_entry(env={"STUB_CLAUDE_OUT": "done"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("status: done", (run_dir / "HANDOFF-OUT.md").read_text())
+        self.assertFalse((Path(self.claude_call()["cwd"]) / ".worker-out").exists())
+
+    def test_a_symbolic_link_handoff_is_not_taken(self):
+        result, _, run_dir = self.run_entry(env={"STUB_CLAUDE_OUT": "symlink"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        text = (run_dir / "HANDOFF-OUT.md").read_text()
+        self.assertIn("status: checkpoint", text)
+        self.assertNotIn("Linked elsewhere", text)
+        self.assertIn("not a regular file", result.stderr)
+
+    def test_an_invalid_handoff_from_the_worker_is_not_taken(self):
+        result, _, run_dir = self.run_entry(env={"STUB_CLAUDE_OUT": "invalid"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("status: checkpoint", (run_dir / "HANDOFF-OUT.md").read_text())
+        self.assertIn("not valid version 1", result.stderr)
+
+
+class FailedRunTests(WorkerCase):
+    def test_a_done_claim_after_a_401_is_blocked_and_the_worker_text_is_kept_as_a_note(self):
+        result = self.run_worker("--handoff", str(self.handoff_src), env={
+            "STUB_CLAUDE_OUT": "done", "STUB_CLAUDE_RESULT": "401"})
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("status=blocked", result.stdout)
+        text = (self.out / "HANDOFF-OUT.md").read_text()
+        self.assertIn("status: blocked", text)
+        self.assertIn("worker_status: done", text)
+        self.assertIn("## Entrypoint note", text)
+        self.assertIn("Reported by the stub", text)
+
+    def test_a_nonzero_claude_exit_forces_blocked_even_without_an_auth_failure(self):
+        result = self.run_worker("--handoff", str(self.handoff_src), env={
+            "STUB_CLAUDE_OUT": "done", "STUB_CLAUDE_EXIT": "2"})
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("status=blocked", result.stdout)
+        self.assertIn("status: blocked", (self.out / "HANDOFF-OUT.md").read_text())
+
+
+class ResumeTests(WorkerCase):
+    def resume_file(self):
+        """A worker's handoff, passed back as a checkpoint, the way an owner would resume it."""
+        result, _, run_dir = self.run_entry(env={"STUB_CLAUDE_OUT": "done"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        text = (run_dir / "HANDOFF-OUT.md").read_text().replace("status: done", "status: checkpoint", 1)
+        path = self.tmp / "resume.md"
+        path.write_text(text)
+        return path
+
+    def test_the_worker_handoff_carries_the_origin_marker(self):
+        result, _, run_dir = self.run_entry(env={"STUB_CLAUDE_OUT": "done"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("origin: worker", (run_dir / "HANDOFF-OUT.md").read_text().splitlines()[:4])
+
+    def test_a_worker_handoff_passed_back_is_refused_without_consent(self):
+        path = self.resume_file()
+        result = self.run_worker("--handoff", str(path))
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("--accept-worker-handoff", result.stderr)
+        self.assertEqual(self.calls("docker"), [])
+
+    def test_with_consent_it_proceeds_and_shows_how_the_instructions_differ_from_the_owners(self):
+        path = self.resume_file()
+        result = self.run_worker("--handoff", str(path), "--accept-worker-handoff", "--original", str(self.handoff_src))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("WARNING", result.stderr)
+        self.assertIn("-Fix the widget.", result.stderr)
+        self.assertIn("+Reported by the stub.", result.stderr)
+
+    def test_consent_without_an_original_still_shows_the_instruction_sections(self):
+        path = self.resume_file()
+        result = self.run_worker("--handoff", str(path), "--accept-worker-handoff")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("no --original given", result.stderr)
+        self.assertIn("Reported by the stub.", result.stderr)
+
+
+class HandoffPathRuleTests(WorkerCase):
+    """The worker's handoff path must match no deny rule the entrypoint generates. Checked on the generated
+    arguments, so it fails if a rule is added that covers the path."""
+
+    def test_the_handoff_path_is_covered_by_no_deny_rule_and_the_matcher_sees_one_that_is(self):
+        result, _, _ = self.run_entry()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        call = self.claude_call()
+        args = call["args"]
+        prompt = args[args.index("-p") + 1]
+        handoff = HandoffPathRuleTests.prompt_handoff_path(prompt)
+        deny = tool_rules(args, "--disallowedTools")
+        covering = [rule for rule in deny if rule_regex(rule, call["env"]["HOME"]).match(handoff)]
+        self.assertEqual(covering, [], "the worker's handoff path %s is denied by %s" % (handoff, covering))
+        # Positive control: the matcher does recognise a denied path, so the check above is not vacuous.
+        self.assertTrue(rule_regex("Edit(//runs/**)", "/srv/home").match("/runs/r1/HANDOFF-OUT.md"))
+        self.assertTrue(rule_regex("Edit(**/.git/**)", "/srv/home").match("/work/r1/tree/.git/config"))
+
+    @staticmethod
+    def prompt_handoff_path(prompt):
+        found = re.search(r"(/[^\s\"\\]+/\.worker-out/HANDOFF-OUT\.md)", prompt)
+        assert found, "the prompt must name the handoff path"
+        return found.group(1)
+
+
+@unittest.skipUnless(REAL_CLAUDE, "claude is not on PATH: the real-binary handoff test is skipped")
+class RealClaudeHandoffTests(WorkerCase):
+    """The real claude binary, through the entrypoint's own deny and allow arguments, with the mock API at the
+    network boundary. The worker writes a blocked handoff with an escalation. The write has to be allowed by the
+    real rules, the entrypoint has to collect it, and the host has to exit 3 and run the hook."""
+
+    real_claude = True
+
+    def setUp(self):
+        super().setUp()
+        self.mock = MockAnthropic()
+        self.addCleanup(self.mock.close)
+        (self.claude_cfg / ".credentials.json").unlink()   # the mock needs no login; no real login is used
+        (self.claude_cfg / "settings.json").write_text(json.dumps({"env": {
+            "ANTHROPIC_BASE_URL": self.mock.url, "ANTHROPIC_API_KEY": "sk-ant-" + "test-dummy-key-000000000000"}}))
+
+    def test_a_blocked_escalation_written_under_the_real_rules_exits_3_and_runs_the_hook(self):
+        hook = self.tmp / "hook.py"
+        hook.write_text(hook_script("HOOK_MARKER"))
+        marker = self.tmp / "hook.json"
+        self.write_config(on_blocked=["python3", str(hook)])
+        self.mock.tool = ("Write", {"file_path": "{HANDOFF}", "content": ESCALATION_HANDOFF})
+        result = self.run_worker("--handoff", str(self.handoff_src), env={"HOOK_MARKER": str(marker)})
+        self.assertTrue(self.mock.results, "the worker never reached its tool call: " + result.stderr)
+        self.assertFalse(self.mock.results[0].get("is_error"), self.mock.results[0])
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertIn("Which storage backend", result.stderr)
+        self.assertIn("1. Option A", result.stderr)
+        run_id = result.stdout.split(" run ", 1)[1].split(" ", 1)[0]
+        self.assertEqual(json.loads(marker.read_text())[0], run_id)
+
+
 class CommitTests(WorkerCase):
     """The entrypoint commits; the worker does not. The commit's identity, message and flags are fixed here."""
 
@@ -1256,6 +1624,48 @@ class CommitTests(WorkerCase):
         message = self.bare_log("%B")
         self.assertNotIn("#", message)
         self.assertNotIn("@", message)
+
+    def test_a_handoff_alone_makes_no_commit_and_a_key_named_in_any_case_is_never_committed(self):
+        result = self.run_publishing(STUB_CLAUDE_OUT="done", STUB_CLAUDE_COMMIT="ID_ED25519",
+                                     STUB_CLAUDE_COMMIT_CONTENT="key material\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("publish=none", result.stdout)
+        self.assertFalse(self.bare_has("refs/heads/" + RUN_BRANCH))
+
+    def test_the_handoff_directory_never_reaches_the_commit(self):
+        result = self.run_publishing(STUB_CLAUDE_OUT="done", STUB_CLAUDE_COMMIT="feature.txt")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        files = subprocess.run(["git", "-C", str(self.bare), "show", "--name-only", "--format=",
+                                "refs/heads/" + RUN_BRANCH], capture_output=True, text=True, check=True).stdout
+        self.assertIn("feature.txt", files)
+        self.assertNotIn(".worker-out", files)
+
+    def test_a_bundle_over_the_copy_limit_is_reported_as_too_large_and_nothing_is_pushed(self):
+        result = self.run_publishing(STUB_TAMPER_BIG="branch.bundle", WORKER_BUNDLE_MAX="1000")
+        self.assertEqual(result.returncode, 6, result.stderr)
+        self.assertIn("publish=too-large", result.stdout)
+        self.assertIn("larger than", result.stderr)
+        self.assertFalse(self.bare_has("refs/heads/" + RUN_BRANCH))
+        self.assertEqual([c for c in self.calls("git") if " push " in c], [])
+
+    def test_an_access_token_field_is_refused_and_no_publish_leaves_the_bundle_untouched(self):
+        content = '{"accessToken": "example"}\n'
+        refused = self.run_publishing(STUB_CLAUDE_COMMIT_CONTENT=content)
+        self.assertEqual(refused.returncode, 6, refused.stderr)
+        self.assertIn("login token field", refused.stderr)
+        self.assertFalse(self.bare_has("refs/heads/" + RUN_BRANCH))
+        self.handoff_src.write_text(handoff_text(branch=RUN_BRANCH))
+        kept = self.run_worker("--handoff", str(self.handoff_src), "--no-publish", "--out", str(self.tmp / "kept"),
+                               env={"STUB_CLAUDE_OUT": "done", "STUB_CLAUDE_COMMIT": "feature.txt",
+                                    "STUB_CLAUDE_COMMIT_CONTENT": content})
+        self.assertEqual(kept.returncode, 0, kept.stderr)
+        self.assertIn("publish=skipped", kept.stdout)
+        self.assertFalse(self.bare_has("refs/heads/" + RUN_BRANCH))
+        run_id = kept.stdout.split(" run ", 1)[1].split(" ", 1)[0]
+        remote_bundle = self.remote / "worker" / "runs" / run_id / "branch.bundle"
+        local_bundle = self.tmp / "kept" / "branch.bundle"
+        self.assertEqual(hashlib.sha256(local_bundle.read_bytes()).hexdigest(),
+                         hashlib.sha256(remote_bundle.read_bytes()).hexdigest())
 
 
 class PublicTextTests(WorkerCase):
@@ -1345,6 +1755,19 @@ class SecretScanTests(unittest.TestCase):
         result = self.scan_repo()
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("private key", result.stdout)
+
+    def test_an_openai_project_key_is_caught(self):
+        self.commit("config.txt", "key=sk-proj-" + "A" * 24 + "\n", "add key")
+        result = self.scan_repo()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("OpenAI project key", result.stdout)
+
+    def test_a_token_spelled_in_a_path_name_is_caught(self):
+        self.commit("ghp_" + "A" * 36 + ".txt", "nothing in the body\n", "add file")
+        result = self.scan_repo()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("path name", result.stdout)
+        self.assertNotIn("ghp_" + "A" * 36, result.stdout + result.stderr)
 
     def test_a_clean_branch_passes(self):
         self.commit("notes.txt", "fine\n", "clean")

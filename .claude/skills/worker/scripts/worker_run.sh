@@ -12,16 +12,20 @@ TEMPLATE="$SKILL_DIR/templates/handoff.md"
 STATE_DIR=${DOTCLAUDE_WORKER_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/dotclaude-worker}
 GIT_BASE=${WORKER_GIT_URL_BASE:-https://github.com}
 MAX_HANDOFF_BYTES=262144
+# Seconds a stopped container has to finish its handoff, summary and bundle after TERM, before it is killed.
+STOP_GRACE=${WORKER_STOP_GRACE:-60}
+ACCEPT_WORKER=0
+ORIGINAL_SRC=""
 ALIAS_RE='^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
 REPO_RE='^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_][A-Za-z0-9._-]*$'
 DIR_RE='^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
 # Largest files copied back from the host. Anything bigger is not copied.
 SUMMARY_MAX=1048576
 HANDOFF_OUT_MAX=2097152
-BUNDLE_MAX=52428800
+BUNDLE_MAX=${WORKER_BUNDLE_MAX:-52428800}
 
 FETCH_TOO_LARGE=""
-LOCK_DIR=""
+LOCK_PATH=""
 LOCK_HELD=0
 TMP_DIR=""
 BASE=""
@@ -136,6 +140,31 @@ check_handoff_source() {
   BRANCH=$(fm_get "$HANDOFF_SRC" branch)
   [ -n "$BRANCH" ] || BRANCH="worker/handoff-$RUN_ID"
   valid_branch "$BRANCH" || refuse "the handoff branch must be worker/<name>; main and other names are never used"
+
+  # A worker's own output, passed back as input, would make the worker's words instructions. That needs consent.
+  if [ "$(fm_get "$HANDOFF_SRC" origin)" = worker ]; then
+    [ "$ACCEPT_WORKER" = 1 ] || refuse "this handoff was written by a worker run (origin: worker), so its Task, Context and Acceptance sections are the worker's own words. Review them, then rerun with --accept-worker-handoff (add --original FILE, the owner's original handoff, to see the differences)"
+    echo "worker: WARNING: this handoff was written by a worker run; its instruction sections are the worker's own words" >&2
+    show_instruction_diff
+  fi
+}
+
+# instruction_sections <file>: the Task, Context and Acceptance sections, which are what the worker is told.
+instruction_sections() {
+  awk '/^## / { keep = ($0 == "## Task" || $0 == "## Context" || $0 == "## Acceptance") } keep { print }' "$1"
+}
+
+# show_instruction_diff: the differences between the owner's original instruction sections (given with
+# --original) and this handoff's. Without --original, the instruction sections themselves are shown.
+show_instruction_diff() {
+  if [ -n "$ORIGINAL_SRC" ]; then
+    [ -f "$ORIGINAL_SRC" ] && [ -r "$ORIGINAL_SRC" ] || refuse "--original must name a readable file"
+    echo "worker: differences in the instruction sections (owner's original, then this handoff):" >&2
+    diff -u <(instruction_sections "$ORIGINAL_SRC") <(instruction_sections "$HANDOFF_SRC") >&2 || true
+  else
+    echo "worker: no --original given, so there is no diff; the instruction sections are:" >&2
+    instruction_sections "$HANDOFF_SRC" >&2
+  fi
 }
 
 # check_issue_owner: --issue runs only for issues the authenticated gh user wrote. Anyone else's issue
@@ -173,28 +202,54 @@ build_issue_handoff() {
         { print }' > "$1"
 }
 
+# acquire_lock: the lock is a symbolic link whose target is the holder's pid. Creating it is atomic, and the pid is
+# in it from the first moment, so a racing run never sees an empty holder. A stale link (its holder is gone) is
+# reclaimed under a second lock, so two racing reclaimers cannot both remove a live lock.
 acquire_lock() {
   mkdir -p "$STATE_DIR"
   chmod 700 "$STATE_DIR"
-  LOCK_DIR="$STATE_DIR/run.lock"
-  if ! mkdir "$LOCK_DIR" 2>/dev/null; then
-    local holder
-    holder=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
-    if [ -z "$holder" ] || kill -0 "$holder" 2>/dev/null; then
-      echo "busy: another worker run holds $LOCK_DIR (pid ${holder:-unknown}); wait for it to finish" >&2
+  LOCK_PATH="$STATE_DIR/run.lock"
+  local holder
+  while :; do
+    if ln -s "$$" "$LOCK_PATH" 2>/dev/null; then
+      LOCK_HELD=1
+      return 0
+    fi
+    holder=$(readlink "$LOCK_PATH" 2>/dev/null || true)
+    if ! [[ $holder =~ ^[0-9]+$ ]] || kill -0 "$holder" 2>/dev/null; then
+      echo "busy: another worker run holds $LOCK_PATH (pid ${holder:-unknown}); wait for it to finish" >&2
       exit 5
     fi
-    rm -rf "$LOCK_DIR"
-    mkdir "$LOCK_DIR" || { echo "busy: could not take $LOCK_DIR" >&2; exit 5; }
+    reclaim_stale_lock || {
+      echo "busy: could not reclaim $LOCK_PATH; if no run is active, remove $STATE_DIR/run.lock.reclaim" >&2
+      exit 5
+    }
+  done
+}
+
+# reclaim_stale_lock: under the reclaim lock, removes the lock only if its holder is still gone. Returns 1 if the
+# reclaim lock cannot be taken within about five seconds.
+reclaim_stale_lock() {
+  local mutex="$STATE_DIR/run.lock.reclaim" i=0 holder
+  until mkdir "$mutex" 2>/dev/null; do
+    i=$((i + 1))
+    [ "$i" -le 50 ] || return 1
+    sleep 0.1
+  done
+  holder=$(readlink "$LOCK_PATH" 2>/dev/null || true)
+  if [[ $holder =~ ^[0-9]+$ ]] && ! kill -0 "$holder" 2>/dev/null; then
+    rm -f "$LOCK_PATH"
   fi
-  echo $$ > "$LOCK_DIR/pid"
-  LOCK_HELD=1
+  rmdir "$mutex"
+  return 0
 }
 
 # shellcheck disable=SC2329 # invoked by the EXIT trap
 cleanup() {
   [ -z "$TMP_DIR" ] || rm -rf "$TMP_DIR"
-  if [ "$LOCK_HELD" = 1 ]; then rm -rf "$LOCK_DIR"; fi
+  if [ "$LOCK_HELD" = 1 ] && [ "$(readlink "$LOCK_PATH" 2>/dev/null || true)" = "$$" ]; then
+    rm -f "$LOCK_PATH"
+  fi
 }
 
 # remote <command>: runs one line through `sh -c` on the host, the same way remote-hosts does.
@@ -442,6 +497,8 @@ main() {
       --out)        [ "$#" -ge 2 ] || usage; OUT_DIR=$2; OUT_SET=1; shift 2 ;;
       --config)     [ "$#" -ge 2 ] || usage; CONFIG=$2; shift 2 ;;
       --no-publish) NO_PUBLISH=1; shift ;;
+      --accept-worker-handoff) ACCEPT_WORKER=1; shift ;;
+      --original)   [ "$#" -ge 2 ] || usage; ORIGINAL_SRC=$2; shift 2 ;;
       *) usage ;;
     esac
   done
@@ -474,6 +531,7 @@ main() {
   [[ $MAX_TURNS =~ $turns_re ]] || refuse "--max-turns must be a number from 1 to 999"
   SECS=$(timeout_seconds "$TIMEOUT") || refuse "--timeout must look like 90, 90s, 90m or 2h, and be at most 24h"
   command -v perl >/dev/null 2>&1 || refuse "perl is needed for the wall-clock limit"
+  [[ $STOP_GRACE =~ ^[0-9]{1,3}$ ]] || refuse "WORKER_STOP_GRACE must be a number of seconds from 0 to 999"
 
   RUN_ID="$(date -u +%Y%m%d-%H%M%S)-$$"
   if [ "$HANDOFF_SET" = 1 ]; then check_handoff_source; fi
@@ -525,8 +583,9 @@ main() {
     echo "busy: a worker container is already running on $ALIAS; nothing was run" >&2
     exit 5
   fi
-  # A run that hit the limit is killed on this side; the container may still be alive, so remove it.
-  remote "docker rm -f worker-$RUN_ID >/dev/null 2>&1 || true" || true
+  # Stop the container with TERM and a grace period, so the entrypoint can finish its handoff, summary and bundle.
+  # Remove it with rm -f only if it is still there after that: a run that hit the limit is killed on this side.
+  remote "docker stop -t $STOP_GRACE worker-$RUN_ID >/dev/null 2>&1 || true; if [ -n \"\$(docker ps -aq --filter 'name=^worker-$RUN_ID\$')\" ]; then docker rm -f worker-$RUN_ID >/dev/null 2>&1 || true; fi" || true
 
   fetch_run_file summary.env "$SUMMARY_MAX" || true
   fetch_run_file HANDOFF-OUT.md "$HANDOFF_OUT_MAX" || true
@@ -562,7 +621,7 @@ main() {
     # Explicit, not silent: the work exists on the host but is too big to copy, so nothing was published.
     PUBLISH=too-large
     publish_failed=1
-    echo "worker: branch.bundle is larger than $((BUNDLE_MAX / 1048576)) MiB, so it was not copied and nothing was published" >&2
+    echo "worker: branch.bundle is larger than $BUNDLE_MAX bytes, so it was not copied and nothing was published" >&2
   elif [ ! -s "$OUT_DIR/branch.bundle" ] && [ "$commits_made" -gt 0 ] && publishable "$status"; then
     PUBLISH=missing-bundle
     publish_failed=1

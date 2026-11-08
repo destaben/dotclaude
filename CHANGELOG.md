@@ -3,6 +3,25 @@
 All notable changes to this repo are recorded here. Entries explain why a
 change was made, not just what changed — the diff already shows what.
 
+## 2026-11-08 — Harden the worker: handoff path, locks, failed runs, resumes, stops
+
+The worker now writes its handoff to `.worker-out/HANDOFF-OUT.md` inside its own
+worktree, a path no deny rule covers; the entrypoint validates it and moves it into the
+run directory. (A write to the run directory was denied by the real rules, so a blocked
+escalation was dropped.) The lock is a symbolic link holding the holder's pid, created
+atomically, with stale reclaims under a second lock. A failed run is always `blocked`,
+whatever status the worker wrote, and the worker's text is kept with a note. A handoff
+the worker wrote carries `origin: worker`, and passing it back needs
+`--accept-worker-handoff`, which shows how its instruction sections differ from the
+owner's. A timed-out run gets TERM and a grace period (`WORKER_STOP_GRACE`) before any
+`docker rm -f`, so the entrypoint still writes its handoff, summary and bundle. Bundles
+over the copy limit are reported as `publish=too-large`. The model no longer has
+`shellcheck` (it echoes source lines of any file); `/var` is no longer a denied root
+(test hosts keep temporary directories there; the read-only root filesystem covers it in
+a container). The commit excludes more credential-shaped names, matched case-insensitively,
+and the scanner adds OpenAI project keys and scans path names. The residual risk of the
+test runners is documented as the owner accepted it.
+
 ## 2026-11-08 — Background worker container on a remote Docker host
 
 Added a `worker` skill for one-shot, owner-triggered Claude Code runs in a
