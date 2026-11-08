@@ -5,10 +5,12 @@ The agent reads council positions that can quote untrusted text, so its shell mu
 do anything else (for example print the env file that holds the chat token). Reads the hook JSON on
 stdin; exits 0 to allow and 2 to block (the message on stderr goes back to the agent). Fails closed.
 
+`test-call --ignore-quiet-hours` is deliberately not allowed: only the owner may bypass quiet hours.
+
 Allowed (optionally prefixed by `ssh <alias>`), made only of plain path/word characters, no quotes,
 no shell operators:
     python3 <path>/ceo_call.py [--config <path>] check
-    python3 <path>/ceo_call.py [--config <path>] test-call [--ignore-quiet-hours]
+    python3 <path>/ceo_call.py [--config <path>] test-call
     python3 <path>/ceo_call.py [--config <path>] ask --request <path>
     python3 <path>/ceo_call.py [--config <path>] ask --request - <<'CEO_REQUEST'   (JSON lines follow,
         the last line is CEO_REQUEST; the quoted delimiter means the body is never expanded)
@@ -21,7 +23,7 @@ WORD = r"[A-Za-z0-9_./@:=~+-]+"
 SCRIPT = r"(?:python3\s+)?(?:[A-Za-z0-9_./~+-]*/)?ceo_call\.py"
 CONFIG = r"(?:--config\s+%s\s+)?" % WORD
 SSH = r"(?:ssh\s+[A-Za-z0-9_.@][A-Za-z0-9_.@-]*\s+)?"  # no ssh options: -o ProxyCommand would run anything
-ACTION = r"(?:check|test-call(?:\s+--ignore-quiet-hours)?|telegram-setup|ask\s+--request\s+(?:-|%s))" % WORD
+ACTION = r"(?:check|test-call|ask\s+--request\s+(?:-|%s))" % WORD
 PLAIN = re.compile(r"^%s%s\s*%s\s*%s$" % (SSH, SCRIPT, CONFIG, ACTION))
 HEREDOC_HEAD = re.compile(r"^%s%s\s*%s\s*ask\s+--request\s+-\s+<<'CEO_REQUEST'$" % (SSH, SCRIPT, CONFIG))
 DELIMITER = "CEO_REQUEST"

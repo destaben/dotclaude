@@ -48,8 +48,10 @@ alias as `remote-hosts` describes, and run the script there.
 ## Agent safety
 The `claudio` agent reads council briefs that may quote untrusted text, so its shell is limited by a
 `PreToolUse` hook (`scripts/guard_bash.py`): only `ceo_call.py` invocations pass (optionally behind
-`ssh <alias>`, no ssh options, no shell operators, request JSON only through a quoted heredoc). It
-fails closed, so the env file and any other command stay out of reach.
+`ssh <alias>`, no ssh options, no shell operators, request JSON only through a quoted heredoc). The guard is looked up
+in the user's `~/.claude` first, so a repository cannot swap in a permissive one; the wrapper blocks (exit
+2) if python3 or the guard is missing or crashes. `test-call --ignore-quiet-hours` and `telegram-setup`
+are not allowed to the agent: only the owner bypasses quiet hours or sets up the chat.
 
 ## Use
 ```
@@ -82,7 +84,7 @@ every other status leaves the decision pending.
 ## Trying it
 `ceo_call.py test-call` phones the owner and reads a passage of *Don Quijote* (Cervantes, public
 domain) to judge the voice, then asks for a key press: 1 sounds fine, 2 a problem. Quiet hours apply;
-`--ignore-quiet-hours` bypasses them for one test.
+`--ignore-quiet-hours` bypasses them for one test and is for the owner to run, not the agent.
 
 ## Rules
 - Call only for a decision the council could not resolve and that the user's own rules say needs them.

@@ -42,6 +42,7 @@ MAX_OPTIONS = 8
 MAX_QUESTION_CHARS = 800
 MAX_OPTION_CHARS = 200
 MAX_WYOMING_PAYLOAD = 16 * 1024 * 1024
+MAX_PCM_BYTES = 64 * 1024 * 1024  # total audio for one prompt
 
 DEFAULT_CONFIG = {
     "container": "asterisk",
@@ -215,8 +216,13 @@ def _read_event(handle):
     if extra > MAX_WYOMING_PAYLOAD or payload_len > MAX_WYOMING_PAYLOAD:
         raise CallError("speech server sent an oversized message")
     if extra:
-        data = dict(data, **json.loads(handle.read(extra)))
+        body = handle.read(extra)
+        if len(body) != extra:
+            raise CallError("speech server sent a truncated message")
+        data = dict(data, **json.loads(body))
     payload = handle.read(payload_len) if payload_len else b""
+    if len(payload) != payload_len:
+        raise CallError("speech server sent a truncated message")
     return header["type"], data, payload
 
 
@@ -244,6 +250,8 @@ def synthesize(host: str, port: int, text: str, timeout: int = 120) -> Tuple[int
                         raise CallError("speech server sent an invalid audio format")
                 elif kind == "audio-chunk":
                     pcm += payload
+                    if len(pcm) > MAX_PCM_BYTES:
+                        raise CallError("speech server sent too much audio")
                 elif kind == "audio-stop":
                     break
                 elif kind == "error":
@@ -335,10 +343,11 @@ class DockerAsterisk:
         self._exec(["sh", "-c", 'cat > "$1"', "sh", path], data=data)
 
     def read_file(self, path: str) -> Optional[str]:
-        result = self._exec(["cat", path], check=False)
+        # A missing file is told by exit code 3, not by error text, which is translated in other locales.
+        result = self._exec(["sh", "-c", 'if [ -e "$1" ]; then cat "$1"; else exit 3; fi', "sh", path], check=False)
         if result.returncode == 0:
             return result.stdout.decode("utf-8", "replace").strip()
-        if b"No such file" in (result.stderr or b""):
+        if result.returncode == 3:
             return None
         # Anything else (container stopped, docker unavailable) must not look like "no marker yet".
         raise CallError("cannot read call state from the Asterisk container")
@@ -479,7 +488,7 @@ def notification_text(question: str, options: List[str], status: str) -> str:
 HEADS_UP = "Hola, soy Claudio. Te voy a llamar en un momento, ¿puedes atender?"
 
 
-def wait_for_phone(asterisk, config: Dict, env: Dict[str, str], notifier: Callable, sleep, clock) -> bool:
+def wait_for_phone(asterisk, config: Dict, env: Dict[str, str], notifier: Callable, sleep, clock, state: Optional[Dict] = None) -> bool:
     """Make sure the phone is registered before calling. A phone that is not registered (for
     example an iPhone app that went to sleep) gets a chat message, then we wait a while."""
     if asterisk.endpoint_available(config["endpoint"]):
@@ -487,7 +496,10 @@ def wait_for_phone(asterisk, config: Dict, env: Dict[str, str], notifier: Callab
     token, chat_id = env.get("CEO_TELEGRAM_TOKEN"), env.get("CEO_TELEGRAM_CHAT_ID")
     if not (token and chat_id) or not config["heads_up_s"]:
         return False
-    notifier(token, chat_id, HEADS_UP)
+    state = state if state is not None else {}
+    if not state.get("messaged"):  # one heads-up per run, even if the phone drops again on a retry
+        notifier(token, chat_id, HEADS_UP)
+        state["messaged"] = True
     deadline = clock() + config["heads_up_s"]
     while clock() < deadline:
         sleep(config["poll_interval_s"])
@@ -518,7 +530,7 @@ def ask(
     clean = validate_request(request)
     options = clean["options"]
     if in_quiet_hours(now().strftime("%H:%M"), config.get("quiet_start"), config.get("quiet_end")):
-        return notify_outcome({"status": "deferred"}, clean, env, notifier, silent=True)
+        return notify_outcome({"status": "deferred", "attempt": 0}, clean, env, notifier, silent=True)
     call_id = secrets.token_hex(8)
     base = "%s/ceo/%s" % (SPOOL, call_id)
     try:
@@ -528,13 +540,14 @@ def ask(
             wav = to_wav(*synth(config["piper_host"], config["piper_port"], text))
             asterisk.write_file("%s/%s.wav" % (base, name), wav)
         outcome = {"status": "unanswered"}
+        heads_up_state: Dict = {}
         for attempt in range(1, config["attempts"] + 1):
             # Quiet hours are checked before every attempt, not only the first: a retry that lands
             # after the window opens must not ring.
             if attempt > 1 and in_quiet_hours(now().strftime("%H:%M"), config.get("quiet_start"), config.get("quiet_end")):
                 outcome = {"status": "deferred", "attempt": attempt - 1}
                 break
-            if not wait_for_phone(asterisk, config, env, notifier, sleep, clock):
+            if not wait_for_phone(asterisk, config, env, notifier, sleep, clock, heads_up_state):
                 # An unregistered endpoint can only ring out, so dialling is pointless; the heads-up
                 # message (if configured) was already sent. Stop and tell the owner.
                 outcome = {"status": "unanswered", "reason": "phone_not_registered", "attempt": attempt}
@@ -575,7 +588,7 @@ def cmd_ask(args) -> int:
     signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(143))
     try:
         raw = sys.stdin.read() if args.request == "-" else Path(args.request).read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         raise CallError("cannot read the request file")
     try:
         request = json.loads(raw)

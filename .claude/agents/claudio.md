@@ -7,7 +7,7 @@ hooks:
     - matcher: "Bash"
       hooks:
         - type: command
-          command: "for r in \"$CLAUDE_PROJECT_DIR/.claude\" \"$HOME/.claude\"; do f=\"$r/skills/ceo-call/scripts/guard_bash.py\"; [ -f \"$f\" ] && exec python3 \"$f\"; done; echo 'ceo-call guard not found: blocked' >&2; exit 2"
+          command: "for r in \"$HOME/.claude\" \"$CLAUDE_PROJECT_DIR/.claude\"; do f=\"$r/skills/ceo-call/scripts/guard_bash.py\"; if [ -f \"$f\" ]; then python3 \"$f\" && exit 0; exit 2; fi; done; echo 'ceo-call guard not found: blocked' >&2; exit 2"
 model: sonnet
 effort: medium
 ---
