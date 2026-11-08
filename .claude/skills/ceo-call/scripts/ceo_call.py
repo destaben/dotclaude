@@ -656,6 +656,7 @@ def ask(
     dialled = False
     keep_folder = False
     completed = False
+    attempt = 0  # the attempt in progress; read by the error path below
 
     def settle():
         """Give the throttle slot back only if nothing reached the owner: no call, no chat message."""
@@ -717,7 +718,7 @@ def ask(
             if digit and re.fullmatch(r"[1-8]", digit) and int(digit) <= len(options):
                 keep_folder = False
                 return {"status": "decided", "choice": int(digit), "option": options[int(digit) - 1],
-                        "attempt": max(1, locals().get("attempt", 1)), "notified": False}
+                        "attempt": max(1, attempt), "notified": False}
         # The decision is still pending: tell the owner by chat, then let the error reach the caller.
         # If the call may be live, say that an answer given now is not recorded.
         notify_outcome({"status": "error_live" if keep_folder else "error"}, clean, env, notifier)

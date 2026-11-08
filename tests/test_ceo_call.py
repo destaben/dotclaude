@@ -983,6 +983,20 @@ class AskFlowTests(unittest.TestCase):
         self.assertNotIn("no se ha registrado", sent[0])
         self.assertEqual(asterisk.dirs, set())
 
+    def test_a_recovered_decision_reports_the_attempt_it_came_from(self):
+        class SecondAttemptBlip(FakeAsterisk):
+            def read_file(self, path):
+                if self.originated == 2 and not getattr(self, "blipped", False):
+                    self.blipped = True
+                    raise ceo.DockerError("cannot read call state from the Asterisk container")
+                return super().read_file(path)
+
+        asterisk = SecondAttemptBlip(["unanswered", {1: {"answered": "1", "result": "1", "done": "1"}}])
+        clock = FakeClock()
+        result = ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, retry_delay_s=0, attempts=3), {}, asterisk,
+                         synth=fake_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual((result["status"], result["choice"], result["attempt"]), ("decided", 1, 2))
+
     def test_a_second_ask_too_soon_is_refused_before_any_call(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
         self.addCleanup(lambda: state.exists() and state.unlink())
