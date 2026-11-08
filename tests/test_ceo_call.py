@@ -910,6 +910,32 @@ class AskFlowTests(unittest.TestCase):
                     sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
         self.assertIn("no se ha registrado", sent[0])
 
+    def test_a_confirmed_digit_is_recovered_when_only_one_docker_read_failed(self):
+        class OneBlip(FakeAsterisk):
+            blips = 0
+
+            def read_file(self, path):
+                if self.blips == 0:
+                    self.blips = 1
+                    raise ceo.DockerError("cannot read call state from the Asterisk container")
+                return super().read_file(path)
+
+        asterisk = OneBlip([{1: {"answered": "1", "result": "2", "done": "1"}}])
+        clock = FakeClock()
+        result = ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, attempts=1), {}, asterisk, synth=fake_synth,
+                         sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual((result["status"], result["choice"]), ("decided", 2))
+
+    def test_a_stop_request_during_cleanup_is_not_swallowed(self):
+        class StopsOnRemove(FakeAsterisk):
+            def remove(self, *paths):
+                raise ceo.Interrupted("interrupted")
+
+        clock = FakeClock()
+        with self.assertRaises(ceo.Interrupted):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, attempts=1), {}, StopsOnRemove(["1"]),
+                    synth=fake_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+
     def test_a_second_ask_too_soon_is_refused_before_any_call(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
         self.addCleanup(lambda: state.exists() and state.unlink())
@@ -1773,6 +1799,18 @@ class GuardTests(unittest.TestCase):
         import subprocess
         out = subprocess.run(["python3", str(SCRIPT.parent / "guard_bash.py")], input=b'{"tool_input":{"command":"ls"}}', capture_output=True)
         self.assertNotIn(b"test-call", out.stderr)
+
+    def test_every_command_shown_to_the_agent_is_one_the_guard_accepts(self):
+        import re as _re
+        agent = (SCRIPT.parents[3] / "agents" / "claudio.md").read_text()
+        shown = _re.findall(r"`(python3 ~/\.claude/skills/ceo-call/scripts/ceo_call\.py[^`]*)`", agent)
+        self.assertTrue(shown)
+        for command in shown:
+            command = command.replace("<JSON>", "{}")
+            if "<<'CEO_REQUEST'" in command:
+                command += "\n{}\nCEO_REQUEST"
+            with self.subTest(command=command):
+                self.assertTrue(self.guard.allowed(command, home="/home/u", hosts=()))
 
     def test_the_agent_is_told_the_heredoc_form_and_what_to_report_without_json(self):
         agent = (SCRIPT.parents[3] / "agents" / "claudio.md").read_text()

@@ -695,6 +695,16 @@ def ask(
         # With docker failing mid-call the owner may still be confirming: leave the folder for the
         # dialplan to write into (the daily sweep removes it) instead of deleting it underneath.
         keep_folder = dialled and isinstance(error, MayBeLive)
+        if keep_folder and isinstance(error, DockerError):
+            # One failed read must not lose a confirmation that is already on disk: try once more.
+            try:
+                digit = asterisk.read_file("%s/result" % base)
+            except CallError:
+                digit = None
+            if digit and re.fullmatch(r"[1-8]", digit) and int(digit) <= len(options):
+                keep_folder = False
+                return {"status": "decided", "choice": int(digit), "option": options[int(digit) - 1],
+                        "attempt": max(1, locals().get("attempt", 1)), "notified": False}
         # The decision is still pending: tell the owner by chat, then let the error reach the caller.
         # If the call may be live, say that an answer given now is not recorded.
         notify_outcome({"status": "error_live" if keep_folder else "error"}, clean, env, notifier)
@@ -714,6 +724,8 @@ def ask(
         if not keep_folder:
             try:
                 asterisk.remove(base)
+            except Interrupted:
+                raise  # a stop request is never swallowed
             except CallError:
                 pass  # best effort: the daily sweep removes it, and the real error must not be replaced
         run_lock.close()
@@ -830,6 +842,8 @@ def release_throttle(config: Dict, stamp: Optional[float]) -> None:
                     del starts[index]  # only our own line, not another ask's from the same second
                     break
             _write_starts(resolved, starts)
+    except Interrupted:
+        raise
     except (OSError, CallError):
         pass  # best effort: the limit then stays slightly stricter than needed
 

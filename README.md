@@ -31,8 +31,8 @@ python3 scripts/install.py --uninstall      # remove what a prior run installed
   work in afterward.
 - **Project scope**: installs `CLAUDE.md` and `.claude/{agents,commands,skills}`
   into one specific project. The `claudio` agent needs the user-scope install (see the
-  `ceo-call` skill). Use project
-  scope for a project where you want a GitHub
+  `ceo-call` skill). Use project scope
+  for a project where you want a GitHub
   Actions workflow (like `claude-pr-review.yml`) to see these agents — a CI
   runner only checks out that project, not your `~/.claude/`.
 - Everything is symlinked (or copied with `--copy`) whole, **except
@@ -136,8 +136,7 @@ and agents.
 Severe findings are security issues, data loss, failing tests, and broken
 public contracts. Everything else asks you first. No step here is a hook —
 `.claude/settings.json` has no `hooks` key; this is a sequence of steps
-inside `/release` itself. (The one exception, `claudio`'s own shell guard, is
-described in `docs/pipeline.md`.)
+inside `/release` itself.
 <!-- pipeline:end -->
 
 ## Token efficiency

@@ -96,6 +96,12 @@ Likewise, anything the agent can see and puts into the question (for example a s
 brief) is spoken and posted to the owner's chat through a third-party service; the "no secrets" rule
 above is the only control, and the recipient is always the owner.
 
+## Phone registration
+The phone counts as registered when `pjsip show contacts` lists a contact whose name starts with the
+endpoint name (`PJSIP/<name>` expects the contact `<name>/...`, the usual setup where the AOR is named
+after the endpoint). If your AOR is named differently, `check` always says NOT registered and no call is
+placed; rename the AOR.
+
 ## Rounds
 A call gets three rounds to produce a confirmed choice. Pressing 9 (repeat), any other key, or staying
 silent starts the next round, so a wrong key uses one up; after three the call ends as `undecided`.

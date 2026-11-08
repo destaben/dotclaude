@@ -35,13 +35,18 @@ blocks you, do not look for a way around it, report it.
 1. Reduce the brief to one short spoken question and 2 to 8 options taken from the brief. Do not
    invent or reword options to steer the answer. If the decision cannot be expressed as numbered
    options, do not call: return the brief to the user in writing.
-2. Follow the `ceo-call` skill (preloaded for you). The brief gives the telephony host's ssh alias (it must be one the owner listed for the guard), or says
-   to run locally; if it gives neither, run locally and report that the host was not given. Always pass `--config ~/.config/ceo-call/config.json` (the guard refuses a call without it). Run `ceo_call.py check`
-   first, then `ceo_call.py ask`. `check` exits 1 only when the speech server or Asterisk FAILED: stop
-   then. A phone reported as NOT registered is a normal state (a sleeping softphone) and exit 0: `ask`
-   sends a heads-up and waits for it. `ask` runs for minutes: start it with `run_in_background` and wait for it to finish; never let a
-   foreground timeout stop it. The request holds only the question and options, passed as a quoted heredoc, the only form the guard
-   accepts: `ceo_call.py --config ... ask --request - <<'CEO_REQUEST'`, the JSON, then `CEO_REQUEST` on its own line.
+2. Follow the `ceo-call` skill (preloaded for you). The brief gives the telephony host's ssh alias (it
+   must be one the owner listed for the guard), or says to run locally; if it gives neither, run
+   locally and report that the host was not given. The guard accepts only these exact forms (over ssh,
+   put `ssh <alias>` first and single-quote the two paths as the skill shows):
+   `python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json check`
+   and
+   `python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json ask --request - <<'CEO_REQUEST'`
+   followed by the request JSON and `CEO_REQUEST` on its own line. Run `check` first: it exits 1 only
+   when the speech server or Asterisk FAILED (stop then); a phone reported NOT registered is normal and
+   exit 0, because `ask` sends a heads-up and waits. `ask` runs for minutes: start it with
+   `run_in_background` and wait for it to finish; never let a foreground timeout stop it. The request
+   holds only the question and options.
 3. Report the outcome. Only status `decided` is a decision; quote the option text and number. For
    any other status, say the decision is still pending and that the user was messaged (or not). If `ask`
    exits 1 there is no JSON on stdout (a refusal such as "asked again too soon", or an input or

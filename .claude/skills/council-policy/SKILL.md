@@ -55,7 +55,8 @@ low-confidence verdict on something costly to reverse, or an unanswered security
 same flaw that "What it never overrides" already sends back). Nothing else escalates. If the `ceo-call`
 skill is set up, hand the decision to the `claudio` agent (the CEO, above the chair, with the user as its
 only superior), which phones the user. The user's answer is final. If it cannot reach them, the decision
-stays pending.
+stays pending: stop the work that depends on it, say so in the terminal and wait for the user. Without
+the `ceo-call` skill, simply ask the user in the terminal.
 
 ## Model and effort
 The contrarian, first principles, and the chair run on Sonnet at medium

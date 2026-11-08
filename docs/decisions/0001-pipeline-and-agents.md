@@ -53,7 +53,7 @@ was wrong.
 - After a restart, test whether an empty `tools:` gives the outsider no tools.
 
 ## See also
-The one hook in the repo is the shell guard in the `claudio` agent's own frontmatter, scoped to that
+Note (2026-11-07): the one hook in the repo is the shell guard in the `claudio` agent's own frontmatter, scoped to that
 agent and outside the pipeline (`0004-tooling-choices.md`, item 8).
 
 A decision the council cannot resolve is handed up to the user, by phone if the `ceo-call` skill is set
