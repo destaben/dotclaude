@@ -169,11 +169,14 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertGreaterEqual(self.text.count("          GITHUB_TOKEN: ${{ secrets."), 1)
         self.assertGreaterEqual(self.text.count("          GH_TOKEN: ${{ secrets."), 1)
 
-    def tool_lists(self):
-        """Parse the job-level REVIEW_ARGS block into {flag: [tool, ...]}."""
+    def args_tokens(self):
         match = re.search(r"^ +REVIEW_ARGS: >-\n((?: {8,}\S.*\n)+)", self.text, re.MULTILINE)
         self.assertIsNotNone(match, "REVIEW_ARGS block not found")
-        tokens = shlex.split(" ".join(line.strip() for line in match.group(1).splitlines()))
+        return shlex.split(" ".join(line.strip() for line in match.group(1).splitlines()))
+
+    def tool_lists(self):
+        """Parse the job-level REVIEW_ARGS block into {flag: [tool, ...]}."""
+        tokens = self.args_tokens()
         flags = {}
         for flag, value in zip(tokens, tokens[1:]):
             if flag in ("--allowedTools", "--disallowedTools"):
@@ -197,20 +200,18 @@ class WorkflowContractTests(unittest.TestCase):
             ],
         )
 
-    def test_project_settings_are_removed_before_the_agent_runs(self):
-        # The action loads .claude/settings.json, whose allow list is broader
-        # than --allowedTools (the Copilot review of PR #16). Check that the
-        # step deleting it exists, runs before the review step, and that the
-        # settings it neutralises really contain the broad grants.
-        step = self.text.index("rm -f .claude/settings.json .claude/settings.local.json")
-        self.assertLess(self.text.index("uses: actions/checkout"), step)
-        self.assertLess(step, self.text.index("uses: anthropics/claude-code-action"))
+    def test_project_settings_are_not_loaded(self):
+        # The action restores .claude/ from the base branch on PR runs, so
+        # deleting settings.json in the checkout does not work; the settings
+        # sources must exclude the project. Its allow list is broader than
+        # --allowedTools (the Copilot reviews of PR #16).
+        self.assertEqual(self.args_tokens()[self.args_tokens().index("--setting-sources") + 1], "user")
         settings = json.loads((REPO_ROOT / ".claude" / "settings.json").read_text())
         allowed = set(settings["permissions"]["allow"])
         self.assertTrue({"Read", "Grep", "Glob", "Edit", "Write"} <= allowed)
 
     def test_every_broad_project_grant_is_also_denied_for_the_agent(self):
-        # Defence in depth should the settings step ever stop working: the
+        # Defence in depth should project settings ever be loaded: the
         # deny list wins over any allow, so each write/search/git grant in the
         # project settings must have a matching deny.
         settings = json.loads((REPO_ROOT / ".claude" / "settings.json").read_text())

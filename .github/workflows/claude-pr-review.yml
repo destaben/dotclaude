@@ -58,19 +58,25 @@ jobs:
             || format('claude-pr-review-{0}', github.event.pull_request.number || github.event.issue.number) }}
       cancel-in-progress: true
     runs-on: ubuntu-latest
+    # --allowedTools only adds approvals, and on pull_request runs the action
+    # restores .claude/ from the base branch (restoreConfigFromBase), so the
+    # repo's .claude/settings.json (unscoped Read/Grep/Glob, Edit, Write, git)
+    # would still apply. `--setting-sources user` keeps project settings out;
+    # the deny list also names the write/search/git tools (a deny wins).
     env:
       REVIEW_ARGS: >-
-        --model claude-haiku-5-5 --effort low
+        --model claude-haiku-5-5 --effort low --setting-sources user
         --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Read(/${{ github.workspace }}/**)"
         --disallowedTools "Read(.git/**),Read(//proc/**),Read(//etc/**),Read(//run/**),Grep,Glob,Edit,Write,MultiEdit,NotebookEdit,Bash(git:*)"
       REVIEW_PROMPT: |
         Review pull request #${{ github.event.pull_request.number || github.event.issue.number }}
         of this repository (HEAD is detached, so use this number with
         `gh pr view`/`gh pr diff`; run commands from the repo root with
-        relative paths, no `git -C`). Review it using the bug-hunter agent defined in
-        .claude/agents/bug-hunter.md and the severity definitions in
-        .claude/skills/release-policy/SKILL.md. Then run the documenter
-        agent defined in .claude/agents/documenter.md to check whether
+        relative paths, no `git -C`). Project agents and settings are not
+        auto-loaded in this run: Read .claude/agents/bug-hunter.md and run a
+        subagent that follows its instructions to review the change, using the
+        severity definitions in .claude/skills/release-policy/SKILL.md. Then
+        do the same with .claude/agents/documenter.md to check whether
         docs need updating for this change.
         In this run you can only read the code: you cannot write files,
         run tests (CI already runs them), or post to GitHub. The documenter reports only, and the
@@ -99,15 +105,6 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-
-      # --allowedTools only adds approvals: the action also loads the repo's
-      # own .claude/settings.json, which allows unscoped Read/Grep/Glob, Edit,
-      # Write and git commands (`git diff --output=` can write files). Those
-      # settings are for interactive use, so the CI agent runs without them
-      # (this deletes only the runner's checkout copy). The deny list above
-      # also names the write and search tools, as defence in depth.
-      - name: Drop project permission settings for the review agent
-        run: rm -f .claude/settings.json .claude/settings.local.json
 
       - name: Run bug-hunter and documenter review
         id: review

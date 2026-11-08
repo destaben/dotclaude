@@ -116,13 +116,15 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   `gh pr view`; it has no `Grep`, `Glob` (their path scoping is not
   guaranteed to follow `Read` rules) or `git show` (`--output=<path>` can write
   files), and `/proc`, `/etc` and `/run` are also denied. `--allowedTools`
-  only adds approvals, and the action also loads the checkout's
-  `.claude/settings.json`, which grants unscoped `Read`, `Grep`, `Glob`,
-  `Edit`, `Write` and some git commands for interactive use. So a workflow
-  step deletes that file (and `settings.local.json`) from the runner's
-  checkout before the agent starts, and `--disallowedTools` names `Grep`,
-  `Glob`, `Edit`, `Write`, `MultiEdit`, `NotebookEdit` and `Bash(git:*)`,
-  because a deny wins over any allow. A contract test checks that every
+  only adds approvals, and the checkout's `.claude/settings.json` grants
+  unscoped `Read`, `Grep`, `Glob`, `Edit`, `Write` and some git commands for
+  interactive use. Deleting it in the checkout does not help, because on pull
+  request runs the action restores `.claude/` from the base branch, so the
+  workflow passes `--setting-sources user` to keep project settings out (the
+  prompt therefore tells the agent to Read the agent files and run subagents
+  with their instructions, as project agents are not registered), and
+  `--disallowedTools` also names `Grep`, `Glob`, `Edit`, `Write`,
+  `MultiEdit`, `NotebookEdit` and `Bash(git:*)`, because a deny wins over any allow. A contract test checks that every
   write, search or git grant in the project settings has such a deny. Finally the gate
   refuses to post, with exit 2 and no retry, any review that contains the
   value of `CLAUDE_CODE_OAUTH_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN`, or any
