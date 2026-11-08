@@ -52,10 +52,11 @@ was wrong.
 ## Follow-ups (not yet done)
 - After a restart, test whether an empty `tools:` gives the outsider no tools.
 
-## See also
-Note (2026-11-07): the one hook in the repo is the shell guard in the `claudio` agent's own frontmatter, scoped to that
-agent and outside the pipeline (`0004-tooling-choices.md`, item 8).
+## Amendment (2026-11-07): one scoped hook
+Decision 2 stands for the pipeline. The one exception in the repo is the shell guard in the `claudio`
+agent's own frontmatter, scoped to that agent and outside the pipeline (`0004-tooling-choices.md`, item 8).
 
+## See also
 A decision the council cannot resolve is handed up to the user, by phone if the `ceo-call` skill is set
 up: see the "When the council cannot resolve it" section of the `council-policy` skill and
 `0004-tooling-choices.md`, item 8.

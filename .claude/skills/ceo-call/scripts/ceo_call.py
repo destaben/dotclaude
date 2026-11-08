@@ -44,7 +44,7 @@ MAX_OPTIONS = 8
 MAX_QUESTION_CHARS = 800
 MAX_OPTION_CHARS = 200
 MAX_WYOMING_PAYLOAD = 16 * 1024 * 1024
-MAX_PCM_BYTES = 64 * 1024 * 1024  # total audio for one prompt
+MAX_PCM_BYTES = 8 * 1024 * 1024  # total audio for one prompt (~3 minutes); also bounds the conversion time
 MAX_HEADER_BYTES = 64 * 1024  # one Wyoming header line
 MAX_REQUEST_BYTES = 64 * 1024  # the request JSON
 
@@ -438,8 +438,9 @@ class DockerAsterisk:
         # Anything else (container stopped, docker unavailable) must not look like "no marker yet".
         raise DockerError("cannot read call state from the Asterisk container")
 
-    def remove(self, *paths: str) -> None:
-        self._exec(["rm", "-rf"] + list(paths), check=False)
+    def remove(self, *paths: str, strict: bool = False) -> None:
+        """Delete files. Cleanup is best effort; `strict` is for stale markers that must really go."""
+        self._exec(["rm", "-rf"] + list(paths), check=strict)
 
     def sweep_stale(self) -> None:
         """Remove prompt folders left behind by a killed run (older than a day). Best effort."""
@@ -500,7 +501,8 @@ GRACE_POLLS = 10  # polls to wait for a call that is still live at call_timeout_
 def run_attempt(asterisk, config: Dict, call_id: str, option_count: int, sleep=time.sleep, clock=time.monotonic) -> Dict:
     """Place one call and wait for its outcome. Never trusts the result file beyond a digit check."""
     base = "%s/ceo/%s" % (SPOOL, call_id)
-    asterisk.remove(*["%s/%s" % (base, marker) for marker in ("answered", "result", "done")])
+    # A stale marker from an earlier attempt must not survive into this one, so failing here is an error.
+    asterisk.remove(*["%s/%s" % (base, marker) for marker in ("answered", "result", "done")], strict=True)
     asterisk.originate(
         "ceo-%s" % call_id,
         build_call_file(config["endpoint"], call_id, option_count, config["ring_timeout_s"]),
@@ -803,7 +805,11 @@ def _state_lock(path: Path):
     itself is replaced (a new inode) and a lock on the old one would protect nothing."""
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     handle = open(path.with_name(path.name + ".state.lock"), "a+", encoding="utf-8")
-    fcntl.flock(handle, fcntl.LOCK_EX)
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+    except BaseException:
+        handle.close()
+        raise
     return handle
 
 

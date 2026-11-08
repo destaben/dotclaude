@@ -54,7 +54,7 @@ cannot resolve it" there, and the `ceo-call` entry below.
 - `remote-hosts` (skill): administering the user's own LAN devices over ssh,
   read-only by default. It is not part of the change pipeline; see
   `docs/decisions/0004-tooling-choices.md`, item 7.
-- `ceo-call` (skill) and the `claudio` agent: the escalation shown as a dotted
+- `ceo-call` (skill) and the `claudio` agent (run only on escalation from the council): the escalation shown as a dotted
   edge in the README diagram, not a step of `/release`. See `council-policy` and
   `docs/decisions/0004-tooling-choices.md`, item 8.
 

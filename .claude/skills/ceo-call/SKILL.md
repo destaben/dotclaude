@@ -92,8 +92,12 @@ CEO_REQUEST
 ```
 
 - **User-level install required.** The hook runs `~/.claude/skills/ceo-call/scripts/guard_bash.py` and
-  never one from the project, so a repository cannot swap in a permissive guard. Without the user-level
-  skill the agent's shell is blocked (fail closed).
+  never a guard script from the project, so a repository cannot supply a permissive *guard script*.
+  Without the user-level skill the agent's shell is blocked (fail closed).
+- **The hook wiring itself lives in the agent definition** (`claudio.md` frontmatter). Install the agent
+  at user scope: a project-level `claudio.md` takes precedence over it and could change or drop the hook,
+  exactly like any other code in that repository. Treat a change to that file as security-relevant when
+  reviewing a repo that ships one.
 - The wrapper blocks (exit 2) when python3 or the guard is missing or crashes.
 - `test-call`, `test-call --ignore-quiet-hours` and `telegram-setup` are for the owner, not the agent.
 
@@ -107,9 +111,9 @@ brief) is spoken and posted to the owner's chat through a third-party service; t
 above is the only control, and the recipient is always the owner.
 
 ## Phone registration
-The phone counts as registered when `pjsip show contacts` lists a contact whose name starts with the
-endpoint name (`PJSIP/<name>` expects the contact `<name>/...`, the usual setup where the AOR is named
-after the endpoint). If your AOR is named differently, `check` always says NOT registered and no call is
+The phone counts as registered when `pjsip show contacts` lists a contact named exactly `<name>/...` for the
+endpoint `PJSIP/<name>` (the usual setup where the AOR is named after the endpoint). The endpoint must
+map to one device: any device registered on it, or on a ring group behind it, can answer and confirm. If your AOR is named differently, `check` always says NOT registered and no call is
 placed; rename the AOR.
 
 ## Rounds

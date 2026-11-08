@@ -71,7 +71,7 @@ class FakeAsterisk:
         value = self.files.get(path)
         return value.decode() if isinstance(value, bytes) else value
 
-    def remove(self, *paths):
+    def remove(self, *paths, strict=False):
         for path in paths:
             for key in [k for k in self.files if k == path or k.startswith(path + "/")]:
                 del self.files[key]
@@ -598,7 +598,7 @@ class AskFlowTests(unittest.TestCase):
             raise ceo.CallError("cannot get speech from the speech server")
 
         class CleanupFails(FakeAsterisk):
-            def remove(self, *paths):
+            def remove(self, *paths, **kw):
                 raise ceo.DockerError("cannot run docker")
 
         with self.assertRaises(ceo.CallError) as caught:
@@ -928,7 +928,7 @@ class AskFlowTests(unittest.TestCase):
 
     def test_a_stop_request_during_cleanup_is_not_swallowed(self):
         class StopsOnRemove(FakeAsterisk):
-            def remove(self, *paths):
+            def remove(self, *paths, **kw):
                 raise ceo.Interrupted("interrupted")
 
         clock = FakeClock()
@@ -1325,6 +1325,25 @@ class DockerStateTests(unittest.TestCase):
 
     def test_a_registered_contact_without_qualify_counts_as_available(self):
         self.assertTrue(self.asterisk(0, b" Contact:  phone/sip:u@192.0.2.2:5060;ob   abc NonQual  nan\n").endpoint_available("PJSIP/phone"))
+
+    def test_removing_the_markers_before_a_call_must_succeed(self):
+        with self.assertRaises(ceo.DockerError):
+            self.asterisk(1, stderr=b"permission denied").remove("/x/answered", strict=True)
+        self.asterisk(1, stderr=b"permission denied").remove("/x/answered")  # plain cleanup stays best effort
+
+    def test_the_state_lock_does_not_leak_when_flock_fails(self):
+        import unittest.mock as mock
+        closed = []
+
+        class Handle:
+            def close(self):
+                closed.append(True)
+
+        with mock.patch("builtins.open", return_value=Handle()), mock.patch.object(ceo.fcntl, "flock", side_effect=OSError("boom")):
+            with mock.patch.object(Path, "mkdir"):
+                with self.assertRaises(OSError):
+                    ceo._state_lock(Path("/tmp/x"))
+        self.assertEqual(closed, [True])
 
     def test_stale_folders_older_than_a_day_are_swept(self):
         seen = []
@@ -1820,6 +1839,14 @@ class GuardTests(unittest.TestCase):
         for command in commands:
             with self.subTest(command=command):
                 self.assertTrue(self.guard.allowed(command, home="/home/u", hosts=()))
+
+    def test_the_skill_does_not_claim_a_repository_cannot_change_the_hook(self):
+        skill = (SCRIPT.parents[1] / "SKILL.md").read_text()
+        self.assertNotIn("a repository cannot swap in a permissive guard", skill)
+        self.assertIn("agent definition", skill)
+
+    def test_a_prompt_cannot_make_the_speech_buffer_huge(self):
+        self.assertLessEqual(ceo.MAX_PCM_BYTES, 8 * 1024 * 1024)
 
     def test_the_agent_is_told_the_heredoc_form_and_what_to_report_without_json(self):
         agent = (SCRIPT.parents[3] / "agents" / "claudio.md").read_text()
