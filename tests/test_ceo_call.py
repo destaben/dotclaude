@@ -326,6 +326,37 @@ class SynthesizeTests(unittest.TestCase):
             with self.assertRaises(ceo.CallError):
                 ceo.to_wav(22050, 2, 1, b"\x01\x00" * 100)
 
+    def test_deeply_nested_json_from_the_speech_server_is_a_clean_error(self):
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+
+        def serve():
+            conn, _ = listener.accept()
+            conn.makefile("rwb").readline()
+            try:
+                conn.sendall(b"[" * 30000 + b"\n")
+                threading.Event().wait(0.5)
+            except OSError:
+                pass
+            conn.close()
+
+        threading.Thread(target=serve, daemon=True).start()
+        with self.assertRaises(ceo.CallError):
+            ceo.synthesize("127.0.0.1", listener.getsockname()[1], "hola", timeout=5)
+        listener.close()
+
+    def test_the_conversion_has_its_own_time_budget(self):
+        import array as _array
+        ticks = iter(range(0, 10**6, 100))  # every look at the clock is 100 s later
+        samples = _array.array("h", [1] * 200000)
+        with self.assertRaises(ceo.CallError) as caught:
+            ceo.resample(samples, 22050, 8000, clock=lambda: next(ticks), budget_s=60)
+        self.assertIn("too long", str(caught.exception))
+        # and a normal conversion within budget still works
+        out = ceo.resample(_array.array("h", [1] * 2000), 22050, 8000)
+        self.assertGreater(len(out), 0)
+
     def test_resample_rejects_a_zero_source_rate(self):
         with self.assertRaises(ceo.CallError):
             ceo.resample([1, 2, 3], 0, 8000)
@@ -2025,6 +2056,11 @@ class GuardTests(unittest.TestCase):
 
     def test_a_prompt_cannot_make_the_speech_buffer_huge(self):
         self.assertLessEqual(ceo.MAX_PCM_BYTES, 8 * 1024 * 1024)
+
+    def test_the_conversion_cap_comment_does_not_overclaim(self):
+        source = SCRIPT.read_text()
+        self.assertNotIn("also bounds the conversion time", source)
+        self.assertIn("CONVERT_BUDGET_S", source)
 
     def test_the_agent_is_told_the_heredoc_form_and_what_to_report_without_json(self):
         agent = (SCRIPT.parents[3] / "agents" / "claudio.md").read_text()

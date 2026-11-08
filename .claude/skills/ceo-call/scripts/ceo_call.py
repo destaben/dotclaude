@@ -44,7 +44,7 @@ MAX_OPTIONS = 8
 MAX_QUESTION_CHARS = 800
 MAX_OPTION_CHARS = 200
 MAX_WYOMING_PAYLOAD = 16 * 1024 * 1024
-MAX_PCM_BYTES = 8 * 1024 * 1024  # total audio for one prompt (~3 minutes); also bounds the conversion time
+MAX_PCM_BYTES = 8 * 1024 * 1024  # total audio for one prompt (~3 minutes): bounds memory; the conversion time has its own budget
 MAX_HEADER_BYTES = 64 * 1024  # one Wyoming header line
 MAX_REQUEST_BYTES = 64 * 1024  # the request JSON
 
@@ -346,7 +346,7 @@ def synthesize(host: str, port: int, text: str, timeout: int = 120) -> Tuple[int
                     break
                 elif kind == "error":
                     raise CallError("speech server reported an error")
-    except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError, RecursionError):
         # TypeError/AttributeError: a malformed message (non-object data, null rate) must end as a
         # clean "ERROR:" line, never a traceback.
         raise CallError("cannot get speech from the speech server")
@@ -355,7 +355,10 @@ def synthesize(host: str, port: int, text: str, timeout: int = 120) -> Tuple[int
     return fmt[0], fmt[1], fmt[2], bytes(pcm)
 
 
-def resample(samples, src_rate: int, dst_rate: int):
+CONVERT_BUDGET_S = 60  # time allowed for converting one prompt to 8 kHz (the loop below is pure Python)
+
+
+def resample(samples, src_rate: int, dst_rate: int, clock=time.monotonic, budget_s: float = CONVERT_BUDGET_S):
     """Resample 16-bit mono audio. Down-sampling averages the source samples under each output
     sample, which acts as a cheap low-pass filter so the extra high frequencies do not alias."""
     if src_rate <= 0 or dst_rate <= 0:
@@ -366,7 +369,10 @@ def resample(samples, src_rate: int, dst_rate: int):
     last = len(samples) - 1
     out = array.array("h")
     step = src_rate / dst_rate
+    deadline = clock() + budget_s
     for i in range(out_len):
+        if i % 50000 == 0 and clock() > deadline:
+            raise CallError("converting the speech audio took too long")
         start = i * step
         if step > 1:
             lo = int(start)

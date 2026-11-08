@@ -16,7 +16,7 @@ for routine work.
 - **Full, 6 calls:** adds first principles, visionary (opportunity), and
   executor (next action). Use only when the decision is costly to reverse or
   spans several areas. If a quick verdict comes back low-confidence, ask the
-  user whether to spend a full one; don't spend a full council on your own.
+  user whether to spend a full one; don't escalate on your own.
 
 ## Convene it for
 - A design or technical choice between real alternatives.
@@ -52,7 +52,7 @@ in "When the council cannot resolve it" below.
 ## When the council cannot resolve it
 The chair's verdict binds in every case but two, and in those the decision goes back to the user: a
 low-confidence verdict on something costly to reverse, or an unanswered security or data-loss flaw (the
-same flaw that "What it never overrides" already sends back). Nothing else escalates. If the `ceo-call`
+same flaw that "What it never overrides" already sends back). Nothing else goes back to the user. If the `ceo-call`
 skill is set up, hand the decision to the `claudio` agent (the CEO, above the chair, with the user as its
 only superior), which phones the user. The user's answer is final. If it cannot reach them, the decision
 stays pending: stop the work that depends on it, say so in the terminal and wait for the user. Without

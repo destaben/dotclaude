@@ -116,6 +116,11 @@ endpoint `PJSIP/<name>` (the usual setup where the AOR is named after the endpoi
 map to one device: any device registered on it, or on a ring group behind it, can answer and confirm. If your AOR is named differently, `check` always says NOT registered and no call is
 placed; rename the AOR.
 
+## Speech limits
+Each synthesis has its own deadline, all prompts of a request share a 300 s budget, one prompt's audio is
+capped at 8 MiB (memory), and converting it to 8 kHz has a separate 60 s budget (the conversion is pure
+Python). Any breach is an `ERROR:` line, not a traceback.
+
 ## Rounds
 A call gets three rounds to produce a confirmed choice. Pressing 9 (repeat), any other key, or staying
 silent starts the next round, so a wrong key uses one up; after three the call ends as `undecided`.

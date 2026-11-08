@@ -13,7 +13,7 @@ choice counts only after a second key press confirms it. Night calls, a sleeping
 abuse by a manipulated agent are handled by the skill's rules, and the agent's shell is limited by a
 hook to the call script, since its briefs can quote untrusted text.
 `council-policy` and `/council` now hand two named cases back to the user, by phone when this is
-set up. Why: `docs/decisions/0004-tooling-choices.md`, item 8. No instance data enters this repo.
+set up; install `claudio` at user scope, because a project-level copy can change its hook. Why: `docs/decisions/0004-tooling-choices.md`, item 8. No instance data enters this repo.
 
 ## 2026-11-07 — Administer LAN devices over SSH
 

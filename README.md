@@ -30,10 +30,11 @@ python3 scripts/install.py --uninstall      # remove what a prior run installed
   `~/.claude/dotclaude-scripts/`) — all applied across every project you
   work in afterward.
 - **Project scope**: installs `CLAUDE.md` and `.claude/{agents,commands,skills}`
-  into one specific project. The `claudio` agent needs the user-scope install: a project-level
-  copy can change its shell-guard hook (see "Agent safety" in the `ceo-call` skill). Use project scope for a project where you want a GitHub
-  Actions workflow (like `claude-pr-review.yml`) to see these agents — a CI
-  runner only checks out that project, not your `~/.claude/`.
+  into one specific project. The `claudio` agent needs the user-scope install:
+  a project-level copy can change its shell-guard hook (see "Agent safety" in
+  the `ceo-call` skill). Use project scope for a project where you want a
+  GitHub Actions workflow (like `claude-pr-review.yml`) to see these agents — a
+  CI runner only checks out that project, not your `~/.claude/`.
 - Everything is symlinked (or copied with `--copy`) whole, **except
   `settings.json`, which is merged** — every run, not just the first. Your
   existing `hooks`, `theme`, `model`, or anything else dotclaude doesn't own
