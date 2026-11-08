@@ -47,6 +47,16 @@ class ValidateTests(unittest.TestCase):
     def test_result_line_must_be_last(self):
         self.assertIsNotNone(check_review.validate(GOOD + "trailing prose\n", "9"))
 
+    def test_sentence_naming_an_agent_is_not_its_section(self):
+        text = (
+            "## Review of PR #9\n\nStill waiting for the documenter and "
+            "the bug-hunter.\n\nResult: 0 findings (0 severe, 0 non-severe)\n"
+        )
+        self.assertIsNotNone(check_review.validate(text, "9"))
+
+    def test_formatted_heading_is_tolerated(self):
+        self.assertIsNone(check_review.validate(GOOD.replace("## Review of PR #9", "**## Review of PR #9**"), "9"))
+
     def test_review_missing_an_agent_section_is_rejected(self):
         self.assertIsNotNone(check_review.validate(GOOD.replace("documenter", "docs"), "9"))
         self.assertIsNotNone(check_review.validate(GOOD.replace("bug-hunter", "bugs"), "9"))
@@ -138,6 +148,16 @@ class CliTests(unittest.TestCase):
 
     def test_single_result_object_is_accepted(self):
         self.assertEqual(self.run_cli(self.result(GOOD))[0], 0)
+
+    def test_unwritable_output_exits_2_not_1(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "exec.json"
+            f.write_text(json.dumps([self.result(GOOD)]))
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), str(f), "9", str(Path(tmp) / "no" / "o.md")],
+                capture_output=True,
+            )
+            self.assertEqual(proc.returncode, 2)
 
     def test_bad_usage_exits_2(self):
         proc = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True)

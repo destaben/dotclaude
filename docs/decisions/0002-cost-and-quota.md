@@ -66,6 +66,10 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   missing) fails the job at once; a missing or unreadable execution file is an
   incomplete review (exit 1) and is retried. A failed retry run is never
   posted.
+- **Verified on real runs:** PR #16's own review runs expanded `env` inside the
+  action's `with:` inputs and populated the `execution_file` output, and the
+  review was posted through this gate. An uncaught script error (for example
+  an unwritable output path) exits 2, so it fails the job instead of retrying.
 - **Not unit-tested:** the workflow gating and the retry-file fallback need a
   real action run; the validation logic they depend on is tested.
 - **Retry once, then fail.** One extra run only when the first result is
@@ -77,7 +81,8 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   per push stays.
 - **Not done: raising the effort.** The early turn end is intermittent (seen once
   in about six runs on PR #9, an observation, not a measured rate) and
-  unproven to be an effort problem. If an incomplete result still survives the retry, raise `--effort` for this workflow only and weigh
+  unproven to be an effort problem. If an incomplete result still survives the
+  retry, raise `--effort` for this workflow only and weigh
   the cost then; the failed runs are visible as red checks with a warning line.
 
 ## Follow-ups (not yet done)

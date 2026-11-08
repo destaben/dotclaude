@@ -71,7 +71,8 @@ with `## Review of PR #<n>` and end with
 message, such as a "waiting for the agents" status, is retried once and then
 fails the job instead of being posted as if it were a review. It also needs
 the action step itself to have succeeded. The review is advisory: a
-prompt-injected diff can still influence what it says. Inactive until you add a `CLAUDE_CODE_OAUTH_TOKEN` repository secret. There is no API-key
+prompt-injected diff can still influence what it says. Inactive until you
+add a `CLAUDE_CODE_OAUTH_TOKEN` repository secret. There is no API-key
 fallback: when the subscription quota runs out, the review simply doesn't run.
 
 To wait for a run's review after a push, `github-ops` uses `gh run watch` (see
