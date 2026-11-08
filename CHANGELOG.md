@@ -3,6 +3,22 @@
 All notable changes to this repo are recorded here. Entries explain why a
 change was made, not just what changed — the diff already shows what.
 
+## 2026-11-08 — Worker review fixes: scanner coverage, tool rules, shutdown, save failures
+
+The secret scan now reads the entry names of every tree the range adds (a file copied
+to a token-shaped name has no new blob, so no new path) and the full commit headers, not
+only the messages. `git status` and `git diff` are allowed only as exact commands: a
+prefix rule let `git diff --color=never --no-index` print protected files. The worker
+reads the Untrusted input and Checkpoint sections from a copy staged in its worktree
+(the inbox is denied, so the old path was unreadable). After TERM the entrypoint waits
+for the whole claude process group before collecting and committing, so a slow shutdown
+no longer loses the last edit. A failed stage, commit or bundle now ends the run as
+`blocked` instead of reporting the worker's `done`. The scanner runs in its own process
+group and the whole group is killed at the time limit. Resuming a checkpoint is
+documented as a new run on a new branch with `base:` set to the published checkpoint
+branch, and the refusal says so. Worker tests keep their trees out of `/tmp`, which the
+entrypoint denies, so the handoff-path test passes on Linux.
+
 ## 2026-11-08 — Harden the worker: handoff path, locks, failed runs, resumes, stops
 
 The worker now writes its handoff to `.worker-out/HANDOFF-OUT.md` inside its own

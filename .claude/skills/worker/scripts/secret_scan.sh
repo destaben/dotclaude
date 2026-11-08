@@ -2,7 +2,8 @@
 # secret_scan.sh: looks for credential-shaped text that must never reach a public repository.
 #   secret_scan.sh --text FILE           scan one text file (a commit message, a PR title or body)
 #   secret_scan.sh --repo DIR BASE REF   scan every blob that the range BASE..REF adds, and every commit
-#                                        message in that range, read raw from the object database
+#                                        commit (headers and message) in that range, and every entry name of
+#                                        every tree in that range, read raw from the object database
 # Exit: 0 clean; 1 found (the kinds are printed on stdout, never the matched text); 2 could not scan.
 # Callers treat anything but 0 as "do not publish": the scan fails closed.
 # Raw reads (cat-file, not diff) mean .gitattributes cannot hide content: `* -diff` and textconv do not apply.
@@ -84,8 +85,18 @@ scan_repo() {
   shas=$(printf '%s\n' "$objects" | awk '{print $1}')
   types=$(printf '%s\n' "$shas" | git -C "$dir" cat-file --batch-check='%(objecttype) %(objectname)') || return 2
 
-  # Path names are text too: a secret can be spelled in a file name. Each name the range adds is scanned.
+  # Path names are text too: a secret can be spelled in a file name. rev-list --objects names each object once,
+  # so a file copied or renamed to a new name (same blob) would show no new path. The entry names are therefore
+  # read from every tree object the range adds, which lists each name the tree holds.
   printf '%s\n' "$objects" | awk 'NF > 1 { sub(/^[^ ]+ /, ""); print }' > "$TMP/paths" || return 2
+  while IFS= read -r line; do
+    case $line in
+      "tree "*)
+        sha=${line#tree }
+        git -C "$dir" ls-tree --name-only -z "$sha" | tr '\0' '\n' >> "$TMP/paths" || return 2
+        ;;
+    esac
+  done <<< "$types"
   rc=0
   found=$(scan_file "$TMP/paths") || rc=$?
   case $rc in
@@ -111,7 +122,8 @@ scan_repo() {
   done <<< "$types"
 
   msgs="$TMP/messages"
-  git -C "$dir" log --format=%B "$base..$ref" > "$msgs" || return 2
+  # The raw format carries the author and committer lines as well as the message.
+  git -C "$dir" log --format=raw "$base..$ref" > "$msgs" || return 2
   rc=0
   found=$(scan_file "$msgs") || rc=$?
   case $rc in

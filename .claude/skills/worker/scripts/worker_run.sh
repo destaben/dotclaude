@@ -264,6 +264,27 @@ run_bounded() {
   perl -e 'alarm shift; exec @ARGV' "$secs" "$@"
 }
 
+# run_scan_bounded <seconds> <command...>: the same limit, for the secret scanner, which starts children (git, grep,
+# awk) through pipes. The command runs in its own process group and the whole group is killed when the time is up
+# (or when the command ends), so a stalled child cannot keep the output pipe open past the limit. Exits 142 on
+# timeout, like a process killed by the alarm. stdin is closed: the scanner reads none.
+run_scan_bounded() {
+  local secs=$1
+  shift
+  perl -e '
+    my $secs = shift;
+    my $pid = fork();
+    defined $pid or exit 127;
+    if (!$pid) { setpgrp(0, 0); open(STDIN, "<", "/dev/null"); exec @ARGV; exit 127; }
+    $SIG{ALRM} = sub { kill "KILL", -$pid; waitpid($pid, 0); exit 142; };
+    alarm $secs;
+    waitpid($pid, 0);
+    my $st = $?;
+    kill "KILL", -$pid;
+    exit($st & 127 ? 128 + ($st & 127) : $st >> 8);
+  ' "$secs" "$@"
+}
+
 # summary_value <key>: one value from the summary.env the container wrote.
 summary_value() {
   awk -F= -v k="$1" '$1 == k { print substr($0, length(k) + 2); exit }' "$OUT_DIR/summary.env"
@@ -343,7 +364,7 @@ neutralise() {
 # it sets SECRET_KINDS (the kinds found, never the values, or "could not be scanned") and returns 1.
 text_clean() {
   local rc=0 out
-  out=$(run_bounded 60 "$SKILL_DIR/scripts/secret_scan.sh" --text "$1") || rc=$?
+  out=$(run_scan_bounded "${WORKER_SCAN_TIMEOUT:-60}" "$SKILL_DIR/scripts/secret_scan.sh" --text "$1") || rc=$?
   case $rc in
     0) return 0 ;;
     1) SECRET_KINDS=$out ;;
@@ -355,7 +376,7 @@ text_clean() {
 # repo_clean <clone> <base-ref> <branch-ref>: the same, for every blob and commit message the branch adds.
 repo_clean() {
   local rc=0 out
-  out=$(run_bounded 300 "$SKILL_DIR/scripts/secret_scan.sh" --repo "$1" "$2" "$3") || rc=$?
+  out=$(run_scan_bounded "${WORKER_SCAN_TIMEOUT:-300}" "$SKILL_DIR/scripts/secret_scan.sh" --repo "$1" "$2" "$3") || rc=$?
   case $rc in
     0) return 0 ;;
     1) SECRET_KINDS=$out ;;

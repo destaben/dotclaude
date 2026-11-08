@@ -23,6 +23,7 @@ import stat
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -207,6 +208,10 @@ with open(os.path.join(config_dir, "claude-record.json"), "w") as record:
 prompt = args[args.index("-p") + 1]
 match = re.search(r"(\S+/HANDOFF-OUT\.md)", prompt)
 out_path = match.group(1) if match else None
+in_match = re.search(r"(\S+/HANDOFF-IN\.md)", prompt)
+if in_match and os.path.isfile(in_match.group(1)):
+    with open(in_match.group(1)) as seen, open(os.path.join(config_dir, "handoff-in-seen.md"), "w") as saved:
+        saved.write(seen.read())
 login = ""
 creds_path = os.path.join(config_dir, ".credentials.json")
 if os.path.exists(creds_path):
@@ -242,10 +247,26 @@ if knobs.get("commit"):
         work.write(knobs.get("commit_content", "work\n"))
 if knobs.get("extra_branch"):
     subprocess.run(["git", "branch", knobs["extra_branch"]], check=True)
+if knobs.get("break_index") == "1":
+    git_dir = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], capture_output=True, text=True, check=True).stdout.strip()
+    open(os.path.join(git_dir, "index.lock"), "w").close()
 scan("after-commit")
-time.sleep(float(knobs.get("sleep", "0")))
 out = knobs.get("out", "none")
 checkpoint = knobs.get("checkpoint", "Added feature.txt; tests pass.")
+if knobs.get("term_delay"):
+    # A slow shutdown: on TERM the worker takes a while, then writes its last edit and its handoff.
+    def late(signum, frame):
+        time.sleep(float(knobs["term_delay"]))
+        with open(os.path.join(os.getcwd(), "late.txt"), "w") as late_file:
+            late_file.write("late edit\n")
+        if out_path:
+            with open(out_path, "w") as handoff:
+                handoff.write("---\nversion: 1\nrepo: owner/project\nbase: main\nbranch: worker/fix-widget-15\nissue: 15\nstatus: checkpoint\n---\n\n"
+                              "## Task\n\nReported by the stub.\n\n## Checkpoint\n\nLATE-HANDOFF\n")
+        sys.exit(0)
+    import signal
+    signal.signal(signal.SIGTERM, late)
+time.sleep(float(knobs.get("sleep", "0")))
 if out_path and out in ("done", "blocked"):
     with open(out_path, "w") as handoff:
         handoff.write("---\nversion: 1\nrepo: owner/project\nbase: main\nbranch: worker/fix-widget-15\nissue: 15\nstatus: " + out + "\n---\n\n"
@@ -994,7 +1015,10 @@ class EntrypointTests(WorkerCase):
         self.assertIn("Issue 15.", prompt)
         self.assertIn("- Fix it.", prompt)
         self.assertNotIn(INJECTION, prompt)
-        self.assertIn(run_id + ".md", prompt)   # the handoff path, so the worker can read the data sections
+        self.assertIn("/.worker-out/HANDOFF-IN.md", prompt)   # a copy in the worktree, so the worker can read the data sections
+        self.assertNotIn("/inbox/", prompt)
+        seen = (self.claude_cfg / "handoff-in-seen.md").read_text()
+        self.assertIn(INJECTION, seen, "the worker must be able to read the Untrusted input section")
 
     def test_the_prompt_tells_the_worker_to_commit_locally_and_never_push(self):
         result, _, _ = self.run_entry()
@@ -1293,6 +1317,16 @@ class ToolPolicyTests(WorkerCase):
         self.assertIn("Bash(git diff --no-index:*)", deny)
         self.assertIn("Bash(git diff --output:*)", deny)
 
+    def test_git_status_and_git_diff_are_allowed_only_as_exact_commands(self):
+        # A prefix rule would also allow `git diff --color=never --no-index /dev/null <file>`, which prints a file
+        # the Read deny rules protect, and `git diff --output=<file>` with the arguments in another order.
+        allow = tool_rules(self.worker_args(), "--allowedTools")
+        git_rules = [rule for rule in allow if rule.startswith(("Bash(git status", "Bash(git diff"))]
+        self.assertIn("Bash(git diff)", git_rules)
+        self.assertIn("Bash(git status)", git_rules)
+        for rule in git_rules:
+            self.assertNotIn(":*", rule)
+
     def test_test_runners_are_allowed_and_npm_only_when_the_repo_defines_a_test_script(self):
         allow = tool_rules(self.worker_args(run_id="20261108-000000-7"), "--allowedTools")
         self.assertIn("Bash(python3 -m unittest:*)", allow)
@@ -1463,6 +1497,16 @@ class TermTests(WorkerCase):
         self.assertTrue(any(call.startswith("docker rm -f worker-") for call in calls), calls)
 
 
+    def test_a_late_handoff_and_edit_written_during_a_slow_shutdown_are_still_collected_and_committed(self):
+        result = self.run_worker("--handoff", str(self.handoff_src), "--timeout", "3s", "--no-publish", env={
+            "STUB_CLAUDE_SLEEP": "30", "STUB_CLAUDE_TERM_DELAY": "2", "WORKER_STOP_GRACE": "20"})
+        self.assertEqual(result.returncode, 124, result.stderr)
+        self.assertIn("LATE-HANDOFF", (self.out / "HANDOFF-OUT.md").read_text())
+        summary = read_summary(self.out / "summary.env")
+        self.assertEqual(summary["COMMITS"], "1", "the edit written during the shutdown is committed")
+        self.assertEqual(summary["BUNDLE"], "yes")
+
+
 class HandoffOutTests(WorkerCase):
     def test_the_workers_handoff_is_moved_into_the_run_directory_and_removed_from_the_worktree(self):
         result, _, run_dir = self.run_entry(env={"STUB_CLAUDE_OUT": "done"})
@@ -1505,6 +1549,27 @@ class FailedRunTests(WorkerCase):
         self.assertIn("status: blocked", (self.out / "HANDOFF-OUT.md").read_text())
 
 
+class SaveFailureTests(WorkerCase):
+    def test_a_worker_that_reports_done_is_blocked_when_its_edits_could_not_be_saved(self):
+        result, _, run_dir = self.run_entry(env={"STUB_CLAUDE_OUT": "done", "STUB_CLAUDE_COMMIT": "feature.txt",
+                                                 "STUB_CLAUDE_BREAK_INDEX": "1"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        text = (run_dir / "HANDOFF-OUT.md").read_text()
+        self.assertEqual(front_matter(text)["status"], "blocked")
+        self.assertEqual(front_matter(text)["worker_status"], "done")
+        summary = read_summary(run_dir / "summary.env")
+        self.assertEqual(summary["STATUS"], "blocked")
+        self.assertIn("could not be saved", summary["REASON"])
+        self.assertEqual(summary["COMMITS"], "0")
+
+    def test_the_host_reports_a_save_failure_as_a_failed_run_not_a_success(self):
+        result = self.run_worker("--handoff", str(self.handoff_src), env={
+            "STUB_CLAUDE_OUT": "done", "STUB_CLAUDE_COMMIT": "feature.txt", "STUB_CLAUDE_BREAK_INDEX": "1"})
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("status=blocked", result.stdout)
+        self.assertIn("publish=none", result.stdout)
+
+
 class ResumeTests(WorkerCase):
     def resume_file(self):
         """A worker's handoff, passed back as a checkpoint, the way an owner would resume it."""
@@ -1534,6 +1599,32 @@ class ResumeTests(WorkerCase):
         self.assertIn("WARNING", result.stderr)
         self.assertIn("-Fix the widget.", result.stderr)
         self.assertIn("+Reported by the stub.", result.stderr)
+
+    def test_resuming_on_a_fresh_branch_based_on_the_published_checkpoint_carries_its_edits(self):
+        # The recorded branch is never reused. The resume handoff names the published checkpoint branch as its base
+        # and a new worker branch, so the earlier edits are in the new worktree.
+        editor = self.tmp / "editor-cp"
+        self.git("clone", "-q", str(self.bare), str(editor))
+        self.git("-C", str(editor), "checkout", "-q", "-b", "worker/first-run")
+        (editor / "prior.txt").write_text("earlier edit\n")
+        self.git("-C", str(editor), "add", "-A")
+        self.git("-C", str(editor), "-c", "user.name=test", "-c", "user.email=test@localhost", "commit", "-q", "-m", "prior")
+        self.git("-C", str(editor), "push", "-q", "origin", "worker/first-run")
+        self.handoff_src.write_text(handoff_text(branch="worker/second-run", base="worker/first-run", status="checkpoint"))
+        result = self.run_worker("--handoff", str(self.handoff_src),
+                                 env={"STUB_CLAUDE_OUT": "done", "STUB_CLAUDE_COMMIT": "feature.txt"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("publish=pr", result.stdout)
+        shown = subprocess.run(["git", "-C", str(self.bare), "show", "refs/heads/worker/second-run:prior.txt"],
+                               capture_output=True, text=True, check=True).stdout
+        self.assertEqual(shown, "earlier edit\n")
+
+    def test_resuming_under_a_branch_already_on_origin_is_refused_with_the_way_to_resume(self):
+        self.handoff_src.write_text(handoff_text(branch="worker/taken", status="checkpoint"))
+        result = self.run_worker("--handoff", str(self.handoff_src))
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("base", result.stderr)
+        self.assertIn("new worker/", result.stderr)
 
     def test_consent_without_an_original_still_shows_the_instruction_sections(self):
         path = self.resume_file()
@@ -1782,6 +1873,23 @@ class SecretScanTests(unittest.TestCase):
         self.assertIn("path name", result.stdout)
         self.assertNotIn("ghp_" + "A" * 36, result.stdout + result.stderr)
 
+    def test_a_file_copied_to_a_token_shaped_name_with_unchanged_content_is_caught(self):
+        # The blob already exists on the base, so rev-list --objects names no new path for it: the tree must be read.
+        self.run_git("mv", "README.md", "ghp_" + "B" * 36 + ".md")
+        self.run_git("commit", "-q", "--no-verify", "-m", "rename")
+        result = self.scan_repo()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("path name", result.stdout)
+        self.assertNotIn("ghp_" + "B" * 36, result.stdout + result.stderr)
+
+    def test_a_token_in_the_author_name_of_a_commit_is_caught(self):
+        (self.repo / "notes.txt").write_text("fine\n")
+        self.run_git("add", "-A")
+        self.run_git("commit", "-q", "--no-verify", "-m", "clean message", "--author", "%s <a@example.invalid>" % FAKE_GITHUB_TOKEN)
+        result = self.scan_repo()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertNotIn(FAKE_GITHUB_TOKEN, result.stdout + result.stderr)
+
     def test_a_clean_branch_passes(self):
         self.commit("notes.txt", "fine\n", "clean")
         self.assertEqual(self.scan_repo().returncode, 0)
@@ -1797,6 +1905,27 @@ class SecretScanTests(unittest.TestCase):
 
     def test_a_missing_repository_directory_fails_closed(self):
         self.assertEqual(self.scan("--repo", str(self.dir / "absent"), "main", "feature").returncode, 2)
+
+
+class ScanTimeoutTests(WorkerCase):
+    def test_a_scanner_child_that_keeps_the_pipe_open_cannot_outlive_the_time_limit(self):
+        skill = self.tmp / "skill-copy"
+        shutil.copytree(SKILL, skill)
+        scanner = skill / "scripts" / "secret_scan.sh"
+        scanner.write_text("#!/bin/sh\n(sleep 25) &\nwait\n")
+        scanner.chmod(0o755)
+        self.handoff_src.write_text(handoff_text(branch=RUN_BRANCH))
+        merged = {**self.env, "STUB_CLAUDE_OUT": "done", "STUB_CLAUDE_COMMIT": "feature.txt", "WORKER_SCAN_TIMEOUT": "2"}
+        self.write_claude_knobs(merged)
+        started = time.monotonic()
+        result = subprocess.run([str(skill / "scripts" / "worker_run.sh"), "box", REPO, "--config", str(self.config),
+                                 "--out", str(self.out), "--handoff", str(self.handoff_src)],
+                                env=merged, capture_output=True, text=True, timeout=120, cwd=str(self.tmp))
+        elapsed = time.monotonic() - started
+        self.assertEqual(result.returncode, 6, result.stderr)
+        self.assertIn("could not be scanned", result.stderr)
+        self.assertFalse(self.bare_has("refs/heads/" + RUN_BRANCH), "nothing is pushed when the scan does not finish")
+        self.assertLess(elapsed, 20, "the stalled child must be killed with the scanner at the limit")
 
 
 class ScrubberFailClosedTests(WorkerCase):

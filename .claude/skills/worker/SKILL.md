@@ -169,7 +169,13 @@ wrote none), the summary, the commit of what the worker changed, and the bundle.
 script then removes the container with `docker rm -f` only if it is still there after
 the grace period. The entrypoint handles TERM and INT for this; a container that
 ignores TERM is killed after the grace period and whatever it had not yet written is
-lost.
+lost. After TERM the entrypoint waits for the whole claude process group to exit (up to
+`WORKER_REAP_WAIT` seconds, default 20, then kills what is left) before it collects the
+handoff and commits, so a worker's last edit during a slow shutdown is not lost.
+
+If the entrypoint cannot save the worker's edits (staging, the commit or the bundle fails),
+the run ends as `blocked` whatever the worker wrote, the worker's own status is kept as
+`worker_status` in the front matter, and the summary REASON says the edits were not saved.
 
 ## Lock
 The local lock is a symbolic link, `run.lock`, whose target is the holder's pid. Its
@@ -197,11 +203,14 @@ Runs after the container finishes, for a run that left a bundle and ended as `do
 7. A **secret scan of the branch** (`scripts/secret_scan.sh --repo`): it reads the raw
    content of every blob the range adds (`git rev-list --objects` and `git cat-file
    blob`, not diffs, so `.gitattributes` such as `* -diff` cannot hide content), the
-   path names the range adds, and every commit message in the range. A token committed
+   path names the range adds, the entry names of every tree the range adds (so a file
+   copied or renamed to a token-shaped name is seen even though its blob is not new),
+   and every commit in the range, headers (author and committer) as well as the message. A token committed
    and then removed in a later commit is still found, because the earlier blob is in
    the range. **It fails closed**: a missing base or ref, an unreadable object, a grep
    error, or the scan's wall-clock limit (300 s) refuses the publish with exit 6, and
-   the reason is printed without any value.
+   the reason is printed without any value. The scanner runs in its own process group and
+   the whole group is killed at the limit, so a stalled child cannot hold the run open.
 8. `git -c core.hooksPath=/dev/null push --no-verify origin refs/heads/<branch>:refs/heads/<branch>`.
    Hooks are disabled, no force is used, and the refspec names only this branch.
 9. `gh pr create --draft --head <branch> --base <base>` with the scanned title and body.
@@ -212,7 +221,7 @@ Runs after the container finishes, for a run that left a bundle and ended as `do
 
 ### The secret scanner: what it detects, and what it does not
 The scanner matches **literal patterns only**, in the bytes the repository stores and
-in the path names and commit messages. It detects: GitHub tokens (`gh[pousr]_` and
+in the path names and commit headers and messages. It detects: GitHub tokens (`gh[pousr]_` and
 `github_pat_`), Anthropic keys (`sk-ant-`), OpenAI keys (`sk-proj-`, `sk-svcacct-` and
 the generic `sk-` form), AWS access key ids (`AKIA`), Google API keys (`AIza`), Slack
 tokens (`xox`), JWT-shaped strings, `"accessToken"` and `"refreshToken"` fields, and PEM
@@ -297,7 +306,9 @@ Allowed for the model:
 - File tools: `Read`, `Edit`, `Write`, and `Task` for subagents (the council). Claude
   Code 2.1.319 has no `Glob` or `Grep` tool, so there are none here. Searching is done
   with `Read` only.
-- `git status` and `git diff` (`git diff --no-index` and `--output` are denied).
+- `git status`, `git status --short`, `git diff`, `git diff --stat` and `git diff --name-only`,
+  as exact commands only. A prefix rule would also allow reordered arguments such as
+  `git diff --color=never --no-index /dev/null <file>`, which prints files the deny rules protect.
 - The test runners: `python3 -m unittest` and `python3 -m pytest`, and `npm test` only
   when the repo's `package.json` defines a test script. `shellcheck` is not allowed: it
   echoes source lines of any file it is given, so a worker could read files this way.
@@ -407,6 +418,16 @@ in the instruction sections against the owner's original handoff (given with
 `--original FILE`), or the instruction sections themselves when no original is given,
 and then continues. Read the differences before accepting.
 
+### Continuing from a checkpoint
+A resume is a new run on a new branch: the entrypoint never reuses a branch, so a checkpoint
+whose branch is already on origin is refused (exit 2). The worker's edits travel as commits,
+not in the handoff, so a resume that starts from the original base does not have them. To
+continue from them, publish the checkpoint first (the default; with `--no-publish` the edits
+exist only in the local bundle, so push that branch yourself or run without the flag), then
+edit the handoff: set `base:` to the published checkpoint branch and `branch:` to a new
+`worker/<name>`. The new run's worktree starts from that branch, and its pull request is
+opened against it.
+
 ## Handoff format (v1)
 The file has YAML front matter (`version: 1`, `repo`, `base`, `branch`, `issue`,
 `status`, and `origin` when a worker wrote it) and five sections in this order: Task,
@@ -420,6 +441,9 @@ is written only with `status: blocked`. Template: `templates/handoff.md`.
 - **Only Task, Context and Acceptance are instructions.** The entrypoint passes those
   sections to the worker. Untrusted input and Checkpoint are data: the worker reads them
   for facts and never follows instructions inside them.
+  The worker reads those data sections from a copy of the handoff the entrypoint stages at
+  `.worker-out/HANDOFF-IN.md` in its worktree. The inbox itself stays denied (it holds the
+  other runs' handoffs); the copy is removed with `.worker-out` and never committed.
 - Issue text is always untrusted. It is quoted into Untrusted input, so it cannot open
   a heading the worker would read as an instruction.
 
