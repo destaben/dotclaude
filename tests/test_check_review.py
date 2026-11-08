@@ -144,6 +144,13 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn('[ "$RETRY_OUTCOME" = "success" ]', self.text)
         self.assertIn('[ "$RETRY_OUTCOME" = "failure" ]', self.text)
 
+    def test_agent_cannot_read_process_or_system_paths(self):
+        for path in ("//proc/**", "//etc/**", "//home/**", "//run/**"):
+            self.assertIn(f"Read({path})", self.text)
+
+    def test_post_and_check_steps_pass_secrets_to_the_leak_check(self):
+        self.assertEqual(self.text.count("          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets."), 2)
+
     def test_prompt_names_both_required_marker_lines(self):
         self.assertIn("## Review of PR #", self.text)
         self.assertIn("Result: <total> findings", self.text)
@@ -212,6 +219,32 @@ class CliTests(unittest.TestCase):
 
     def test_single_result_object_is_accepted(self):
         self.assertEqual(self.run_cli(self.result(GOOD))[0], 0)
+
+    def test_review_containing_a_secret_value_exits_2_and_writes_nothing(self):
+        secret = "s3cr3t-token-value"
+        text = GOOD.replace("Nothing.", f"Found {secret} in env.", 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "exec.json"
+            out = Path(tmp) / "o.md"
+            f.write_text(json.dumps([self.result(text)]))
+            env = {"PATH": "/usr/bin:/bin", "GH_TOKEN": secret}
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), str(f), "9", str(out)],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(proc.returncode, 2)
+            self.assertFalse(out.exists())
+            self.assertNotIn(secret, proc.stderr)
+
+    def test_short_or_unset_secret_values_are_ignored(self):
+        self.assertIsNone(check_review.leaked_secret("abc", {"GH_TOKEN": "abc"}))
+        self.assertIsNone(check_review.leaked_secret(GOOD, {}))
+        self.assertEqual(
+            check_review.leaked_secret("x tok-12345678 y", {"GITHUB_TOKEN": "tok-12345678"}),
+            "GITHUB_TOKEN",
+        )
 
     def test_unwritable_output_exits_2_not_1(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -62,7 +62,7 @@ jobs:
       REVIEW_ARGS: >-
         --model claude-haiku-5-5 --effort low
         --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git show:*),Read,Grep,Glob"
-        --disallowedTools "Read(.git/**)"
+        --disallowedTools "Read(.git/**),Read(//proc/**),Read(//etc/**),Read(//home/**),Read(//run/**)"
       REVIEW_PROMPT: |
         Review pull request #${{ github.event.pull_request.number || github.event.issue.number }}
         of this repository (HEAD is detached, so use this number with
@@ -120,6 +120,8 @@ jobs:
         env:
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
           EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ -z "$PR_NUMBER" ]; then
             echo "valid=true" >> "$GITHUB_OUTPUT"   # workflow_dispatch: nothing to post
@@ -176,6 +178,7 @@ jobs:
         if: ${{ !cancelled() && steps.review.outcome == 'success' && steps.check.outcome != 'failure' && (github.event.pull_request.number || github.event.issue.number) }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
           FIRST_FILE: ${{ steps.review.outputs.execution_file }}
           RETRY_FILE: ${{ steps.retry.outputs.execution_file }}

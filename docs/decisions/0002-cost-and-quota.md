@@ -105,6 +105,18 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
     this configuration (none were seen on this repo's runs). If it ever mirrors
     an incomplete message into a comment, that text is outside this gate:
     re-check the action's behaviour when updating its version.
+- **Secret-leak defence (severe finding on PR #16, fixed here).** The agent
+  has `Read`, and its final message is posted verbatim, so a prompt-injected
+  diff could try to make it read a secret (for example the process
+  environment under `/proc`) and echo it into a public comment. This pre-dates
+  the PR but this step is the publishing path, so two layers were added:
+  `Read` of `/proc`, `/etc`, `/home` and `/run` is denied, and the gate
+  refuses to post, with exit 2 and no retry, any review that contains the
+  value of `CLAUDE_CODE_OAUTH_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN`. Neither
+  layer catches a transformed secret (for example base64), so the review stays
+  advisory and fork PRs stay skipped on the automatic trigger. The `Read(//...)`
+  absolute-path rule syntax follows the Claude Code permissions reference and
+  was not exercised on a real run.
 - **Gating coverage:** the workflow gates are covered only by text-level
   `WorkflowContractTests`; real behaviour (the retry-file selection, the
   outcome combinations) needs a real action run. The validation logic they

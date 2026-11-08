@@ -21,14 +21,19 @@ replaced by an earlier success):
 Anything else (a progress message, an empty result, a missing or unreadable
 execution file) exits 3 and writes nothing, so the caller can retry or fail
 the job instead of posting an unfinished review as if it were one. Exit 3 is
-reserved for "incomplete review"; every other non-zero code (2 for misuse or
-an unwritable output, 1 for an uncaught crash or a syntax error) is a setup
+reserved for "incomplete review"; every other non-zero code (2 for misuse, an
+unwritable output or a review that contains a secret's value, 1 for an
+uncaught crash or a syntax error) is a setup
 problem, so the workflow does not retry on it.
 """
 import json
+import os
 import re
 import sys
 from pathlib import Path
+
+# Environment variables whose values must never appear in a posted review.
+SECRET_ENV_VARS = ("CLAUDE_CODE_OAUTH_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
 
 RESULT_RE = re.compile(
     r"^Result: (\d+) (findings?) \((\d+) severe, (\d+) non-severe\)$"
@@ -118,6 +123,16 @@ def validate(text, pr_number):
     return None
 
 
+def leaked_secret(text, environ=None):
+    """Name of the first secret env var whose value appears in `text`, if any."""
+    environ = os.environ if environ is None else environ
+    for name in SECRET_ENV_VARS:
+        value = environ.get(name, "")
+        if len(value) >= 8 and value in text:
+            return name
+    return None
+
+
 def main(argv):
     if len(argv) != 4:
         print(__doc__, file=sys.stderr)
@@ -128,6 +143,13 @@ def main(argv):
     if reason:
         print(f"incomplete review, not posting: {reason}", file=sys.stderr)
         return 3
+    leaked = leaked_secret(text)
+    if leaked:
+        # A prompt-injected diff may have made the agent read and echo a
+        # secret. Never print the value; fail as a setup/security error (no
+        # retry, nothing posted).
+        print(f"review contains the value of {leaked}; not posting", file=sys.stderr)
+        return 2
     output_file.write_text(unfence(text).strip() + "\n", encoding="utf-8")
     return 0
 
