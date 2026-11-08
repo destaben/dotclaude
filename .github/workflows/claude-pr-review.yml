@@ -138,6 +138,10 @@ jobs:
             fi
           fi
 
+      # Accepted limit (ADR 0002, "Known limits"): if the action ever posts a
+      # comment per invocation, a retry could leave a second bot comment; none
+      # were seen on this repo's runs, and re-checking is part of upgrading
+      # the action.
       - name: Retry the review once (first result was incomplete)
         id: retry
         if: ${{ !cancelled() && steps.check.outputs.valid == 'false' }}
