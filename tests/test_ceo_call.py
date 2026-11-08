@@ -936,6 +936,17 @@ class AskFlowTests(unittest.TestCase):
             ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, attempts=1), {}, StopsOnRemove(["1"]),
                     synth=fake_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
 
+    def test_an_unexpected_result_while_the_call_may_be_live_keeps_the_folder_and_says_so(self):
+        sent = []
+        clock = FakeClock()
+        asterisk = FakeAsterisk([{1: {"answered": "1", "result": "7"}}])  # garbage value, and no "done" marker yet
+        with self.assertRaises(ceo.MayBeLive):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, attempts=1), {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                    asterisk, synth=fake_synth, notifier=lambda t, c, text, silent=False: sent.append(text) or True,
+                    sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertIn("no se ha registrado", sent[0])
+        self.assertTrue(asterisk.dirs)
+
     def test_a_second_ask_too_soon_is_refused_before_any_call(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
         self.addCleanup(lambda: state.exists() and state.unlink())
@@ -1814,6 +1825,7 @@ class GuardTests(unittest.TestCase):
         agent = (SCRIPT.parents[3] / "agents" / "claudio.md").read_text()
         self.assertIn("<<'CEO_REQUEST'", agent)
         self.assertIn("Agent safety", agent)
+        self.assertNotIn("needs the user's authority", agent)  # only the two cases council-policy names
         self.assertIn("no JSON", agent)
 
     def test_the_agent_is_told_to_run_ask_in_the_background(self):

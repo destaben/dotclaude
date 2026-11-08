@@ -19,7 +19,8 @@ Every change goes through: `/plan` (planner, read-only) → you approve →
 implementer makes the change → scoped tests → `/release` (full suite,
 bug-hunter, documenter, commit-and-pr). No hooks are used for this — it's a
 sequence of steps inside the commands and skills themselves, not something
-attached to the tool-call event system. (One exception: the `claudio` agent's shell guard, see the `ceo-call` skill.)
+attached to the tool-call event system. (One exception: the `claudio` agent's
+shell guard, see the `ceo-call` skill.)
 
 ## Decisions
 Put real design choices to the council via `/council`; follow the

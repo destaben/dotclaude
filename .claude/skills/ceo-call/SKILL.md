@@ -79,7 +79,8 @@ named `ceo_call.py`, in a repository, `/tmp` or elsewhere, is refused. `--config
 is allowed, because the alias would otherwise come from the untrusted brief); no shell operators
 or `..` or control characters other than newline (a carriage return could change where bash ends a
 heredoc); the request JSON only through a quoted heredoc (`ask --request -`): a request file path is
-refused, because the agent cannot write files and an existing file must not be spoken.
+refused, because the agent cannot write files and the owner's own CLI use of a file is
+unrestricted, but an existing file must not be spoken by the agent.
 
 The exact forms (everything else is refused):
 

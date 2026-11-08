@@ -554,6 +554,9 @@ def run_attempt(asterisk, config: Dict, call_id: str, option_count: int, sleep=t
         return {"status": "undecided"}
     if re.fullmatch(r"[1-8]", result) and int(result) <= option_count:
         return {"status": "decided", "choice": int(result)}
+    if asterisk.read_file(base + "/done") is None:
+        # Not finished yet (for example a partial write): the call may still be live.
+        raise MayBeLive("unexpected value in the call result")
     raise CallError("unexpected value in the call result")
 
 

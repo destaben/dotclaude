@@ -15,7 +15,7 @@ shell expands it; locally, also this machine's own absolute home path), no quote
     python3 <script> --config ~/.config/ceo-call/config.json check
     python3 <script> --config ~/.config/ceo-call/config.json ask --request - <<'CEO_REQUEST'   (JSON lines follow, the last line
         is CEO_REQUEST; the quoted delimiter means the body is never expanded). A request file path
-        is not accepted: the agent has no way to write a file, and an existing one must not be spoken.
+        is not accepted: the agent has no way to write a file, and an existing one must not be spoken by the agent (the CLI itself still reads files for the owner).
 """
 import json
 import os
