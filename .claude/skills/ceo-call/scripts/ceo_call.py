@@ -64,6 +64,7 @@ DEFAULT_CONFIG = {
     "timezone": None,  # IANA name such as "Europe/Madrid"; default is the host's local time
     "heads_up_s": 90,  # when the phone is not registered, message the owner and wait this long
     "max_per_hour": 6,  # refuse more than this many asks within an hour (0 = off)
+    "max_per_day": 24,  # and more than this many within 24 hours (0 = off)
     "min_gap_s": 120,  # refuse a new ask this soon after the previous one started (0 = off)
     "state_file": "~/.local/state/ceo-call/last_ask",  # remembers when the last ask started; None = off
 }
@@ -188,7 +189,7 @@ def load_config(path: Optional[str]) -> Dict:
     quiet = (config["quiet_start"], config["quiet_end"])
     if any(quiet) and not all(isinstance(v, str) and TIME_RE.match(v) for v in quiet):
         raise CallError("quiet_start and quiet_end must both be HH:MM")
-    for key in ("piper_port", "attempts", "retry_delay_s", "ring_timeout_s", "call_timeout_s", "poll_interval_s", "heads_up_s", "min_gap_s", "max_per_hour"):
+    for key in ("piper_port", "attempts", "retry_delay_s", "ring_timeout_s", "call_timeout_s", "poll_interval_s", "heads_up_s", "min_gap_s", "max_per_hour", "max_per_day"):
         if not isinstance(config[key], int) or isinstance(config[key], bool) or config[key] < 0:
             raise CallError("%s must be a non-negative integer" % key)
     # The whole run must stay far below the one-day age at which another run sweeps its folder.
@@ -652,6 +653,13 @@ def ask(
     clean = validate_request(request)
     options = clean["options"]
     quiet = lambda: in_quiet_hours(now().strftime("%H:%M"), config.get("quiet_start"), config.get("quiet_end"))  # noqa: E731
+    def quiet_now() -> bool:
+        """Quiet hours right now; a notice sent inside the window stays silent. Never raises."""
+        try:
+            return quiet()
+        except Exception:  # noqa: BLE001
+            return False
+
     reached = {"owner": False}
     send = notifier
 
@@ -699,9 +707,9 @@ def ask(
         outcome = {"status": "unanswered"}
         heads_up_state: Dict = {}
         for attempt in range(1, config["attempts"] + 1):
-            # Quiet hours are checked before every attempt, not only the first: a retry that lands
-            # after the window opens must not ring.
-            if attempt > 1 and quiet():
+            # Quiet hours are checked before every attempt, the first included: synthesis or an earlier
+            # attempt can take minutes, and nothing loud (heads-up, call) may start inside the window.
+            if quiet():
                 outcome = {"status": "deferred", "attempt": attempt - 1}
                 break
             if not wait_for_phone(asterisk, config, env, notifier, sleep, clock, heads_up_state):
@@ -748,14 +756,16 @@ def ask(
                         "attempt": max(1, attempt), "notified": False}
         # The decision is still pending: tell the owner by chat, then let the error reach the caller.
         # If the call may be live, say that an answer given now is not recorded.
-        notify_outcome({"status": "error_live" if keep_folder else "error"}, clean, env, notifier)
+        notify_outcome({"status": "error_live" if keep_folder else "error"}, clean, env, notifier, silent=quiet_now())
         raise
     except BaseException:
         # Anything else (an unexpected bug) must not delete the folder of a call that may be live, and
         # the owner still hears that the decision is pending.
         keep_folder = maybe_live
         try:
-            notify_outcome({"status": "error_live" if keep_folder else "error"}, clean, env, notifier)
+            notify_outcome({"status": "error_live" if keep_folder else "error"}, clean, env, notifier, silent=quiet_now())
+        except Interrupted:
+            raise  # a stop request is never swallowed
         except Exception:  # noqa: BLE001 - never hide the original problem
             pass
         raise
@@ -775,7 +785,7 @@ def ask(
         outcome["notified"] = False  # same keys on every outcome; a decision needs no chat message
         return outcome
     try:
-        return notify_outcome(outcome, clean, env, notifier, silent=outcome["status"] == "deferred")
+        return notify_outcome(outcome, clean, env, notifier, silent=outcome["status"] == "deferred" or quiet_now())
     finally:
         settle()
 
@@ -856,7 +866,8 @@ def check_throttle(config: Dict, wall: Callable = time.time) -> Optional[float]:
     confused or manipulated agent cannot ring the owner over and over. The state file keeps one start
     time per line (the last 24 hours); a start is recorded when an ask passes these checks."""
     path, gap, per_hour = config.get("state_file"), config.get("min_gap_s", 0), config.get("max_per_hour", 0)
-    if not path or not (gap or per_hour):
+    per_day = config.get("max_per_day", 0)
+    if not path or not (gap or per_hour or per_day):
         return None
     resolved = Path(os.path.expanduser(path))
     now_s = wall()
@@ -870,6 +881,8 @@ def check_throttle(config: Dict, wall: Callable = time.time) -> Optional[float]:
             raise CallError("asked again too soon: wait %d more seconds" % (gap - (now_s - max(starts))))
         if per_hour and sum(1 for value in starts if now_s - value < 3600) >= per_hour:  # future starts count
             raise CallError("too many asks in the last hour (limit %d)" % per_hour)
+        if per_day and sum(1 for value in starts if now_s - value < 86400) >= per_day:
+            raise CallError("too many asks in the last 24 hours (limit %d)" % per_day)
         _write_starts(resolved, starts + [now_s])
     return now_s
 

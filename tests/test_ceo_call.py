@@ -1130,6 +1130,72 @@ class AskFlowTests(unittest.TestCase):
         self.assertNotIn("no se ha registrado", sent[0])  # attempt 1 was over: nothing is live
         self.assertEqual(asterisk.dirs, set())
 
+    def test_quiet_hours_beginning_during_synthesis_stop_the_first_attempt_before_the_heads_up(self):
+        times = iter([(21, 58), (22, 1), (22, 1), (22, 1)])  # start, then the window opens before the first attempt
+        original = FakeAsterisk.__init__
+
+        def init(self_, script):
+            original(self_, script)
+            self_.registered = False
+
+        sent = []
+        FakeAsterisk.__init__ = init
+        try:
+            asterisk = FakeAsterisk([])
+            cfg = dict(ceo.DEFAULT_CONFIG, retry_delay_s=0, attempts=1, quiet_start="22:00", quiet_end="08:00", heads_up_s=90)
+            clock = FakeClock()
+            result = ceo.ask({"question": "q", "options": ["a", "b"]}, cfg, {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                             asterisk, synth=fake_synth, notifier=lambda t, c, text, silent=False: sent.append((text, silent)) or True,
+                             sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, *next(times)))
+        finally:
+            FakeAsterisk.__init__ = original
+        self.assertEqual(result["status"], "deferred")
+        self.assertTrue(all(silent for _, silent in sent))  # nothing loud inside the window, and no heads-up
+
+    def test_notices_sent_after_the_window_opened_are_silent(self):
+        times = iter([(21, 59), (21, 59), (21, 59), (22, 20), (22, 20), (22, 20)])
+        sent = []
+        asterisk = FakeAsterisk(["unanswered"])
+        cfg = dict(ceo.DEFAULT_CONFIG, retry_delay_s=0, attempts=1, quiet_start="22:00", quiet_end="08:00")
+        clock = FakeClock()
+        result = ceo.ask({"question": "q", "options": ["a", "b"]}, cfg, {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                         asterisk, synth=fake_synth, notifier=lambda t, c, text, silent=False: sent.append(silent) or True,
+                         sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, *next(times, (22, 20))))
+        self.assertEqual(result["status"], "unanswered")
+        self.assertEqual(sent, [True])
+
+    def test_a_stop_request_while_reporting_an_unexpected_error_is_not_swallowed(self):
+        class Boom(FakeAsterisk):
+            def read_file(self, path):
+                raise RuntimeError("bug")
+
+        def stopping_notifier(token, chat, text, silent=False):
+            raise ceo.Interrupted("interrupted")
+
+        clock = FakeClock()
+        with self.assertRaises(ceo.Interrupted):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, attempts=1), {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                    Boom(["1"]), synth=fake_synth, notifier=stopping_notifier, sleep=clock.sleep, clock=clock,
+                    now=lambda: datetime(2026, 1, 1, 12, 0))
+
+    def test_a_daily_cap_stops_a_loop_that_stays_under_the_hourly_cap(self):
+        state = self.throttle_state()
+        now = 90000.0
+        # 24 asks spread over the last day, none in the last hour
+        state.write_text("".join("%.6f\n" % (now - 4000 - i * 3000) for i in range(24)))
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=0, max_per_hour=6, max_per_day=24)
+        with self.assertRaises(ceo.CallError) as caught:
+            ceo.check_throttle(cfg, wall=lambda: now)
+        self.assertIn("too many", str(caught.exception))
+        ceo.check_throttle(dict(cfg, max_per_day=25), wall=lambda: now)
+        ceo.check_throttle(dict(cfg, max_per_day=0), wall=lambda: now)  # off
+
+    def test_the_skill_defines_what_set_up_means(self):
+        skill = (SCRIPT.parents[1] / "SKILL.md").read_text()
+        self.assertIn("## Is it set up?", skill)
+        for doc in (SCRIPT.parents[2] / "council-policy" / "SKILL.md", SCRIPT.parents[2] / ".." / "commands" / "council.md"):
+            self.assertIn("Is it set up?", doc.read_text(), str(doc))
+
     def test_a_second_ask_too_soon_is_refused_before_any_call(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
         self.addCleanup(lambda: state.exists() and state.unlink())
@@ -1263,7 +1329,7 @@ class QuietHoursTests(unittest.TestCase):
         self.assertTrue(sent[0][3])
 
     def test_quiet_hours_are_checked_again_before_every_retry(self):
-        times = iter([(21, 55), (21, 55), (22, 5), (22, 10)])
+        times = iter([(21, 55), (21, 55), (21, 55), (22, 5), (22, 10), (22, 10)])
         original = ceo.ask
 
         def clocked(*args, **kwargs):
