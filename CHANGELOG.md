@@ -19,6 +19,15 @@ documented as a new run on a new branch with `base:` set to the published checkp
 branch, and the refusal says so. Worker tests keep their trees out of `/tmp`, which the
 entrypoint denies, so the handoff-path test passes on Linux.
 
+Second round: a commit range that cannot be read is a save failure (blocked), not zero
+commits. The scrubber keeps the login values from the start of the run in memory, so the
+original token is removed from the handoff after a refresh or when the login file
+vanishes. A `status : done` line with spaces is forced to `blocked` like `status: done`.
+The consent preview trims trailing whitespace the way the worker prompt does, so a
+`## Task ` heading cannot be hidden. Pull request text is neutralised with a zero-width
+space after `@` and after a closing keyword (`#N`, `owner/repo#N` and issue URLs)
+instead of code spans, which backticks in the text could break.
+
 ## 2026-11-08 — Harden the worker: handoff path, locks, failed runs, resumes, stops
 
 The worker now writes its handoff to `.worker-out/HANDOFF-OUT.md` inside its own

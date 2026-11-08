@@ -97,6 +97,9 @@ OUT_FILE=""
 LOG=""
 CONFIG_DIR=""
 CREDS_PATH=""
+# The login values as they were before claude started, kept in memory only (never written to disk, never
+# exported). A token that is refreshed during the run is replaced in the login file, so the scrubber needs both.
+INITIAL_SECRETS=""
 BASE=""
 BRANCH_SEEN=""
 ISSUE_FIELD=""
@@ -141,8 +144,8 @@ valid_base() { [[ $1 =~ $BASE_RE ]] && [[ $1 != *..* ]]; }
 
 digits_or() { case $1 in ''|*[!0-9]*) echo 0 ;; *) echo "$1" ;; esac; }
 
-# secret_values: the login values the log scrubber must never let through, read from the login file at the
-# moment the scrubber needs them. The first line is "OK" only when the file was read and parsed; without
+# secret_values: the login values the log scrubber must never let through: those in the login file at the
+# moment the scrubber needs them, and those the file held when the run started. The first line is "OK" only when the file was read and parsed; without
 # it the scrubber withholds all output (fail closed). Nothing is written to disk.
 secret_values() {
   local vals=""
@@ -151,6 +154,7 @@ secret_values() {
   fi
   printf 'OK\n'
   [ -z "$vals" ] || printf '%s\n' "$vals"
+  [ -z "$INITIAL_SECRETS" ] || printf '%s\n' "$INITIAL_SECRETS"
 }
 
 # token_filter: copies stdin to stdout with every login value replaced by [REDACTED]. The values arrive on
@@ -243,6 +247,8 @@ preflight() {
   if [ -e "$CREDS_PATH" ]; then
     command -v jq >/dev/null 2>&1 || fail "the login file exists but jq is missing, so the log scrubber cannot run (the run was stopped before the worker started)"
     jq empty "$CREDS_PATH" >/dev/null 2>&1 || fail "the login file is not valid JSON, so the log scrubber cannot run (the run was stopped before the worker started)"
+    INITIAL_SECRETS=$(jq -r '.. | strings | select(length >= 12)' "$CREDS_PATH") \
+      || fail "the login values could not be read, so the log scrubber cannot run (the run was stopped before the worker started)"
   fi
 }
 
@@ -400,7 +406,10 @@ commit_work() {
 # and publish. It holds commits above the base only. No config or hooks travel with it.
 make_bundle() {
   [ -d "$WORK/repo" ] || return 0
-  COMMITS=$(git -C "$WORK/repo" rev-list --count "origin/$BASE..refs/heads/$BRANCH" 2>/dev/null || echo 0)
+  if ! COMMITS=$(git -C "$WORK/repo" rev-list --count "origin/$BASE..refs/heads/$BRANCH" 2>/dev/null); then
+    COMMITS=0
+    save_failed "the commit range could not be read, so no bundle was made"
+  fi
   COMMITS=$(digits_or "$COMMITS")
   if [ "$COMMITS" -gt 0 ]; then
     if git -C "$WORK/repo" bundle create "$RUN_DIR/branch.bundle" "refs/heads/$BRANCH" "^origin/$BASE" >/dev/null 2>&1; then
@@ -589,7 +598,7 @@ force_blocked() {
   awk -v claimed="$claimed" '
     NR == 1 { print; infm = 1; next }
     infm && $0 == "---" { infm = 0; print "worker_status: " claimed; print; next }
-    infm && /^status:/ { print "status: blocked"; next }
+    infm && /^[ \t]*status[ \t]*:/ { print "status: blocked"; next }
     { print }
   ' "$file" > "$tmp" || { rm -f "$tmp"; return 1; }
   printf '\n## Entrypoint note\n\nThe worker reported status: %s, but the run failed (login check: %s; claude exit: %s; saving the edits: %s), so the status is blocked. The worker text above is kept for the owner to read.\n' "$claimed" "$AUTH" "$CLAUDE_EXIT" "${SAVE_NOTE:-ok}" >> "$tmp"

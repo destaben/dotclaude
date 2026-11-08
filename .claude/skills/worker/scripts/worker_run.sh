@@ -151,7 +151,7 @@ check_handoff_source() {
 
 # instruction_sections <file>: the Task, Context and Acceptance sections, which are what the worker is told.
 instruction_sections() {
-  awk '/^## / { keep = ($0 == "## Task" || $0 == "## Context" || $0 == "## Acceptance") } keep { print }' "$1"
+  awk '{ sub(/[ \t\r]+$/, "") } /^## / { keep = ($0 == "## Task" || $0 == "## Context" || $0 == "## Acceptance") } keep { print }' "$1"
 }
 
 # show_instruction_diff: the differences between the owner's original instruction sections (given with
@@ -324,34 +324,31 @@ prepare_out_dir() {
   fi
 }
 
-# neutralise: stdin to stdout. Wraps every @mention in a code span, and every closing keyword with its
-# issue reference (Fixes, Closes, Resolves and their forms, followed by #N), so the text cannot notify
-# anyone or close an issue when it is posted.
+# neutralise: stdin to stdout. Puts a zero-width space after every "@" that starts a mention and after every closing
+# keyword (Fixes, Closes, Resolves and their forms) that is followed by an issue reference: #N, owner/repo#N or a
+# full issue URL. GitHub then no longer sees a mention or a closing reference. This works on the text itself, not
+# on Markdown, so backticks already in the text cannot undo it the way an inserted code span could.
 neutralise() {
   awk '
-    function mentions(s,   out, token, at) {
+    BEGIN { zw = "\342\200\213" }
+    function mentions(s,   out) {
       out = ""
-      while (match(s, /(^|[^A-Za-z0-9`@])@[A-Za-z0-9][A-Za-z0-9-]*/)) {
-        token = substr(s, RSTART, RLENGTH)
-        at = index(token, "@")
-        out = out substr(s, 1, RSTART - 1) substr(token, 1, at - 1) "`" substr(token, at) "`"
-        s = substr(s, RSTART + RLENGTH)
+      while (match(s, /@[A-Za-z0-9]/)) {
+        out = out substr(s, 1, RSTART) zw
+        s = substr(s, RSTART + 1)
       }
       return out s
     }
-    function keywords(s,   out, low, token, pre, ref, lead) {
+    function keywords(s,   out, low, token, pre) {
       out = ""
       while (1) {
         low = tolower(s)
-        # keyword, optional separator, optional owner/repo, then #N (the forms GitHub closes issues with)
-        if (!match(low, /(fix|fixes|fixed|close|closes|closed|resolve|resolves|resolved)[ \t:]*([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)?#[0-9]+/)) break
+        # keyword, optional separator, then #N, owner/repo#N or a full issue URL
+        if (!match(low, /(fix|fixes|fixed|close|closes|closed|resolve|resolves|resolved)[ \t:]*(([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)?#[0-9]+|https?:\/\/[^ \t]*\/issues\/[0-9]+)/)) break
         token = substr(s, RSTART, RLENGTH)
         pre = token
-        sub(/[ \t:]*([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)?#[0-9]+$/, "", pre)
-        ref = substr(token, length(pre) + 1)
-        lead = ref
-        sub(/^[ \t:]*/, "", lead)
-        out = out substr(s, 1, RSTART - 1) pre substr(ref, 1, length(ref) - length(lead)) "`" lead "`"
+        sub(/[ \t:]*(([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)?#[0-9]+|[Hh][Tt][Tt][Pp][Ss]?:\/\/[^ \t]*\/[Ii][Ss][Ss][Uu][Ee][Ss]\/[0-9]+)$/, "", pre)
+        out = out substr(s, 1, RSTART - 1) pre zw substr(token, length(pre) + 1)
         s = substr(s, RSTART + RLENGTH)
       }
       return out s
@@ -413,7 +410,7 @@ write_pr_body() {
   echo "Produced by the background worker, run $RUN_ID, on the owner's host. It is a draft: review it like any other change."
   echo
   echo "The worker had no push or GitHub access. The owner's machine verified the run's bundle and published this branch."
-  echo "Mentions and closing keywords in the quoted report were neutralised (wrapped in code spans), so they cannot notify anyone or close an issue."
+  echo "Mentions and closing keywords in the quoted report were neutralised (a zero-width space breaks them), so they cannot notify anyone or close an issue."
   if [ "$ISSUE_SET" = 1 ]; then echo "Source: issue #$ISSUE in $REPO."; fi
   echo "Run status: $status."
   echo

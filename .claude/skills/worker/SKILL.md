@@ -241,11 +241,12 @@ that stays in the output directory (it is not altered by the run), and publishes
 hand if the review is clean. The test suite checks that `--no-publish` leaves that
 bundle untouched.
 
-**Neutralisation of the pull request text.** An `@name` becomes a code span
-(`` `@name` ``). `Fixes`, `Closes`, `Resolves` (and their forms) followed by `#N`,
-with or without a space, and with or without `owner/repo`, become a code span around
-the reference. So the text cannot notify anyone or close an issue when the pull
-request is opened. The body says this was done. Commit messages the entrypoint writes
+**Neutralisation of the pull request text.** A zero-width space (U+200B) is put after
+the `@` of every mention, and after every closing keyword (`Fixes`, `Closes`,
+`Resolves` and their forms) that is followed by `#N`, `owner/repo#N` or a full issue
+URL, with or without a space. It works on the text itself, not on Markdown, so
+backticks already in the text cannot undo it. So the text cannot notify anyone or
+close an issue when the pull request is opened. The body says this was done. Commit messages the entrypoint writes
 contain no `#` and no `@`, so they cannot carry a reference or a mention.
 
 **Workflows run on pushed branches.** A pushed branch can trigger the repository's
@@ -402,9 +403,10 @@ run before claude starts, with exit 1 and a minimal HANDOFF-OUT.md with status
 `blocked`. While the run goes on, the scrubber reads the login values through a pipe;
 if they cannot be read, it prints nothing, so no unscrubbed output leaves the container.
 
-The scrubber reads the login values when the run starts, and again when HANDOFF-OUT.md
-is finalised. So a token refreshed during the run is removed from the handoff, but the
-run log can contain a token that was refreshed mid-run: the log is kept on the host in
+The scrubber knows the login values from the start of the run (kept in memory only,
+never written or exported) and reads them again when HANDOFF-OUT.md is finalised. So
+both the original and a refreshed token are removed from the handoff, even if the login
+file is gone by then. The run log can contain a token that was refreshed mid-run: the log is kept on the host in
 the remote runs directory, which the owner keeps private, and it is not copied back. No
 file on disk holds the login values.
 
