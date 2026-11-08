@@ -84,9 +84,20 @@ def validate(text, pr_number):
     # ("still waiting for the documenter") does not count as its section.
     # A heading is a `#` line or a line that is only a bold label; "Bug Hunter"
     # spelled with a space counts as the bug-hunter.
+    # Each agent needs its own heading: one line naming both does not count.
+    used = set()
     for agent in ("bug-hunter", "documenter"):
-        if not any(_is_heading(ln) and agent in _norm(ln) for ln in lines[1:]):
+        found = next(
+            (
+                i
+                for i, ln in enumerate(lines[1:], 1)
+                if i not in used and _is_heading(ln) and agent in _norm(ln)
+            ),
+            None,
+        )
+        if found is None:
             return f"review has no heading for {agent}"
+        used.add(found)
     first = lines[0].replace("*", "").replace("`", "").strip()
     if not re.match(re.escape(heading) + r"(?![0-9A-Za-z])", first):
         return f"first line is not '{heading}'"

@@ -69,6 +69,13 @@ class ValidateTests(unittest.TestCase):
         spaced = GOOD.replace("### bug-hunter", "### Bug Hunter")
         self.assertIsNone(check_review.validate(spaced, "9"))
 
+    def test_one_heading_naming_both_agents_is_rejected(self):
+        text = (
+            "## Review of PR #9\n\n### bug-hunter and documenter\n"
+            "Still waiting.\n\nResult: 0 findings (0 severe, 0 non-severe)\n"
+        )
+        self.assertIsNotNone(check_review.validate(text, "9"))
+
     def test_formatted_heading_is_tolerated(self):
         self.assertIsNone(check_review.validate(GOOD.replace("## Review of PR #9", "**## Review of PR #9**"), "9"))
 
