@@ -20,9 +20,10 @@ replaced by an earlier success):
 
 Anything else (a progress message, an empty result, a missing file) exits 3
 and writes nothing, so the caller can retry or fail the job instead of posting
-an unfinished review as if it were one. Exit 3 is reserved for "incomplete review"; every other non-zero code (2 for
-misuse or an I/O error, 1 for an uncaught crash or a syntax error) is a setup
-problem, so the workflow does not retry on it.
+an unfinished review as if it were one. Exit 3 is reserved for "incomplete
+review"; every other non-zero code (2 for misuse or an I/O error, 1 for an
+uncaught crash or a syntax error) is a setup problem, so the workflow does not
+retry on it.
 """
 import json
 import re

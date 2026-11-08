@@ -124,7 +124,7 @@ jobs:
             echo "valid=true" >> "$GITHUB_OUTPUT"   # workflow_dispatch: nothing to post
           else
             rc=0
-            python3 .github/scripts/check_review.py "$EXECUTION_FILE" "$PR_NUMBER" "$RUNNER_TEMP/review.md" || rc=$?
+            python3 -I .github/scripts/check_review.py "$EXECUTION_FILE" "$PR_NUMBER" "$RUNNER_TEMP/review.md" || rc=$?
             if [ "$rc" -eq 0 ]; then
               echo "valid=true" >> "$GITHUB_OUTPUT"
             elif [ "$rc" -eq 3 ]; then
@@ -187,7 +187,7 @@ jobs:
           else
             EXECUTION_FILE="$FIRST_FILE"
           fi
-          if ! python3 .github/scripts/check_review.py "$EXECUTION_FILE" "$PR_NUMBER" "$RUNNER_TEMP/review.md"; then
+          if ! python3 -I .github/scripts/check_review.py "$EXECUTION_FILE" "$PR_NUMBER" "$RUNNER_TEMP/review.md"; then
             echo "::error::the review run ended without a finished review; nothing posted"
             exit 1
           fi

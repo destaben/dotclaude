@@ -93,8 +93,9 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   - A branch that predates the script (and a `@claude review` comment run,
     which checks out the default branch) fails loudly with exit 2 instead of
     posting; the `pull_request` run on the PR head is the one that matters.
-  - A `workflow_dispatch` run has no PR to post to, so its result is not
-    validated or retried; nothing is posted and nothing waits on it.
+  - A `workflow_dispatch` run still performs the full review (quota only) and
+    has no PR to post to, so its result is not validated or retried; nothing is
+    posted and nothing waits on it.
   - The gate assumes `claude-code-action` posts no PR comment of its own with
     this configuration (none were seen on this repo's runs). If it ever mirrors
     an incomplete message into a comment, that text is outside this gate:

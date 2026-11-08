@@ -13,6 +13,9 @@ with consistent counts) in a tested script, retries the review once when it is
 incomplete, and fails the job rather than posting it. The prompt states the
 format explicitly. One-comment-per-PR editing and a higher effort level were
 considered and left out; reasons are in `docs/decisions/0002-cost-and-quota.md`.
+Only an incomplete result (exit 3 of the script) is retried; a crash or setup
+error fails the job at once, and a run where the action itself failed is never
+posted.
 `github-ops` also tells the waiting recipe not to count a green run with a
 status-only comment as zero findings.
 
