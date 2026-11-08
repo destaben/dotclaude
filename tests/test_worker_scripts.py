@@ -343,6 +343,19 @@ def interpreter_baseline(path):
     return set(json.loads(result.stdout)) - {"PATH"}
 
 
+def worker_test_base():
+    """Where the worker's temporary trees go. The entrypoint denies //tmp/**, so on Linux (where the default
+    temporary directory is /tmp) the trees must live elsewhere or the handoff path would be denied by design.
+    WORKER_TEST_BASE overrides the choice."""
+    base = os.environ.get("WORKER_TEST_BASE")
+    if base:
+        return base
+    default = tempfile.gettempdir()
+    if os.path.realpath(default) == "/tmp" and os.path.isdir("/var/tmp"):
+        return "/var/tmp"
+    return default
+
+
 def tool_rules(args, flag):
     """The rules that follow a variadic flag, up to the next option."""
     rules = []
@@ -357,7 +370,7 @@ class WorkerCase(unittest.TestCase):
     real_claude = False   # True: no claude stub, so the real binary on PATH runs (see RealClaudeHandoffTests)
 
     def setUp(self):
-        root = tempfile.mkdtemp(prefix="worker-test-")
+        root = tempfile.mkdtemp(prefix="worker-test-", dir=worker_test_base())
         self.addCleanup(shutil.rmtree, root, ignore_errors=True)
         self.tmp = Path(root)
         self.bin = self.tmp / "bin"
