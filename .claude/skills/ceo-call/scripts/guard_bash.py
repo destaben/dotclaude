@@ -43,22 +43,27 @@ def build_patterns(home: str):
     heredoc = r"ask\s+--request\s+-\s+<<'CEO_REQUEST'"
     patterns = []
     for ssh, script, config in (("", script_local, config_local), (r"ssh\s+[A-Za-z0-9_.@][A-Za-z0-9_.@-]*\s+", script_remote, config_remote)):
-        patterns.append((re.compile(r"^%s%s\s*%s\s*%s$" % (ssh, script, config, action)),
-                         re.compile(r"^%s%s\s*%s\s*%s$" % (ssh, script, config, heredoc))))
+        patterns.append((re.compile(r"^%s%s\s*%s\s*%s\Z" % (ssh, script, config, action)),
+                         re.compile(r"^%s%s\s*%s\s*%s\Z" % (ssh, script, config, heredoc))))
     return patterns
 
 
 def allowed(command: str, home: str = None) -> bool:
     if not isinstance(command, str) or not command.strip():
         return False
+    # Only "\n" may separate lines. Any other control character (a carriage return, a vertical tab,
+    # NUL ...) could make bash read a heredoc delimiter or a command differently from this guard.
+    if any(ord(ch) < 32 and ch != "\n" or ord(ch) == 127 for ch in command):
+        return False
     if ".." in command.split("<<")[0]:
         return False
     patterns = build_patterns(home if home is not None else os.path.expanduser("~"))
-    command = command.strip("\n")
+    if command.endswith("\n"):
+        command = command[:-1]  # one trailing newline is harmless; no other surrounding whitespace is
     if "\n" not in command:
-        return any(plain.match(command.strip()) for plain, _ in patterns)
+        return any(plain.match(command) for plain, _ in patterns)
     lines = command.split("\n")
-    head, body, tail = lines[0].strip(), lines[1:-1], lines[-1]
+    head, body, tail = lines[0], lines[1:-1], lines[-1]
     if tail != DELIMITER or any(line == DELIMITER for line in body):
         return False
     return any(heredoc.match(head) for _, heredoc in patterns)

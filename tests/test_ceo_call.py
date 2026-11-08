@@ -528,6 +528,45 @@ class AskFlowTests(unittest.TestCase):
         [t.join() for t in threads]
         self.assertEqual(results.count("ok"), 1)
 
+    def test_an_ask_that_never_placed_a_call_does_not_count_against_the_throttle(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        cfg = {"state_file": str(state), "min_gap_s": 120, "max_per_hour": 6}
+
+        def failing_synth(host, port, text):
+            raise ceo.CallError("cannot get speech from the speech server")
+
+        asterisk = FakeAsterisk([])
+        with self.assertRaises(ceo.CallError):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, **cfg), {}, asterisk, synth=failing_synth,
+                    sleep=FakeClock().sleep, clock=FakeClock(), now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual(state.read_text().strip(), "")
+        result, _, _ = run_ask(["1"], config=cfg)  # the next real ask is not blocked
+        self.assertEqual(result["status"], "decided")
+
+    def test_a_failure_while_the_call_may_be_live_leaves_the_folder_for_the_dialplan(self):
+        class Flaky(FakeAsterisk):
+            def read_file(self, path):
+                raise ceo.DockerError("cannot read call state from the Asterisk container")
+
+        asterisk = Flaky(["1"])
+        clock = FakeClock()
+        with self.assertRaises(ceo.CallError):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG), {}, asterisk, synth=fake_synth,
+                    sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual(asterisk.originated, 1)
+        self.assertTrue(asterisk.dirs)  # not removed: the owner may be mid-confirmation; the daily sweep cleans it
+
+    def test_a_failure_before_the_call_removes_the_folder(self):
+        def failing_synth(host, port, text):
+            raise ceo.CallError("cannot get speech from the speech server")
+
+        asterisk = FakeAsterisk([])
+        with self.assertRaises(ceo.CallError):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG), {}, asterisk, synth=failing_synth,
+                    sleep=FakeClock().sleep, clock=FakeClock(), now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual(asterisk.dirs, set())
+
     def test_a_second_ask_too_soon_is_refused_before_any_call(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
         self.addCleanup(lambda: state.exists() and state.unlink())
@@ -1296,6 +1335,26 @@ class GuardTests(unittest.TestCase):
             "python3 ceo_call.py ask --request - <<'CEO_REQUEST'\nx\nCEO_REQUEST\ncat env",
             "",
             None,
+        ):
+            with self.subTest(command=command):
+                self.assertFalse(self.guard.allowed(command, home="/home/u"))
+
+    def test_control_characters_cannot_smuggle_a_second_command(self):
+        ok = "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py ask --request - <<'CEO_REQUEST'\n{}\nCEO_REQUEST"
+        self.assertTrue(self.guard.allowed(ok, home="/home/u"))
+        head = "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py ask --request - <<'CEO_REQUEST'"
+        for command in (
+            # bash would take "CEO_REQUEST\r" as the delimiter, so the cat below would run
+            head + "\r\n{}\nCEO_REQUEST\r\ncat ~/.config/ceo-call/env\nCEO_REQUEST",
+            head + "\n{}\nCEO_REQUEST\r\ncat ~/.config/ceo-call/env\nCEO_REQUEST",
+            head + "\n{}\r\nCEO_REQUEST",
+            head + " \n{}\nCEO_REQUEST",
+            head + "\t\n{}\nCEO_REQUEST",
+            head + "\n{}\nCEO_REQUEST\x00",
+            head + "\n{}\nCEO_REQUEST\x0b",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py check\r",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py check\ncat env",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py\x0bcheck",
         ):
             with self.subTest(command=command):
                 self.assertFalse(self.guard.allowed(command, home="/home/u"))

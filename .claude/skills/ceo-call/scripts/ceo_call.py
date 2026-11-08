@@ -96,6 +96,10 @@ class CallError(Exception):
     """An infrastructure or input problem; the message never contains secrets."""
 
 
+class DockerError(CallError):
+    """Docker or the Asterisk container failed. A call placed before it may still be live."""
+
+
 # ---------------------------------------------------------------------------------- request
 
 
@@ -390,9 +394,9 @@ class DockerAsterisk:
         try:
             result = self._run(command, input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
         except (OSError, subprocess.TimeoutExpired):
-            raise CallError("cannot run docker")
+            raise DockerError("cannot run docker")
         if check and result.returncode != 0:
-            raise CallError("a command inside the Asterisk container failed")
+            raise DockerError("a command inside the Asterisk container failed")
         return result
 
     def make_dir(self, path: str) -> None:
@@ -409,7 +413,7 @@ class DockerAsterisk:
         if result.returncode == 3:
             return None
         # Anything else (container stopped, docker unavailable) must not look like "no marker yet".
-        raise CallError("cannot read call state from the Asterisk container")
+        raise DockerError("cannot read call state from the Asterisk container")
 
     def remove(self, *paths: str) -> None:
         self._exec(["rm", "-rf"] + list(paths), check=False)
@@ -594,7 +598,9 @@ def ask(
     options = clean["options"]
     if in_quiet_hours(now().strftime("%H:%M"), config.get("quiet_start"), config.get("quiet_end")):
         return notify_outcome({"status": "deferred", "attempt": 0}, clean, env, notifier, silent=True)
-    check_throttle(config, wall)
+    stamp = check_throttle(config, wall)
+    dialled = False
+    keep_folder = False
     call_id = secrets.token_hex(8)
     base = "%s/ceo/%s" % (SPOOL, call_id)
     try:
@@ -620,18 +626,25 @@ def ask(
                 # The heads-up wait can take minutes: look at the clock again right before dialling.
                 outcome = {"status": "deferred", "attempt": attempt - 1}
                 break
+            dialled = True
             outcome = run_attempt(asterisk, config, call_id, len(options), sleep=sleep, clock=clock)
             outcome["attempt"] = attempt
             if outcome["status"] in ("decided", "undecided") or outcome.get("live"):
                 break
             if attempt < config["attempts"]:
                 sleep(config["retry_delay_s"])
-    except CallError:
+    except CallError as error:
+        # With docker failing mid-call the owner may still be confirming: leave the folder for the
+        # dialplan to write into (the daily sweep removes it) instead of deleting it underneath.
+        keep_folder = dialled and isinstance(error, DockerError)
         # The decision is still pending: tell the owner by chat, then let the error reach the caller.
         notify_outcome({"status": "error"}, clean, env, notifier)
         raise
     finally:
-        asterisk.remove(base)
+        if not keep_folder:
+            asterisk.remove(base)
+        if not dialled:
+            release_throttle(config, stamp)
     if outcome["status"] == "decided":
         outcome["option"] = options[outcome["choice"] - 1]
         outcome["notified"] = False  # same keys on every outcome; a decision needs no chat message
@@ -639,13 +652,13 @@ def ask(
     return notify_outcome(outcome, clean, env, notifier, silent=outcome["status"] == "deferred")
 
 
-def check_throttle(config: Dict, wall: Callable = time.time) -> None:
+def check_throttle(config: Dict, wall: Callable = time.time) -> Optional[float]:
     """Refuse a new ask that starts too soon after the previous one, or beyond `max_per_hour`, so a
     confused or manipulated agent cannot ring the owner over and over. The state file keeps one start
     time per line (the last 24 hours); a start is recorded when an ask passes these checks."""
     path, gap, per_hour = config.get("state_file"), config.get("min_gap_s", 0), config.get("max_per_hour", 0)
     if not path or not (gap or per_hour):
-        return
+        return None
     resolved = Path(os.path.expanduser(path))
     now_s = wall()
     try:
@@ -672,6 +685,25 @@ def check_throttle(config: Dict, wall: Callable = time.time) -> None:
         handle.seek(0)
         handle.truncate()
         handle.write("".join("%d\n" % value for value in starts + [now_s]))
+    return now_s
+
+
+def release_throttle(config: Dict, stamp: Optional[float]) -> None:
+    """Take back the start recorded by check_throttle when no call was placed after all (speech
+    failed, quiet hours began, the phone never registered), so such asks do not use up the limits."""
+    path = config.get("state_file")
+    if stamp is None or not path:
+        return
+    resolved = Path(os.path.expanduser(path))
+    try:
+        with open(resolved, "r+", encoding="utf-8") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            kept = [line for line in handle.read().splitlines() if line.strip() != "%d" % stamp]
+            handle.seek(0)
+            handle.truncate()
+            handle.write("".join(line + "\n" for line in kept))
+    except OSError:
+        pass  # best effort: the limit then stays slightly stricter than needed
 
 
 def notify_outcome(outcome: Dict, clean: Dict, env: Dict[str, str], notifier: Callable, silent: bool = False) -> Dict:

@@ -34,7 +34,8 @@ alias as `remote-hosts` describes, and run the script there.
   confirmation given right at the deadline is not lost.
 - **Throttle:** a new `ask` that starts less than `min_gap_s` after the previous one is refused with an
   error (`asked again too soon`), and so is any `ask` beyond `max_per_hour` in an hour (`too many asks`).
-  This spaces out and caps the calls a confused or manipulated agent can cause; it does not make a
+  An `ask` that ends without placing a call (speech failed, quiet hours began, the phone never
+  registered) gives its slot back. This spaces out and caps the calls a confused or manipulated agent can cause; it does not make a
   loop impossible (up to `max_per_hour` asks, each with up to `attempts` calls, can still ring). The
   start times are kept in `state_file` (default `~/.local/state/ceo-call/last_ask`; `null`,
   or both limits at 0, turns it off).
@@ -48,6 +49,9 @@ alias as `remote-hosts` describes, and run the script there.
   the wait (or no chat is configured, or `heads_up_s` is 0), no call is placed, because an unregistered
   endpoint can only ring out: the status is `unanswered` with `reason: phone_not_registered`, and the
   owner gets the chat message.
+- **Failures mid-call:** if docker or Asterisk fails while a call may be live, the script reports the
+  error and messages the owner, and leaves the call folder for the dialplan to finish writing to
+  (a daily sweep removes it) instead of deleting it under a confirmation.
 - **Env file** (default `~/.config/ceo-call/env`, mode `0600`, refused otherwise): `CEO_TELEGRAM_TOKEN`
   and `CEO_TELEGRAM_CHAT_ID`. Create the bot with the chat service's bot manager yourself; never
   paste the token into a chat or a tracked file. After messaging the bot once, `ceo_call.py
@@ -63,7 +67,8 @@ The single quotes protect the `~` only from the *local* shell: `ssh` joins its a
 hands the string to the remote shell, which sees no quotes and expands the `~` in its own home). Any other file
 named `ceo_call.py`, in a repository, `/tmp` or elsewhere, is refused. `--config` must be
 `~/.config/ceo-call/<name>.json` (quoted the same way over ssh). Optionally behind `ssh <alias>` (no ssh options); no shell operators
-or `..`; the request JSON only through a quoted heredoc (`ask --request -`): a request file path is
+or `..` or control characters other than newline (a carriage return could change where bash ends a
+heredoc); the request JSON only through a quoted heredoc (`ask --request -`): a request file path is
 refused, because the agent cannot write files and an existing file must not be spoken.
 
 - **User-level install required.** The hook runs `~/.claude/skills/ceo-call/scripts/guard_bash.py` and
