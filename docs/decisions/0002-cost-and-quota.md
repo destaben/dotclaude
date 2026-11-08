@@ -59,7 +59,8 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   agent does not count. It cannot prove both ran; the prompt asks for one
   section per agent and the review stays advisory. Format slips on the first
   or `Result:` line (bold, backticks, a trailing period) are tolerated so a
-  good review is not discarded over cosmetics. Anything stricter-looking than
+  good review is not discarded over cosmetics; the `## Review of PR #<n>`
+  marker itself stays exact, as the issue's contract and the prompt specify. Anything stricter-looking than
   that is deliberate: the contract is a fixed first and last line, and a
   drifting agent fails visibly (red job, nothing posted) instead of posting
   something unverifiable.
@@ -71,7 +72,8 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   fails the job at once; a missing or unreadable execution file is an
   incomplete review (exit 3) and is retried. A failed retry run is never
   posted.
-- **Depends on** the action expanding `env` inside its `with:` inputs and
+- **Depends on** GitHub expanding `env` inside the action's `with:` inputs (an
+  Actions expression feature, not the action itself) and the action
   populating the `execution_file` output (observed on this repo's review runs,
   2026-11-08;
   re-check with the action version, see the note at the end of the workflow).
@@ -93,6 +95,9 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   - A branch that predates the script (and a `@claude review` comment run,
     which checks out the default branch) fails loudly with exit 2 instead of
     posting; the `pull_request` run on the PR head is the one that matters.
+  - The gate checks the shape of the message, not whether it is true. A
+    prompt-injected diff can still produce a well-formed `Result: 0 findings`;
+    the review is advisory (see `docs/pipeline.md`).
   - A `workflow_dispatch` run still performs the full review (quota only) and
     has no PR to post to, so its result is not validated or retried; nothing is
     posted and nothing waits on it.

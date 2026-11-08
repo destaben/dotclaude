@@ -31,7 +31,7 @@ import sys
 from pathlib import Path
 
 RESULT_RE = re.compile(
-    r"^Result: (\d+) findings? \((\d+) severe, (\d+) non-severe\)$"
+    r"^Result: (\d+) (findings?) \((\d+) severe, (\d+) non-severe\)$"
 )
 
 
@@ -109,7 +109,9 @@ def validate(text, pr_number):
     match = RESULT_RE.match(last)
     if not match:
         return "last line is not 'Result: <n> findings (<n> severe, <n> non-severe)'"
-    total, severe, non_severe = (int(g) for g in match.groups())
+    total, severe, non_severe = (int(g) for i, g in enumerate(match.groups()) if i != 1)
+    if match.group(2) != ("finding" if total == 1 else "findings"):
+        return "Result noun does not match the count"
     if total != severe + non_severe:
         return "Result counts do not add up"
     return None

@@ -99,6 +99,13 @@ class ValidateTests(unittest.TestCase):
     def test_code_fenced_review_is_accepted(self):
         self.assertIsNone(check_review.validate("```markdown\n" + GOOD + "```\n", "9"))
 
+    def test_noun_must_match_the_count(self):
+        text = GOOD.replace(
+            "Result: 0 findings (0 severe, 0 non-severe)",
+            "Result: 2 finding (0 severe, 2 non-severe)",
+        )
+        self.assertIsNotNone(check_review.validate(text, "9"))
+
     def test_counts_must_add_up(self):
         text = GOOD.replace("0 findings (0 severe", "3 findings (1 severe")
         self.assertIsNotNone(check_review.validate(text, "9"))
