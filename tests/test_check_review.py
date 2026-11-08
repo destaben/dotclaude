@@ -12,7 +12,7 @@ sys.path.insert(0, str(SCRIPT.parent))
 import check_review  # noqa: E402
 
 GOOD = (
-    "## Review of PR #9\n\n### bug-hunter\nNothing.\n\n"
+    "## Review of PR #9\n\n### bug-hunter\nNothing.\n\n### documenter\nNothing.\n\n"
     "Result: 0 findings (0 severe, 0 non-severe)\n"
 )
 PROVISIONAL = (
@@ -46,6 +46,19 @@ class ValidateTests(unittest.TestCase):
 
     def test_result_line_must_be_last(self):
         self.assertIsNotNone(check_review.validate(GOOD + "trailing prose\n", "9"))
+
+    def test_review_missing_an_agent_section_is_rejected(self):
+        self.assertIsNotNone(check_review.validate(GOOD.replace("documenter", "docs"), "9"))
+        self.assertIsNotNone(check_review.validate(GOOD.replace("bug-hunter", "bugs"), "9"))
+
+    def test_result_line_formatting_is_tolerated(self):
+        for last in (
+            "**Result: 0 findings (0 severe, 0 non-severe)**",
+            "`Result: 0 findings (0 severe, 0 non-severe)`",
+            "Result: 0 findings (0 severe, 0 non-severe).  ",
+        ):
+            text = GOOD.replace("Result: 0 findings (0 severe, 0 non-severe)", last)
+            self.assertIsNone(check_review.validate(text, "9"), last)
 
     def test_counts_must_add_up(self):
         text = GOOD.replace("0 findings (0 severe", "3 findings (1 severe")
@@ -94,6 +107,24 @@ class CliTests(unittest.TestCase):
 
     def test_missing_or_invalid_execution_file_fails(self):
         self.assertEqual(self.run_cli(None)[0], 1)
+
+    def test_non_success_subtype_is_ignored(self):
+        msg = self.result(GOOD, subtype="error_max_turns")
+        self.assertEqual(self.run_cli([msg])[0], 1)
+
+    def test_invalid_json_and_non_list_json_fail(self):
+        for raw in ("not json", "42", '"text"'):
+            with tempfile.TemporaryDirectory() as tmp:
+                f = Path(tmp) / "exec.json"
+                f.write_text(raw)
+                proc = subprocess.run(
+                    [sys.executable, str(SCRIPT), str(f), "9", str(Path(tmp) / "o.md")],
+                    capture_output=True,
+                )
+                self.assertEqual(proc.returncode, 1, raw)
+
+    def test_single_result_object_is_accepted(self):
+        self.assertEqual(self.run_cli(self.result(GOOD))[0], 0)
 
     def test_bad_usage_exits_2(self):
         proc = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True)

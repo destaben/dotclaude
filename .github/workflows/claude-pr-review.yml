@@ -87,7 +87,9 @@ jobs:
         none), and it must end with this exact last line, with real counts
         (total = severe + non-severe, 0 when there are no findings):
         Result: <total> findings (<severe> severe, <non-severe> non-severe)
-        A final message without both lines is discarded as incomplete.
+        Between them, give one section per agent, titled "### bug-hunter" and
+        "### documenter", and write the message only after both have reported.
+        A final message without these parts is discarded as incomplete.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -120,11 +122,20 @@ jobs:
         run: |
           if [ -z "$PR_NUMBER" ]; then
             echo "valid=true" >> "$GITHUB_OUTPUT"   # workflow_dispatch: nothing to post
-          elif python3 .github/scripts/check_review.py "$EXECUTION_FILE" "$PR_NUMBER" "$RUNNER_TEMP/review.md"; then
-            echo "valid=true" >> "$GITHUB_OUTPUT"
           else
-            echo "valid=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::first review run was incomplete; retrying once"
+            rc=0
+            python3 .github/scripts/check_review.py "$EXECUTION_FILE" "$PR_NUMBER" "$RUNNER_TEMP/review.md" || rc=$?
+            if [ "$rc" -eq 0 ]; then
+              echo "valid=true" >> "$GITHUB_OUTPUT"
+            elif [ "$rc" -eq 1 ]; then
+              echo "valid=false" >> "$GITHUB_OUTPUT"
+              echo "::warning::first review run was incomplete; retrying once"
+            else
+              # exit 2 or a missing script is a setup error, not a bad review:
+              # a retry would not help, so fail without spending another run.
+              echo "::error::check_review.py failed (exit $rc); is it copied next to the workflow?"
+              exit 1
+            fi
           fi
 
       - name: Retry the review once (first result was incomplete)

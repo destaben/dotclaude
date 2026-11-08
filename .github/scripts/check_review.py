@@ -10,11 +10,15 @@ successful `result` message is a finished review:
   more text on that line, e.g. a commit sha), and
 * its last non-blank line is
   `Result: <total> findings (<severe> severe, <non-severe> non-severe)` with
-  total == severe + non-severe.
+  total == severe + non-severe (markdown bold/backticks and a trailing period
+  are tolerated), and
+* it mentions both agents (`bug-hunter` and `documenter`), so a review written
+  before the documenter reported is not accepted. This is a heuristic, not
+  proof that both ran: the prompt asks for one section per agent.
 
 Anything else (a progress message, an empty result, a missing file) exits 1
 and writes nothing, so the caller can retry or fail the job instead of posting
-an unfinished review as if it were one.
+an unfinished review as if it were one. Exit 2 means misuse, not a bad review.
 """
 import json
 import re
@@ -52,10 +56,14 @@ def validate(text, pr_number):
     if not lines:
         return "empty result"
     heading = f"## Review of PR #{pr_number}"
+    lowered = "\n".join(lines).lower()
+    if "bug-hunter" not in lowered or "documenter" not in lowered:
+        return "review does not cover both bug-hunter and documenter"
     first = lines[0]
     if first != heading and not first.startswith(heading + " "):
         return f"first line is not '{heading}'"
-    match = RESULT_RE.match(lines[-1])
+    last = lines[-1].replace("*", "").replace("`", "").rstrip(".").strip()
+    match = RESULT_RE.match(last)
     if not match:
         return "last line is not 'Result: <n> findings (<n> severe, <n> non-severe)'"
     total, severe, non_severe = (int(g) for g in match.groups())

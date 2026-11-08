@@ -53,6 +53,19 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   `## Review of PR #<n>` and end with a `Result: ... findings (...)` line whose
   counts add up. The check lives in `.github/scripts/check_review.py` and is
   unit-tested; the prompt alone was already ignored once.
+- **Completeness is a heuristic.** The check also requires the text to mention
+  both `bug-hunter` and `documenter`, which catches a message written before
+  the documenter reported. It cannot prove both agents ran; the prompt asks for
+  one section per agent and the review stays advisory. Format slips on the
+  `Result:` line (bold, backticks, trailing period) are tolerated so a good
+  review is not discarded over cosmetics.
+- **Fail closed on the action's outcome.** The post step now needs the action
+  step to have succeeded. Before, a finished review was posted even if the
+  action exited non-zero; now it is not, and the retry covers incomplete
+  results only, not failed runs. A script error (exit 2, missing file) fails
+  the job at once instead of spending a retry.
+- **Not unit-tested:** the workflow gating and the retry-file fallback need a
+  real action run; the validation logic they depend on is tested.
 - **Retry once, then fail.** One extra run only when the first result is
   incomplete (so the normal cost is unchanged); if it is still incomplete the
   job goes red and nothing is posted.
@@ -60,9 +73,9 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   edit raises no new comment, so a session or automation waiting for new
   comments would miss it, and the per-commit history would be lost. A comment
   per push stays.
-- **Not done: raising the effort.** The early turn end is intermittent (one in
-  about six runs) and unproven to be an effort problem. If an incomplete result
-  still survives the retry, raise `--effort` for this workflow only and weigh
+- **Not done: raising the effort.** The early turn end is intermittent (seen once
+  in about six runs on PR #9, an observation, not a measured rate) and
+  unproven to be an effort problem. If an incomplete result still survives the retry, raise `--effort` for this workflow only and weigh
   the cost then; the failed runs are visible as red checks with a warning line.
 
 ## Follow-ups (not yet done)
