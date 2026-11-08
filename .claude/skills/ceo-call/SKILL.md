@@ -38,7 +38,8 @@ alias as `remote-hosts` describes, and run the script there.
   running` instead of ringing the owner on top of the first.
 - **Throttle:** a new `ask` that starts less than `min_gap_s` after the previous one is refused with an
   error (`asked again too soon`), and so is any `ask` beyond `max_per_hour` in an hour (`too many asks`).
-  An `ask` that fails before anything reaches the owner (speech failed) gives its slot back; one that
+  An `ask` that fails before anything reaches the owner (speech failed, or the phone was asleep and no
+  heads-up could be sent) gives its slot back; one that
   already sent a heads-up message or dialled keeps it, so an asleep phone cannot be used to spam
   messages. This spaces out and caps the calls a confused or manipulated agent can cause; it does not make a
   loop impossible (up to `max_per_hour` asks, each with up to `attempts` calls, can still ring). The
@@ -71,7 +72,9 @@ the local shell must not expand it: `ssh <alias> python3 '~/.claude/skills/ceo-c
 The single quotes protect the `~` only from the *local* shell: `ssh` joins its arguments with spaces and
 hands the string to the remote shell, which sees no quotes and expands the `~` in its own home). Any other file
 named `ceo_call.py`, in a repository, `/tmp` or elsewhere, is refused. `--config` must be
-`~/.config/ceo-call/config.json`, and the agent must always pass it (the only config it may name, so it can neither pick one that turns the throttle off nor skip the quiet hours by running on defaults) (quoted the same way over ssh). Optionally behind `ssh <alias>` (no ssh options); no shell operators
+`~/.config/ceo-call/config.json`, and the agent must always pass it (the only config it may name, so it can neither pick one that turns the throttle off nor skip the quiet hours by running on defaults) (quoted the same way over ssh). Optionally behind `ssh <alias>` (no ssh options), and only for an alias the owner listed in
+`~/.config/ceo-call/hosts` (one per line, on the machine that runs the agent; with no file, no remote host
+is allowed, because the alias would otherwise come from the untrusted brief); no shell operators
 or `..` or control characters other than newline (a carriage return could change where bash ends a
 heredoc); the request JSON only through a quoted heredoc (`ask --request -`): a request file path is
 refused, because the agent cannot write files and an existing file must not be spoken.
@@ -99,7 +102,7 @@ The limit bounds how long a call can occupy the phone.
 ## Use
 `ask` can take several minutes (heads-up wait, ringing, the call itself, up to `attempts` times),
 longer than a default foreground command timeout: run it in the background and wait for it to finish.
-If the process is stopped (SIGTERM) mid-call it reports the error, messages the owner that the decision
+If the process is stopped (SIGTERM, or Ctrl-C) mid-call it reports the error, messages the owner that the decision
 is pending and leaves the call folder alone.
 
 ```

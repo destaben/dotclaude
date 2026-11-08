@@ -739,6 +739,56 @@ class AskFlowTests(unittest.TestCase):
         self.assertEqual(seen, ["held"])
         ceo.acquire_run_lock(dict(ceo.DEFAULT_CONFIG, **cfg)).close()  # released afterwards
 
+    def test_an_asleep_phone_without_a_heads_up_gives_the_slot_back(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        original = FakeAsterisk.__init__
+
+        def init(self_, script):
+            original(self_, script)
+            self_.registered = False
+
+        FakeAsterisk.__init__ = init
+        try:
+            result, _, sent = run_ask([], config={"state_file": str(state), "min_gap_s": 120, "heads_up_s": 0})
+        finally:
+            FakeAsterisk.__init__ = original
+        self.assertEqual((result["reason"], sent), ("phone_not_registered", []))
+        self.assertEqual(state.read_text().strip(), "")  # nothing reached the owner, so no slot is used
+
+    def test_a_ctrl_c_or_unexpected_error_mid_call_keeps_the_folder_and_messages_the_owner(self):
+        for exc in (KeyboardInterrupt, RuntimeError):
+            with self.subTest(exc=exc.__name__):
+                class Boom(FakeAsterisk):
+                    def read_file(self, path):
+                        raise exc()
+
+                sent = []
+                asterisk = Boom(["1"])
+                clock = FakeClock()
+                with self.assertRaises(exc):
+                    ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG), {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                            asterisk, synth=fake_synth, notifier=lambda t, c, text, silent=False: sent.append(text) or True,
+                            sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+                self.assertEqual(len(sent), 1)
+                self.assertTrue(asterisk.dirs)
+
+    def test_sigint_is_handled_like_sigterm(self):
+        import signal as _signal
+        previous = (_signal.getsignal(_signal.SIGTERM), _signal.getsignal(_signal.SIGINT))
+        self.addCleanup(lambda: [_signal.signal(sig, handler) for sig, handler in zip((_signal.SIGTERM, _signal.SIGINT), previous)])
+        ceo.exit_cleanly_on_sigterm()
+        with self.assertRaises(ceo.Interrupted):
+            os.kill(os.getpid(), _signal.SIGINT)
+            _t = __import__("time"); _t.sleep(0.2)
+
+    def test_a_clock_step_of_more_than_a_day_does_not_block_forever(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        state.write_text("%d\n" % (10**9 + 3 * 86400))
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=120, max_per_hour=6)
+        ceo.check_throttle(cfg, wall=lambda: 10.0**9)  # the recorded start is days ahead: ignored
+
     def test_a_second_ask_too_soon_is_refused_before_any_call(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
         self.addCleanup(lambda: state.exists() and state.unlink())
@@ -1489,7 +1539,22 @@ class GuardTests(unittest.TestCase):
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json ask --request - <<'CEO_REQUEST'\n{\"question\": \"Ship it?\", \"options\": [\"a\", \"b\"]}\nCEO_REQUEST",
         ):
             with self.subTest(command=command):
-                self.assertTrue(self.guard.allowed(command, home="/home/u"))
+                self.assertTrue(self.guard.allowed(command, home="/home/u", hosts=("myhost",)))
+
+    def test_an_ssh_alias_must_be_one_the_owner_listed(self):
+        command = "ssh other python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' --config '~/.config/ceo-call/config.json' check"
+        self.assertFalse(self.guard.allowed(command, home="/home/u", hosts=("myhost",)))
+        self.assertFalse(self.guard.allowed(command.replace("other", "myhost"), home="/home/u", hosts=()))
+        self.assertTrue(self.guard.allowed(command.replace("other", "myhost"), home="/home/u", hosts=("myhost",)))
+
+    def test_the_host_list_is_read_from_the_owners_config_dir_and_fails_closed(self):
+        import tempfile as _t
+        with _t.TemporaryDirectory() as home:
+            self.assertEqual(self.guard.read_hosts(home), ())  # no file: no remote host is allowed
+            folder = Path(home) / ".config" / "ceo-call"
+            folder.mkdir(parents=True)
+            (folder / "hosts").write_text("# the telephony host\nmyhost\n\n bad alias \nsecond-host\n")
+            self.assertEqual(self.guard.read_hosts(home), ("myhost", "second-host"))
 
     def test_the_config_is_mandatory(self):
         for command in (
@@ -1499,7 +1564,7 @@ class GuardTests(unittest.TestCase):
             "ssh myhost python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' ask --request - <<'CEO_REQUEST'\n{}\nCEO_REQUEST",
         ):
             with self.subTest(command=command):
-                self.assertFalse(self.guard.allowed(command, home="/home/u"))
+                self.assertFalse(self.guard.allowed(command, home="/home/u", hosts=("myhost",)))
 
     def test_anything_else_is_blocked(self):
         for command in (
@@ -1543,13 +1608,13 @@ class GuardTests(unittest.TestCase):
             None,
         ):
             with self.subTest(command=command):
-                self.assertFalse(self.guard.allowed(command, home="/home/u"))
+                self.assertFalse(self.guard.allowed(command, home="/home/u", hosts=("myhost",)))
 
     def test_the_script_name_and_the_action_must_be_separate_words(self):
         for command in ("python3 ~/.claude/skills/ceo-call/scripts/ceo_call.pycheck",
                         "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py--config ~/.config/ceo-call/config.json check"):
             with self.subTest(command=command):
-                self.assertFalse(self.guard.allowed(command, home="/home/u"))
+                self.assertFalse(self.guard.allowed(command, home="/home/u", hosts=("myhost",)))
 
     def test_unicode_whitespace_is_not_a_separator(self):
         for sep in ("\u00a0", "\u2003", "\u3000", "\u0085"):
@@ -1575,7 +1640,7 @@ class GuardTests(unittest.TestCase):
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py\x0b--config ~/.config/ceo-call/config.json check",
         ):
             with self.subTest(command=command):
-                self.assertFalse(self.guard.allowed(command, home="/home/u"))
+                self.assertFalse(self.guard.allowed(command, home="/home/u", hosts=("myhost",)))
 
     def test_the_block_message_lists_only_what_is_allowed(self):
         import subprocess

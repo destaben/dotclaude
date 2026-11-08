@@ -652,9 +652,8 @@ def ask(
             if attempt > 1 and in_quiet_hours(now().strftime("%H:%M"), config.get("quiet_start"), config.get("quiet_end")):
                 outcome = {"status": "deferred", "attempt": attempt - 1}
                 break
-            # From here on the owner may be messaged (heads-up), so this ask keeps its throttle slot.
-            dialled = True
             if not wait_for_phone(asterisk, config, env, notifier, sleep, clock, heads_up_state):
+                dialled = bool(heads_up_state.get("messaged"))  # a heads-up reached the owner: the slot stays used
                 # An unregistered endpoint can only ring out, so dialling is pointless; the heads-up
                 # message (if configured) was already sent. Stop and tell the owner.
                 outcome = {"status": "unanswered", "reason": "phone_not_registered", "attempt": attempt}
@@ -663,6 +662,7 @@ def ask(
                 # The heads-up wait can take minutes: look at the clock again right before dialling.
                 outcome = {"status": "deferred", "attempt": attempt - 1}
                 break
+            dialled = True  # a call is about to be placed: this ask keeps its throttle slot
             outcome = run_attempt(asterisk, config, call_id, len(options), sleep=sleep, clock=clock)
             outcome["attempt"] = attempt
             # A hangup is the owner's choice: they picked up and put the phone down, so no re-ring.
@@ -678,6 +678,15 @@ def ask(
         keep_folder = dialled and isinstance(error, MayBeLive)
         # The decision is still pending: tell the owner by chat, then let the error reach the caller.
         notify_outcome({"status": "error"}, clean, env, notifier)
+        raise
+    except BaseException:
+        # Anything else (an unexpected bug) must not delete the folder of a call that may be live, and
+        # the owner still hears that the decision is pending.
+        keep_folder = dialled
+        try:
+            notify_outcome({"status": "error"}, clean, env, notifier)
+        except Exception:  # noqa: BLE001 - never hide the original problem
+            pass
         raise
     finally:
         if not dialled:
@@ -744,7 +753,7 @@ def check_throttle(config: Dict, wall: Callable = time.time) -> Optional[float]:
                 value = float(line.strip())
             except ValueError:
                 continue
-            if now_s - value < 86400:  # a start in the future (clock stepped back) still counts
+            if abs(now_s - value) < 86400:  # a start slightly in the future (clock stepped back) still counts
                 starts.append(value)
         if gap and starts and now_s - max(starts) < gap:  # also true for a start in the future
             raise CallError("asked again too soon: wait %d more seconds" % (gap - (now_s - max(starts))))
@@ -757,8 +766,8 @@ def check_throttle(config: Dict, wall: Callable = time.time) -> Optional[float]:
 
 
 def release_throttle(config: Dict, stamp: Optional[float]) -> None:
-    """Take back the start recorded by check_throttle when no call was placed after all (speech
-    failed, quiet hours began, the phone never registered), so such asks do not use up the limits."""
+    """Take back the start recorded by check_throttle when nothing reached the owner (speech failed, or
+    the phone was asleep and no heads-up could be sent), so such asks do not use up the limits."""
     path = config.get("state_file")
     if stamp is None or not path:
         return
@@ -803,6 +812,7 @@ def exit_cleanly_on_sigterm() -> None:
         raise Interrupted("interrupted before the call finished")
 
     signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)  # Ctrl-C ends the same way as a kill
 
 
 def read_request(source: str) -> str:

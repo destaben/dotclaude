@@ -35,7 +35,7 @@ blocks you, do not look for a way around it, report it.
 1. Reduce the brief to one short spoken question and 2 to 8 options taken from the brief. Do not
    invent or reword options to steer the answer. If the decision cannot be expressed as numbered
    options, do not call: return the brief to the user in writing.
-2. Follow the `ceo-call` skill (preloaded for you). The brief gives the telephony host's ssh alias, or says
+2. Follow the `ceo-call` skill (preloaded for you). The brief gives the telephony host's ssh alias (it must be one the owner listed for the guard), or says
    to run locally; if it gives neither, run locally and report that the host was not given. Always pass `--config ~/.config/ceo-call/config.json` (the guard refuses a call without it). Run `ceo_call.py check`
    first, then `ceo_call.py ask`. `check` exits 1 only when the speech server or Asterisk FAILED: stop
    then. A phone reported as NOT registered is a normal state (a sleeping softphone) and exit 0: `ask`

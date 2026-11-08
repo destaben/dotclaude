@@ -8,7 +8,8 @@ stdin; exits 0 to allow and 2 to block (the message on stderr goes back to the a
 `test-call` (it phones the owner with no decision pending), `test-call --ignore-quiet-hours` and
 `telegram-setup` are deliberately not allowed: they are for the owner to run.
 
-Allowed (optionally prefixed by `ssh <alias>`, with no ssh options), only with the script at exactly
+Allowed (optionally prefixed by `ssh <alias>`, with no ssh options, and only for an alias listed in
+`~/.config/ceo-call/hosts`, one per line), only with the script at exactly
 `~/.claude/skills/ceo-call/scripts/ceo_call.py` (over ssh, only this `~` form, single-quoted so the remote
 shell expands it; locally, also this machine's own absolute home path), no quotes, no shell operators, no `..`:
     python3 <script> --config ~/.config/ceo-call/config.json check
@@ -28,7 +29,21 @@ HOME_CONFIG = r"~/\.config/ceo-call/config\.json"
 DELIMITER = "CEO_REQUEST"
 
 
-def build_patterns(home: str):
+ALIAS = re.compile(r"[A-Za-z0-9_.@][A-Za-z0-9_.@-]*")
+
+
+def read_hosts(home: str):
+    """The ssh aliases the owner allows, one per line in ~/.config/ceo-call/hosts. The alias would
+    otherwise come from the council brief, which is untrusted; a missing file allows no remote host."""
+    try:
+        with open(os.path.join(home, ".config", "ceo-call", "hosts"), encoding="utf-8") as handle:
+            lines = [line.strip() for line in handle]
+    except (OSError, UnicodeDecodeError):
+        return ()
+    return tuple(line for line in lines if line and not line.startswith("#") and ALIAS.fullmatch(line))
+
+
+def build_patterns(home: str, hosts=()):
     """Pin the script to the one installed copy. Only that exact path passes: the `~` form (which a
     remote host expands for itself) or this machine's own absolute home path. Any other file named
     ceo_call.py, however deep its path ends in .claude/skills/ceo-call/scripts, is refused."""
@@ -44,13 +59,16 @@ def build_patterns(home: str):
     action = r"check"
     heredoc = r"ask +--request +- +<<'CEO_REQUEST'"
     patterns = []
-    for ssh, script, config in (("", script_local, config_local), (r"ssh +[A-Za-z0-9_.@][A-Za-z0-9_.@-]* +", script_remote, config_remote)):
+    routes = [("", script_local, config_local)]
+    if hosts:
+        routes.append((r"ssh +(?:%s) +" % "|".join(re.escape(host) for host in hosts), script_remote, config_remote))
+    for ssh, script, config in routes:
         patterns.append((re.compile(r"^%s%s +%s%s\Z" % (ssh, script, config, action)),
                          re.compile(r"^%s%s +%s%s\Z" % (ssh, script, config, heredoc))))
     return patterns
 
 
-def allowed(command: str, home: str = None) -> bool:
+def allowed(command: str, home: str = None, hosts=None) -> bool:
     if not isinstance(command, str) or not command.strip():
         return False
     # Only "\n" may separate lines. Any other control character (a carriage return, a vertical tab,
@@ -59,7 +77,8 @@ def allowed(command: str, home: str = None) -> bool:
         return False
     if ".." in command.split("<<")[0]:
         return False
-    patterns = build_patterns(home if home is not None else os.path.expanduser("~"))
+    home = home if home is not None else os.path.expanduser("~")
+    patterns = build_patterns(home, read_hosts(home) if hosts is None else hosts)
     if command.endswith("\n"):
         command = command[:-1]  # one trailing newline is harmless; no other surrounding whitespace is
     if "\n" not in command:
