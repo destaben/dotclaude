@@ -172,6 +172,10 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertGreaterEqual(self.text.count("          GITHUB_TOKEN: ${{ secrets."), 1)
         self.assertGreaterEqual(self.text.count("          GH_TOKEN: ${{ secrets."), 1)
 
+    def test_read_is_scoped_to_the_workspace(self):
+        self.assertIn("Read(/${{ github.workspace }}/**)", self.text)
+        self.assertNotIn(",Read,", self.text)
+
     def test_agent_cannot_use_git_show_which_can_write_files(self):
         self.assertNotIn("Bash(git show", self.text)
 
@@ -243,6 +247,17 @@ class CliTests(unittest.TestCase):
         code, body = self.run_cli([self.result(GOOD), self.result(GOOD, is_error=True)])
         self.assertEqual(code, 3)
         self.assertIsNone(body)
+
+    def test_json_lines_execution_file_is_accepted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "exec.jsonl"
+            out = Path(tmp) / "o.md"
+            f.write_text("\n".join(json.dumps(m) for m in [{"type": "system"}, self.result(GOOD)]))
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), str(f), "9", str(out)], capture_output=True
+            )
+            self.assertEqual(proc.returncode, 0)
+            self.assertEqual(out.read_text(), GOOD)
 
     def test_non_success_subtype_is_ignored(self):
         msg = self.result(GOOD, subtype="error_max_turns")

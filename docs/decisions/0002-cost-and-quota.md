@@ -115,14 +115,17 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   repo out under the runner user's home directory), and the gate refuses to
   post, with exit 2 and no retry, any review that contains the value of
   `CLAUDE_CODE_OAUTH_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN`, or any
-  16-character piece of one. The agent is also not given `git show`, since
+  16-character piece of a token longer than 16 characters (shorter secrets
+  are matched whole). The agent is also not given `git show`, since
   `git show --output=<path>` can write files. Neither layer
   catches a transformed secret (for example base64), so the review stays
-  advisory and fork PRs stay skipped on the automatic trigger. Open risks:
-  `$RUNNER_TEMP` and the runner home stay readable, and it is not verified
-  that `claude-code-action` never writes the token somewhere readable; if it
-  does, a longer or transformed secret could still leak, which is why the
-  review stays advisory. Also open:
+  advisory and fork PRs stay skipped on the automatic trigger. `Read` is allowed
+  only inside the checked-out workspace (`github.workspace`), so the runner's
+  temp and home directories are out of reach for it. Open risks: it is not
+  verified that `Grep` and `Glob` honour the same scoping, or that
+  `claude-code-action` never writes the token inside the workspace; if it
+  does, a transformed secret could still leak, which is why the review stays
+  advisory. Also open:
   the `Read(//...)`-style absolute-path deny syntax follows the Claude Code
   permissions reference but was not confirmed on a real run for each tool.
 - **Gating coverage:** the workflow gates are covered only by text-level

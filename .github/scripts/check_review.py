@@ -11,8 +11,8 @@ replaced by an earlier success):
   a space or punctuation and more text, e.g. a commit sha), and
 * its last non-blank line is
   `Result: <total> findings (<severe> severe, <non-severe> non-severe)` with
-  total == severe + non-severe (markdown bold/backticks and a trailing period
-  are tolerated), and
+  total == severe + non-severe ("1 finding" when the total is exactly 1;
+  markdown bold/backticks and a trailing period are tolerated), and
 * it has a markdown heading for each agent (`bug-hunter` and `documenter`), so
   a review written before the documenter reported is not accepted. This is a
   heuristic, not proof that both ran: the prompt asks for one section per
@@ -42,9 +42,17 @@ RESULT_RE = re.compile(
 
 def last_result(execution_file: Path):
     try:
-        data = json.loads(execution_file.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        raw = execution_file.read_text(encoding="utf-8")
+    except OSError:
         return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        # Also accept JSON Lines, one message per line.
+        try:
+            data = [json.loads(ln) for ln in raw.splitlines() if ln.strip()]
+        except ValueError:
+            return None
     if isinstance(data, dict):
         data = [data]
     if not isinstance(data, list):
