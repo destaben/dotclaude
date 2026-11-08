@@ -789,6 +789,26 @@ class AskFlowTests(unittest.TestCase):
         cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=120, max_per_hour=6)
         ceo.check_throttle(cfg, wall=lambda: 10.0**9)  # the recorded start is days ahead: ignored
 
+    def test_a_corrupt_state_file_is_not_a_traceback_and_does_not_leak_the_lock(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        state.write_bytes(b"\xff\xfe\x00garbage\n")
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=120, max_per_hour=6)
+        ceo.check_throttle(cfg, wall=lambda: 5000.0)  # unreadable lines are skipped, the ask goes through
+        result, _, _ = run_ask(["1"], config={"state_file": str(state), "min_gap_s": 0, "max_per_hour": 0})
+        self.assertEqual(result["status"], "decided")
+        ceo.acquire_run_lock(cfg).close()  # not left locked
+
+    def test_the_run_lock_is_released_when_the_throttle_check_blows_up(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        import unittest.mock as mock
+        cfg = {"state_file": str(state), "min_gap_s": 120, "max_per_hour": 6}
+        with mock.patch.object(ceo, "check_throttle", side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                run_ask(["1"], config=cfg)
+        ceo.acquire_run_lock(dict(ceo.DEFAULT_CONFIG, **cfg)).close()
+
     def test_a_second_ask_too_soon_is_refused_before_any_call(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
         self.addCleanup(lambda: state.exists() and state.unlink())

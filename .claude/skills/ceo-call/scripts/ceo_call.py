@@ -628,7 +628,7 @@ def ask(
     run_lock = acquire_run_lock(config)  # one ask at a time: two runs must never ring together
     try:
         stamp = check_throttle(config, wall)
-    except CallError:
+    except BaseException:
         run_lock.close()
         raise
     dialled = False
@@ -740,7 +740,7 @@ def check_throttle(config: Dict, wall: Callable = time.time) -> Optional[float]:
     now_s = wall()
     try:
         resolved.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        handle = open(resolved, "a+", encoding="utf-8")
+        handle = open(resolved, "a+", encoding="utf-8", errors="replace")  # a damaged file must not crash
     except OSError:
         raise CallError("cannot write the throttle state file")
     with handle:

@@ -25,7 +25,8 @@ this pipeline.)
 
 ## Decisions
 Put real design choices to the council via `/council`; follow the
-`council-policy` skill for when to convene it and what its verdict binds.
+`council-policy` skill for when to convene it and what its verdict binds,
+and for what goes back to you when the council cannot resolve a decision.
 
 ## Testing
 Follow the `testing-mindset` skill: reproduce bugs with a failing test

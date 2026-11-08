@@ -43,6 +43,8 @@ alias as `remote-hosts` describes, and run the script there.
   already sent a heads-up message or dialled keeps it, so an asleep phone cannot be used to spam
   messages. This spaces out and caps the calls a confused or manipulated agent can cause; it does not make a
   loop impossible (up to `max_per_hour` asks, each with up to `attempts` calls, can still ring). The
+  limits are per host (each machine keeps its own `state_file`), so calling through two listed hosts
+  doubles them; that is the owner's choice when they list a second host. The
   start times are kept in `state_file` (default `~/.local/state/ceo-call/last_ask`; `null`,
   or both limits at 0, turns it off).
 - **Quiet hours** (off unless `quiet_start` and `quiet_end` are both set): inside the window no call is placed; a silent chat message is sent instead and the
