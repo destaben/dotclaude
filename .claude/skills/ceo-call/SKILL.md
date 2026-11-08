@@ -47,7 +47,7 @@ alias as `remote-hosts` describes, and run the script there.
   doubles them; that is the owner's choice when they list a second host. The
   start times are kept in `state_file` (default `~/.local/state/ceo-call/last_ask`; `null`,
   or both limits at 0, turns it off).
-- **Quiet hours** (off unless `quiet_start` and `quiet_end` are both set): inside the window no call is placed; a silent chat message is sent instead and the
+- **Quiet hours** (off unless `quiet_start` and `quiet_end` are both set): inside the window no call is placed; a silent chat message is sent instead (through the same lock and throttle as a call, so a loop of asks at night cannot become a stream of messages) and the
   status is `deferred`. The window is re-checked before every retry, so a retry that would land inside
   it is dropped (also `deferred`).
 - **Heads-up:** if the phone is not registered when a call is due (typical for an iPhone softphone that

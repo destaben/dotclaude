@@ -1024,6 +1024,58 @@ class AskFlowTests(unittest.TestCase):
         cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=120, max_per_hour=6)
         ceo.check_throttle(cfg, wall=lambda: 100000.0)
 
+    def test_quiet_hours_deferrals_cannot_be_used_to_spam_the_chat(self):
+        state = self.throttle_state()
+        cfg = {"state_file": str(state), "min_gap_s": 120, "quiet_start": "23:00", "quiet_end": "08:00"}
+        env = {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"}
+        result, asterisk, sent = run_ask([], env=env, config=cfg, clock_time=(3, 0))
+        self.assertEqual((result["status"], len(sent)), ("deferred", 1))
+        self.assertNotEqual(state.read_text().strip(), "")  # the silent message used the slot
+        with self.assertRaises(ceo.CallError) as caught:  # the second one in a loop is refused, no second message
+            run_ask([], env=env, config=cfg, clock_time=(3, 0))
+        self.assertIn("too soon", str(caught.exception))
+
+    def test_a_timeout_after_the_call_file_may_have_moved_is_a_possibly_live_call(self):
+        for error in (ceo.DockerTimeout("cannot run docker"), ceo.Interrupted("interrupted")):
+            with self.subTest(error=type(error).__name__):
+                class Slow(FakeAsterisk):
+                    def originate(self, name, call_file):
+                        raise error
+
+                sent = []
+                asterisk = Slow([])
+                clock = FakeClock()
+                with self.assertRaises(ceo.MayBeLive):
+                    ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG), {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                            asterisk, synth=fake_synth, notifier=lambda t, c, text, silent=False: sent.append(text) or True,
+                            sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+                self.assertIn("no se ha registrado", sent[0])
+                self.assertTrue(asterisk.dirs)  # the phone may be ringing: the prompts stay
+
+    def test_a_docker_exec_timeout_is_told_apart_from_a_plain_failure(self):
+        import subprocess as _sp
+
+        def timing_out(command, **kwargs):
+            raise _sp.TimeoutExpired(command, 60)
+
+        with self.assertRaises(ceo.DockerTimeout):
+            ceo.DockerAsterisk("asterisk", run=timing_out).make_dir("/x")
+
+    def test_a_stop_request_during_the_recovery_read_is_not_swallowed(self):
+        class Both(FakeAsterisk):
+            def read_file(self, path):
+                if path.endswith("/result") and getattr(self, "armed", False):
+                    raise ceo.Interrupted("interrupted")
+                if not getattr(self, "armed", False):
+                    self.armed = True
+                    raise ceo.DockerError("cannot read call state from the Asterisk container")
+                return super().read_file(path)
+
+        clock = FakeClock()
+        with self.assertRaises(ceo.Interrupted):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, attempts=1), {}, Both(["1"]), synth=fake_synth,
+                    sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+
     def test_a_second_ask_too_soon_is_refused_before_any_call(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
         self.addCleanup(lambda: state.exists() and state.unlink())
@@ -1047,7 +1099,7 @@ class AskFlowTests(unittest.TestCase):
     def test_a_deferred_request_does_not_start_the_throttle(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
         run_ask([], config={"state_file": str(state), "min_gap_s": 120, "quiet_start": "23:00", "quiet_end": "08:00"}, clock_time=(3, 0))
-        self.assertFalse(state.exists())
+        self.assertEqual(state.read_text().strip() if state.exists() else "", "")  # nothing reached the owner: no slot used
 
     def test_no_answer_retries_then_notifies_once(self):
         result, asterisk, sent = run_ask(["unanswered"] * 3, env={"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"})

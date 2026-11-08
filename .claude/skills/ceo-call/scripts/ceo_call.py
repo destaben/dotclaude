@@ -107,6 +107,10 @@ class DockerError(MayBeLive):
     """Docker or the Asterisk container failed."""
 
 
+class DockerTimeout(DockerError):
+    """A docker command timed out: it may still have completed (for example the move of a call file)."""
+
+
 class Interrupted(MayBeLive):
     """The process was asked to stop (SIGTERM)."""
 
@@ -419,7 +423,9 @@ class DockerAsterisk:
         command = ["docker", "exec", "-i", "-u", "asterisk", self.container] + args
         try:
             result = self._run(command, input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
-        except (OSError, subprocess.TimeoutExpired):
+        except subprocess.TimeoutExpired:
+            raise DockerTimeout("cannot run docker (timed out)")
+        except OSError:
             raise DockerError("cannot run docker")
         if check and result.returncode != 0:
             raise DockerError("a command inside the Asterisk container failed")
@@ -509,8 +515,10 @@ def run_attempt(asterisk, config: Dict, call_id: str, option_count: int, sleep=t
             "ceo-%s" % call_id,
             build_call_file(config["endpoint"], call_id, option_count, config["ring_timeout_s"]),
         )
+    except (DockerTimeout, Interrupted):
+        raise  # the move may have completed before the timeout or the stop: the phone may be ringing
     except MayBeLive as error:
-        # The call file is moved into place in one step, so a failure here means no call exists.
+        # The call file is moved into place in one step, so a plain failure here means no call exists.
         raise CallError(str(error))
     started = clock()
     answer_deadline = started + config["ring_timeout_s"] + 15
@@ -638,8 +646,6 @@ def ask(
     clean = validate_request(request)
     options = clean["options"]
     quiet = lambda: in_quiet_hours(now().strftime("%H:%M"), config.get("quiet_start"), config.get("quiet_end"))  # noqa: E731
-    if quiet():
-        return notify_outcome({"status": "deferred", "attempt": 0}, clean, env, notifier, silent=True)
     reached = {"owner": False}
     send = notifier
 
@@ -662,6 +668,15 @@ def ask(
         """Give the throttle slot back only if nothing reached the owner: no call, no chat message."""
         if not (dialled or reached["owner"]):
             release_throttle(config, stamp)
+
+    if quiet():
+        # Inside quiet hours only a silent chat message is sent. It goes through the same lock and
+        # throttle as a call, so a loop of asks at night cannot become a stream of messages.
+        try:
+            return notify_outcome({"status": "deferred", "attempt": 0}, clean, env, notifier, silent=True)
+        finally:
+            settle()
+            run_lock.close()
 
     call_id = secrets.token_hex(8)
     base = "%s/ceo/%s" % (SPOOL, call_id)
@@ -714,6 +729,8 @@ def ask(
             # look once more.
             try:
                 digit = asterisk.read_file("%s/result" % base)
+            except Interrupted:
+                raise  # a stop request is never swallowed
             except CallError:
                 digit = None
             if digit and re.fullmatch(r"[1-8]", digit) and int(digit) <= len(options):

@@ -34,7 +34,7 @@ blocks you, do not look for a way around it, report it.
 ## How
 1. Reduce the brief to one short spoken question and 2 to 8 options taken from the brief. Do not
    invent or reword options to steer the answer. If the decision cannot be expressed as numbered
-   options, do not call: return the brief to the user in writing.
+   options, do not call: return the brief to the user in the terminal.
 2. Follow the `ceo-call` skill (preloaded for you). The brief gives the telephony host's ssh alias (it
    must be one the owner listed for the guard), or says to run locally; if it gives neither, run
    locally and report that the host was not given. The guard accepts only the exact command forms
