@@ -31,8 +31,11 @@ alias as `remote-hosts` describes, and run the script there.
   `min_gap_s` (default 120), `max_per_hour` (default 6) and `state_file`. `piper_port` must be 1-65535.
   Unknown keys are rejected, and `ring_timeout_s` must be at least 5 and `call_timeout_s` at
   least 60 so a retry can never overlap a call that is still live. `poll_interval_s` must be 1 to 60
-  (0 would hammer `docker exec`). A call still live at `call_timeout_s` gets a short grace (10 polls) so a
+  (0 would hammer `docker exec`). A call still live at `call_timeout_s` (its folder is then kept) gets a short grace (10 polls) so a
   confirmation given right at the deadline is not lost.
+- **One ask at a time:** an exclusive lock (`<state_file>.lock`, released even if the process is killed)
+  is held for the whole run, so a second `ask` that starts meanwhile fails with `another ask is still
+  running` instead of ringing the owner on top of the first.
 - **Throttle:** a new `ask` that starts less than `min_gap_s` after the previous one is refused with an
   error (`asked again too soon`), and so is any `ask` beyond `max_per_hour` in an hour (`too many asks`).
   An `ask` that ends without placing a call (speech failed, quiet hours began, the phone never
@@ -83,6 +86,9 @@ The guard limits which commands run and how often. It cannot judge the *wording*
 options, which the agent writes from the brief: injected text could reword an option. The residual
 risk is accepted because the owner hears the exact text, a choice is read back, and nothing is
 recorded until a second key press confirms it; the rule against rewording stays in the agent prompt.
+Likewise, anything the agent can see and puts into the question (for example a secret quoted in a
+brief) is spoken and posted to the owner's chat through a third-party service; the "no secrets" rule
+above is the only control, and the recipient is always the owner.
 
 ## Rounds
 A call gets three rounds to produce a confirmed choice. Pressing 9 (repeat), any other key, or staying

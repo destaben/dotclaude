@@ -698,6 +698,47 @@ class AskFlowTests(unittest.TestCase):
         finally:
             FakeAsterisk.__init__ = original
 
+    def test_a_call_that_timed_out_while_open_keeps_its_folder(self):
+        result, asterisk, _ = run_ask([{1: {"answered": "1"}}], config={"call_timeout_s": 60, "attempts": 1})
+        self.assertEqual(result["status"], "timeout")
+        self.assertTrue(asterisk.dirs)  # the owner may still be on the line; the daily sweep cleans it later
+
+    def test_a_second_ask_cannot_start_while_another_is_running(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=0, max_per_hour=0)
+        first = ceo.acquire_run_lock(cfg)
+        try:
+            with self.assertRaises(ceo.CallError) as caught:
+                ceo.acquire_run_lock(cfg)
+            self.assertIn("still running", str(caught.exception))
+        finally:
+            first.close()
+        ceo.acquire_run_lock(cfg).close()  # free again once the first run ended
+
+    def test_ask_holds_the_run_lock_for_its_whole_run(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        cfg = {"state_file": str(state), "min_gap_s": 0, "max_per_hour": 0}
+        seen = []
+        original = FakeAsterisk.originate
+
+        def spy(self_, name, call_file):
+            try:
+                ceo.acquire_run_lock(dict(ceo.DEFAULT_CONFIG, **cfg)).close()
+                seen.append("free")
+            except ceo.CallError:
+                seen.append("held")
+            original(self_, name, call_file)
+
+        FakeAsterisk.originate = spy
+        try:
+            run_ask(["1"], config=cfg)
+        finally:
+            FakeAsterisk.originate = original
+        self.assertEqual(seen, ["held"])
+        ceo.acquire_run_lock(dict(ceo.DEFAULT_CONFIG, **cfg)).close()  # released afterwards
+
     def test_a_second_ask_too_soon_is_refused_before_any_call(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
         self.addCleanup(lambda: state.exists() and state.unlink())
@@ -1275,6 +1316,17 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("ERROR:", err)
 
+    def test_deeply_nested_json_is_a_clean_error(self):
+        path = Path(self.tmp.name) / "deep.json"
+        path.write_text("[" * 5000)
+        code, err = self.run_ask_cli("--request", str(path))
+        self.assertEqual(code, 1)
+        self.assertIn("ERROR:", err)
+
+    def test_the_scripts_are_executable_as_the_skill_shows_them(self):
+        for name in ("ceo_call.py", "guard_bash.py"):
+            self.assertTrue(os.access(SCRIPT.parent / name, os.X_OK), name)
+
     def test_a_request_that_is_not_utf8_is_a_clean_error(self):
         import contextlib
         path = Path(self.tmp.name) / "bad.json"
@@ -1482,6 +1534,18 @@ class GuardTests(unittest.TestCase):
         ):
             with self.subTest(command=command):
                 self.assertFalse(self.guard.allowed(command, home="/home/u"))
+
+    def test_the_script_name_and_the_action_must_be_separate_words(self):
+        for command in ("python3 ~/.claude/skills/ceo-call/scripts/ceo_call.pycheck",
+                        "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py--config ~/.config/ceo-call/config.json check"):
+            with self.subTest(command=command):
+                self.assertFalse(self.guard.allowed(command, home="/home/u"))
+
+    def test_unicode_whitespace_is_not_a_separator(self):
+        for sep in ("\u00a0", "\u2003", "\u3000", "\u0085"):
+            with self.subTest(sep=repr(sep)):
+                self.assertFalse(self.guard.allowed("python3" + sep + "~/.claude/skills/ceo-call/scripts/ceo_call.py check", home="/home/u"))
+                self.assertFalse(self.guard.allowed("python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py" + sep + "check", home="/home/u"))
 
     def test_control_characters_cannot_smuggle_a_second_command(self):
         ok = "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py ask --request - <<'CEO_REQUEST'\n{}\nCEO_REQUEST"

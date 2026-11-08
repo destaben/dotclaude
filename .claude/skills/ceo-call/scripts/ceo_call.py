@@ -625,7 +625,12 @@ def ask(
     options = clean["options"]
     if in_quiet_hours(now().strftime("%H:%M"), config.get("quiet_start"), config.get("quiet_end")):
         return notify_outcome({"status": "deferred", "attempt": 0}, clean, env, notifier, silent=True)
-    stamp = check_throttle(config, wall)
+    run_lock = acquire_run_lock(config)  # one ask at a time: two runs must never ring together
+    try:
+        stamp = check_throttle(config, wall)
+    except CallError:
+        run_lock.close()
+        raise
     dialled = False
     keep_folder = False
     call_id = secrets.token_hex(8)
@@ -661,6 +666,8 @@ def ask(
             outcome = run_attempt(asterisk, config, call_id, len(options), sleep=sleep, clock=clock)
             outcome["attempt"] = attempt
             # A hangup is the owner's choice: they picked up and put the phone down, so no re-ring.
+            if outcome["status"] == "timeout":
+                keep_folder = True  # the owner may still be on the line, and the dialplan still needs its prompts
             if outcome["status"] in ("decided", "undecided", "hangup", "timeout"):
                 break
             if attempt < config["attempts"]:
@@ -680,11 +687,37 @@ def ask(
                 asterisk.remove(base)
             except CallError:
                 pass  # best effort: the daily sweep removes it, and the real error must not be replaced
+        run_lock.close()
     if outcome["status"] == "decided":
         outcome["option"] = options[outcome["choice"] - 1]
         outcome["notified"] = False  # same keys on every outcome; a decision needs no chat message
         return outcome
     return notify_outcome(outcome, clean, env, notifier, silent=outcome["status"] == "deferred")
+
+
+class _NoLock:
+    def close(self) -> None:
+        pass
+
+
+def acquire_run_lock(config: Dict):
+    """Hold an exclusive lock for the length of one ask. The lock vanishes with the process, even when
+    it is killed. Without a state file there is nothing to lock on, and the lock is off."""
+    path = config.get("state_file")
+    if not path:
+        return _NoLock()
+    resolved = Path(os.path.expanduser(path + ".lock"))
+    try:
+        resolved.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        handle = open(resolved, "a+", encoding="utf-8")
+    except OSError:
+        raise CallError("cannot create the run lock file")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        raise CallError("another ask is still running; wait for it to finish")
+    return handle
 
 
 def check_throttle(config: Dict, wall: Callable = time.time) -> Optional[float]:
@@ -800,7 +833,7 @@ def cmd_ask(args) -> int:
     raw = read_request(args.request)
     try:
         request = json.loads(raw)
-    except ValueError:
+    except (ValueError, RecursionError):
         raise CallError("the request is not valid JSON")
     outcome = ask(request, config, env, DockerAsterisk(config["container"]))
     print(json.dumps(outcome, ensure_ascii=False))
