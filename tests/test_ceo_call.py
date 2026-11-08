@@ -567,6 +567,55 @@ class AskFlowTests(unittest.TestCase):
                     sleep=FakeClock().sleep, clock=FakeClock(), now=lambda: datetime(2026, 1, 1, 12, 0))
         self.assertEqual(asterisk.dirs, set())
 
+    def test_a_cleanup_failure_does_not_hide_the_real_error_or_keep_the_throttle_slot(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+
+        def failing_synth(host, port, text):
+            raise ceo.CallError("cannot get speech from the speech server")
+
+        class CleanupFails(FakeAsterisk):
+            def remove(self, *paths):
+                raise ceo.DockerError("cannot run docker")
+
+        with self.assertRaises(ceo.CallError) as caught:
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=120),
+                    {}, CleanupFails([]), synth=failing_synth, sleep=FakeClock().sleep, clock=FakeClock(),
+                    now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertIn("speech", str(caught.exception))
+        self.assertEqual(state.read_text().strip(), "")
+
+    def test_a_docker_failure_after_the_digit_was_read_does_not_lose_the_decision(self):
+        class DoneFails(FakeAsterisk):
+            def read_file(self, path):
+                if path.endswith("/done") and self.files.get(path.rsplit("/", 1)[0] + "/result") is not None:
+                    raise ceo.DockerError("cannot read call state from the Asterisk container")
+                return super().read_file(path)
+
+        asterisk = DoneFails([{1: {"answered": "1"}, 3: {"result": "2"}}])
+        clock = FakeClock()
+        result = ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, attempts=1), {}, asterisk,
+                         synth=fake_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual((result["status"], result["choice"]), ("decided", 2))
+
+    def test_two_asks_in_the_same_second_keep_their_own_slots(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=0, max_per_hour=6)
+        first = ceo.check_throttle(cfg, wall=lambda: 1000.2)
+        second = ceo.check_throttle(cfg, wall=lambda: 1000.7)
+        ceo.release_throttle(cfg, second)
+        remaining = [float(x) for x in state.read_text().split()]
+        self.assertEqual(remaining, [first])
+
+    def test_a_clock_that_steps_back_does_not_reset_the_hourly_limit(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        state.write_text("".join("%d\n" % (10000 + i) for i in range(6)))
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=0, max_per_hour=6)
+        with self.assertRaises(ceo.CallError):
+            ceo.check_throttle(cfg, wall=lambda: 9000.0)  # the clock is now before the recorded starts
+
     def test_a_second_ask_too_soon_is_refused_before_any_call(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
         self.addCleanup(lambda: state.exists() and state.unlink())
@@ -724,6 +773,17 @@ class QuietHoursTests(unittest.TestCase):
 
     def test_timezone_must_be_a_known_zone(self):
         for bad in ('{"timezone": "Mars/Base"}', '{"timezone": 3}'):
+            with self.subTest(bad=bad):
+                handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+                handle.write(bad)
+                handle.close()
+                self.addCleanup(os.unlink, handle.name)
+                with self.assertRaises(ceo.CallError):
+                    ceo.load_config(handle.name)
+
+    def test_the_poll_interval_is_bounded_so_a_run_stays_below_the_sweep_age(self):
+        for bad in ('{"poll_interval_s": 1000}', '{"poll_interval_s": 61}',
+                    '{"attempts": 10, "poll_interval_s": 60, "call_timeout_s": 3600, "retry_delay_s": 3600}'):
             with self.subTest(bad=bad):
                 handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
                 handle.write(bad)

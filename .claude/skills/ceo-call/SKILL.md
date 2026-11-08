@@ -29,7 +29,7 @@ alias as `remote-hosts` describes, and run the script there.
   neither; checked at the start, before every retry and again right before each dial, after any
   heads-up wait), `timezone` (IANA name such as `Europe/Madrid`; default is the host's local time) `heads_up_s` (default 90),
   `min_gap_s` (default 120), `max_per_hour` (default 6), `state_file` and `piper_port` (1-65535). Unknown keys are rejected, and `ring_timeout_s` must be at least 5 and `call_timeout_s` at
-  least 60 so a retry can never overlap a call that is still live. `poll_interval_s` must be at least 1
+  least 60 so a retry can never overlap a call that is still live. `poll_interval_s` must be 1 to 60
   (0 would hammer `docker exec`). A call still live at `call_timeout_s` gets a short grace (10 polls) so a
   confirmation given right at the deadline is not lost.
 - **Throttle:** a new `ask` that starts less than `min_gap_s` after the previous one is refused with an
@@ -99,7 +99,7 @@ it is spoken aloud. Result (one JSON line on stdout):
 | `undecided` | three rounds without a confirmed choice | 3 |
 | `deferred` | quiet hours; no (further) call placed | 3 |
 
-Exit 1 means an infrastructure or input problem (message on stderr). Only `decided` is a decision;
+Exit 1 means an infrastructure or input problem, or a throttle refusal (message on stderr). Only `decided` is a decision;
 every other status leaves the decision pending.
 
 ## Setting up the chat bot

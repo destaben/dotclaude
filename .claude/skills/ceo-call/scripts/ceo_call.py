@@ -174,16 +174,19 @@ def load_config(path: Optional[str]) -> Dict:
         if not isinstance(config[key], int) or isinstance(config[key], bool) or config[key] < 0:
             raise CallError("%s must be a non-negative integer" % key)
     # The whole run must stay far below the one-day age at which another run sweeps its folder.
-    worst_case = config["attempts"] * (config["ring_timeout_s"] + config["call_timeout_s"] + config["retry_delay_s"] + config["heads_up_s"])
+    # One attempt: heads-up wait, ring, call, the grace and the thank-you waits (polls), then the retry delay.
+    polls = (GRACE_POLLS + 8) * config["poll_interval_s"]
+    worst_case = config["attempts"] * (config["ring_timeout_s"] + config["call_timeout_s"] + config["retry_delay_s"] + config["heads_up_s"] + polls)
     if worst_case > 20 * 3600:
         raise CallError("attempts, delays and timeouts add up to more than 20 hours")
     if not 1 <= config["piper_port"] <= 65535:
         raise CallError("piper_port must be between 1 and 65535")
     if config["state_file"] is not None and not isinstance(config["state_file"], str):
         raise CallError("state_file must be a path or null")
-    if config["poll_interval_s"] < 1:
-        # 0 would make the polling loops run `docker exec` back to back for the whole call window.
-        raise CallError("poll_interval_s must be at least 1")
+    if not 1 <= config["poll_interval_s"] <= 60:
+        # 0 would run `docker exec` back to back for the whole call window; a huge value would let a
+        # run outlast the one-day age at which another run sweeps its folder.
+        raise CallError("poll_interval_s must be between 1 and 60")
     if not 1 <= config["attempts"] <= 10:
         raise CallError("attempts must be between 1 and 10")
     if config["ring_timeout_s"] < 5 or config["call_timeout_s"] < 60:
@@ -501,8 +504,11 @@ def run_attempt(asterisk, config: Dict, call_id: str, option_count: int, sleep=t
     if result is not None:
         # Let the thank-you message finish before the audio files are removed.
         for _ in range(8):
-            if asterisk.read_file(base + "/done") is not None:
-                break
+            try:
+                if asterisk.read_file(base + "/done") is not None:
+                    break
+            except DockerError:
+                break  # the digit is already read: do not lose the decision over the thank-you wait
             sleep(config["poll_interval_s"])
     else:
         result = asterisk.read_file(base + "/result") or None
@@ -641,10 +647,13 @@ def ask(
         notify_outcome({"status": "error"}, clean, env, notifier)
         raise
     finally:
-        if not keep_folder:
-            asterisk.remove(base)
         if not dialled:
             release_throttle(config, stamp)
+        if not keep_folder:
+            try:
+                asterisk.remove(base)
+            except CallError:
+                pass  # best effort: the daily sweep removes it, and the real error must not be replaced
     if outcome["status"] == "decided":
         outcome["option"] = options[outcome["choice"] - 1]
         outcome["notified"] = False  # same keys on every outcome; a decision needs no chat message
@@ -676,15 +685,15 @@ def check_throttle(config: Dict, wall: Callable = time.time) -> Optional[float]:
                 value = float(line.strip())
             except ValueError:
                 continue
-            if 0 <= now_s - value < 86400:
+            if now_s - value < 86400:  # a start in the future (clock stepped back) still counts
                 starts.append(value)
-        if gap and starts and now_s - max(starts) < gap:
+        if gap and starts and now_s - max(starts) < gap:  # also true for a start in the future
             raise CallError("asked again too soon: wait %d more seconds" % (gap - (now_s - max(starts))))
-        if per_hour and sum(1 for value in starts if now_s - value < 3600) >= per_hour:
+        if per_hour and sum(1 for value in starts if now_s - value < 3600) >= per_hour:  # future starts count
             raise CallError("too many asks in the last hour (limit %d)" % per_hour)
         handle.seek(0)
         handle.truncate()
-        handle.write("".join("%d\n" % value for value in starts + [now_s]))
+        handle.write("".join("%.6f\n" % value for value in starts + [now_s]))
     return now_s
 
 
@@ -698,7 +707,16 @@ def release_throttle(config: Dict, stamp: Optional[float]) -> None:
     try:
         with open(resolved, "r+", encoding="utf-8") as handle:
             fcntl.flock(handle, fcntl.LOCK_EX)
-            kept = [line for line in handle.read().splitlines() if line.strip() != "%d" % stamp]
+            kept, removed = [], False
+            for line in handle.read().splitlines():
+                try:
+                    same = abs(float(line.strip()) - stamp) < 1e-6
+                except ValueError:
+                    same = False
+                if same and not removed:
+                    removed = True  # only our own line, not another ask's from the same second
+                    continue
+                kept.append(line)
             handle.seek(0)
             handle.truncate()
             handle.write("".join(line + "\n" for line in kept))
