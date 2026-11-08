@@ -11,8 +11,8 @@ stdin; exits 0 to allow and 2 to block (the message on stderr goes back to the a
 Allowed (optionally prefixed by `ssh <alias>`, with no ssh options), only with the script at exactly
 `~/.claude/skills/ceo-call/scripts/ceo_call.py` (over ssh, only this `~` form, single-quoted so the remote
 shell expands it; locally, also this machine's own absolute home path), no quotes, no shell operators, no `..`:
-    python3 <script> [--config ~/.config/ceo-call/config.json] check
-    python3 <script> [--config ...] ask --request - <<'CEO_REQUEST'   (JSON lines follow, the last line
+    python3 <script> --config ~/.config/ceo-call/config.json check
+    python3 <script> --config ~/.config/ceo-call/config.json ask --request - <<'CEO_REQUEST'   (JSON lines follow, the last line
         is CEO_REQUEST; the quoted delimiter means the body is never expanded). A request file path
         is not accepted: the agent has no way to write a file, and an existing one must not be spoken.
 """
@@ -38,8 +38,9 @@ def build_patterns(home: str):
     # Over ssh the local shell must not expand the ~, so the remote paths are single-quoted: the local
     # shell strips the quotes and the remote shell expands the ~ in its own home.
     script_remote = r"(?:python3 +)?'%s'" % re.escape(HOME_SCRIPT)
-    config_local = r"(?:--config +(?:%s|%sconfig\.json) +)?" % (HOME_CONFIG, re.escape(local_config))
-    config_remote = r"(?:--config +'%s' +)?" % HOME_CONFIG
+    # The config is mandatory: without it the script falls back to defaults, which have no quiet hours.
+    config_local = r"--config +(?:%s|%sconfig\.json) +" % (HOME_CONFIG, re.escape(local_config))
+    config_remote = r"--config +'%s' +" % HOME_CONFIG
     action = r"check"
     heredoc = r"ask +--request +- +<<'CEO_REQUEST'"
     patterns = []

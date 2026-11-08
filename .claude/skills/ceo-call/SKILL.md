@@ -38,8 +38,9 @@ alias as `remote-hosts` describes, and run the script there.
   running` instead of ringing the owner on top of the first.
 - **Throttle:** a new `ask` that starts less than `min_gap_s` after the previous one is refused with an
   error (`asked again too soon`), and so is any `ask` beyond `max_per_hour` in an hour (`too many asks`).
-  An `ask` that ends without placing a call (speech failed, quiet hours began, the phone never
-  registered) gives its slot back. This spaces out and caps the calls a confused or manipulated agent can cause; it does not make a
+  An `ask` that fails before anything reaches the owner (speech failed) gives its slot back; one that
+  already sent a heads-up message or dialled keeps it, so an asleep phone cannot be used to spam
+  messages. This spaces out and caps the calls a confused or manipulated agent can cause; it does not make a
   loop impossible (up to `max_per_hour` asks, each with up to `attempts` calls, can still ring). The
   start times are kept in `state_file` (default `~/.local/state/ceo-call/last_ask`; `null`,
   or both limits at 0, turns it off).
@@ -66,11 +67,11 @@ The `claudio` agent reads council briefs that may quote untrusted text, so its s
 `PreToolUse` hook (`scripts/guard_bash.py`). Only `check` and `ask` of **this skill's own script** pass,
 and only at exactly `~/.claude/skills/ceo-call/scripts/ceo_call.py` (locally also this machine's own
 absolute home path; over ssh only the `~` form in single quotes, because the remote home is unknown and
-the local shell must not expand it: `ssh <alias> python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' check`.
+the local shell must not expand it: `ssh <alias> python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' --config '~/.config/ceo-call/config.json' check`.
 The single quotes protect the `~` only from the *local* shell: `ssh` joins its arguments with spaces and
 hands the string to the remote shell, which sees no quotes and expands the `~` in its own home). Any other file
 named `ceo_call.py`, in a repository, `/tmp` or elsewhere, is refused. `--config` must be
-`~/.config/ceo-call/config.json` (the only config the agent may name, so it cannot pick one that turns the throttle off) (quoted the same way over ssh). Optionally behind `ssh <alias>` (no ssh options); no shell operators
+`~/.config/ceo-call/config.json`, and the agent must always pass it (the only config it may name, so it can neither pick one that turns the throttle off nor skip the quiet hours by running on defaults) (quoted the same way over ssh). Optionally behind `ssh <alias>` (no ssh options); no shell operators
 or `..` or control characters other than newline (a carriage return could change where bash ends a
 heredoc); the request JSON only through a quoted heredoc (`ask --request -`): a request file path is
 refused, because the agent cannot write files and an existing file must not be spoken.

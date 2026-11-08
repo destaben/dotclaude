@@ -68,9 +68,9 @@ DEFAULT_CONFIG = {
     "state_file": "~/.local/state/ceo-call/last_ask",  # remembers when the last ask started; None = off
 }
 
-TIME_RE = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
-ENDPOINT_RE = re.compile(r"^PJSIP/[A-Za-z0-9_.-]+$")
-CONTAINER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+TIME_RE = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]\Z")
+ENDPOINT_RE = re.compile(r"^PJSIP/[A-Za-z0-9_.-]+\Z")
+CONTAINER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 # Spoken phrases (Spanish). They are data for the voice, not documentation.
@@ -461,7 +461,7 @@ class DockerAsterisk:
 
 
 def build_call_file(endpoint: str, call_id: str, option_count: int, ring_timeout: int) -> str:
-    if not ENDPOINT_RE.match(endpoint) or not re.match(r"^[0-9a-f]{16,64}$", call_id):
+    if not ENDPOINT_RE.match(endpoint) or not re.match(r"^[0-9a-f]{16,64}\Z", call_id):
         raise CallError("invalid call parameters")
     return "\n".join(
         [
