@@ -14,8 +14,8 @@ choice is read back and recorded only after a second key press confirms it. If t
 pick up it retries, then sends a chat message. Quiet hours stop night calls, including retries that
 would land inside the window. A phone that is not registered is never dialled; the owner gets a
 heads-up message instead. The agent's shell is limited by a hook to the call script, since its
-briefs can quote untrusted text and the env file holds the chat token. Understanding free speech is
-deferred until it passes an accuracy test on real recordings. No instance data enters this repo;
+briefs can quote untrusted text and the env file holds the chat token. Free-form spoken answers are
+deferred until they pass an accuracy test on real recordings. No instance data enters this repo;
 the telephony setup lives in the user's private notes.
 
 ## 2026-11-07 — Administer LAN devices over SSH

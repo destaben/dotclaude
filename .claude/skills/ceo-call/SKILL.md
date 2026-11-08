@@ -26,21 +26,25 @@ alias as `remote-hosts` describes, and run the script there.
 - **Config file** (`--config`, JSON, optional). Keys: `container`, `piper_host`, `piper_port`,
   `endpoint` (`PJSIP/<name>`), `attempts` (1-10), `retry_delay_s`, `ring_timeout_s`,
   `call_timeout_s`, `poll_interval_s`, `env_file`, and `quiet_start` / `quiet_end` (`HH:MM`; both or
-  neither; checked before the first attempt and again before every retry), `timezone` (IANA name such as `Europe/Madrid`; default is the host's local time) `heads_up_s` (default 90),
-  `min_gap_s` (default 120), `state_file` and `piper_port` (1-65535). Unknown keys are rejected, and `ring_timeout_s` must be at least 5 and `call_timeout_s` at
+  neither; checked at the start, before every retry and again right before each dial, after any
+  heads-up wait), `timezone` (IANA name such as `Europe/Madrid`; default is the host's local time) `heads_up_s` (default 90),
+  `min_gap_s` (default 120), `max_per_hour` (default 6), `state_file` and `piper_port` (1-65535). Unknown keys are rejected, and `ring_timeout_s` must be at least 5 and `call_timeout_s` at
   least 60 so a retry can never overlap a call that is still live. `poll_interval_s` must be at least 1
   (0 would hammer `docker exec`). A call still live at `call_timeout_s` gets a short grace (10 polls) so a
   confirmation given right at the deadline is not lost.
 - **Throttle:** a new `ask` that starts less than `min_gap_s` after the previous one is refused with an
-  error (`asked again too soon`), so a confused or manipulated agent cannot ring the owner in a loop.
-  The start time is kept in `state_file` (default `~/.local/state/ceo-call/last_ask`; `null` or
-  `min_gap_s: 0` turns it off).
+  error (`asked again too soon`), and so is any `ask` beyond `max_per_hour` in an hour (`too many asks`).
+  This spaces out and caps the calls a confused or manipulated agent can cause; it does not make a
+  loop impossible (up to `max_per_hour` asks, each with up to `attempts` calls, can still ring). The
+  start times are kept in `state_file` (default `~/.local/state/ceo-call/last_ask`; `null`,
+  or both limits at 0, turns it off).
 - **Quiet hours:** inside the window no call is placed; a silent chat message is sent instead and the
   status is `deferred`. The window is re-checked before every retry, so a retry that would land inside
   it is dropped (also `deferred`).
 - **Heads-up:** if the phone is not registered when a call is due (typical for an iPhone softphone that
   the OS suspended while the screen was locked), the owner gets a chat message asking to open the app,
-  and the call waits up to `heads_up_s` for the registration. A registered phone is called at once. If the phone is still not registered after
+  and the call waits up to `heads_up_s` for the registration. A registered phone is called at once. A call that is still open when `call_timeout_s` and the grace
+  run out ends as `hangup` and is never followed by a retry, so two calls cannot overlap. If the phone is still not registered after
   the wait (or no chat is configured, or `heads_up_s` is 0), no call is placed, because an unregistered
   endpoint can only ring out: the status is `unanswered` with `reason: phone_not_registered`, and the
   owner gets the chat message.
@@ -76,7 +80,7 @@ ceo_call.py check                        # speech reachable? phone registered? c
                                          # exit 1 only if speech or Asterisk FAILED; an unregistered phone is exit 0
 ceo_call.py ask --request request.json   # or --request - to read stdin
 ```
-Request: `{"question": "...", "options": ["...", "..."]}` with 2 to 8 options. Keep the question short:
+Request: `{"question": "...", "options": ["...", "..."]}` with 2 to 8 options. The request must be a regular file (or stdin) of at most 64 KiB. Keep the question short:
 it is spoken aloud. Result (one JSON line on stdout):
 
 | status | meaning | exit code |

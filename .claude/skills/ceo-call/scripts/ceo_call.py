@@ -24,6 +24,7 @@ import re
 import secrets
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import time
@@ -43,6 +44,8 @@ MAX_QUESTION_CHARS = 800
 MAX_OPTION_CHARS = 200
 MAX_WYOMING_PAYLOAD = 16 * 1024 * 1024
 MAX_PCM_BYTES = 64 * 1024 * 1024  # total audio for one prompt
+MAX_HEADER_BYTES = 64 * 1024  # one Wyoming header line
+MAX_REQUEST_BYTES = 64 * 1024  # the request JSON
 
 DEFAULT_CONFIG = {
     "container": "asterisk",
@@ -59,6 +62,7 @@ DEFAULT_CONFIG = {
     "quiet_end": None,
     "timezone": None,  # IANA name such as "Europe/Madrid"; default is the host's local time
     "heads_up_s": 90,  # when the phone is not registered, message the owner and wait this long
+    "max_per_hour": 6,  # refuse more than this many asks within an hour (0 = off)
     "min_gap_s": 120,  # refuse a new ask this soon after the previous one started (0 = off)
     "state_file": "~/.local/state/ceo-call/last_ask",  # remembers when the last ask started; None = off
 }
@@ -83,6 +87,7 @@ NOTIFY = {
     "undecided": "Contestaste, pero no llegaste a confirmar una opción.",
     "deferred": "Estamos en horas de silencio, así que no llamé.",
     "error": "No pude llamar por un fallo técnico.",
+    "phone_not_registered": "Tu teléfono no estaba conectado, así que no llamé.",
 }
 
 
@@ -160,7 +165,7 @@ def load_config(path: Optional[str]) -> Dict:
     quiet = (config["quiet_start"], config["quiet_end"])
     if any(quiet) and not all(isinstance(v, str) and TIME_RE.match(v) for v in quiet):
         raise CallError("quiet_start and quiet_end must both be HH:MM")
-    for key in ("piper_port", "attempts", "retry_delay_s", "ring_timeout_s", "call_timeout_s", "poll_interval_s", "heads_up_s", "min_gap_s"):
+    for key in ("piper_port", "attempts", "retry_delay_s", "ring_timeout_s", "call_timeout_s", "poll_interval_s", "heads_up_s", "min_gap_s", "max_per_hour"):
         if not isinstance(config[key], int) or isinstance(config[key], bool) or config[key] < 0:
             raise CallError("%s must be a non-negative integer" % key)
     # The whole run must stay far below the one-day age at which another run sweeps its folder.
@@ -219,9 +224,11 @@ def load_env_file(path: str) -> Dict[str, str]:
 
 
 def _read_event(handle):
-    line = handle.readline()
+    line = handle.readline(MAX_HEADER_BYTES + 1)
     if not line:
         return None
+    if len(line) > MAX_HEADER_BYTES:
+        raise CallError("speech server sent an oversized message")
     header = json.loads(line)
     data = header.get("data") or {}
     extra = header.get("data_length", 0)
@@ -470,7 +477,9 @@ def run_attempt(asterisk, config: Dict, call_id: str, option_count: int, sleep=t
     if result is None:
         if not answered and asterisk.read_file(base + "/answered") is None:
             return {"status": "unanswered"}
-        return {"status": "hangup"}
+        # live: the dialplan never signalled its end, so the call may still be open. `ask` must not
+        # start a second call on top of it.
+        return {"status": "hangup", "live": asterisk.read_file(base + "/done") is None}
     if result == "undecided":
         return {"status": "undecided"}
     if re.fullmatch(r"[1-8]", result) and int(result) <= option_count:
@@ -570,9 +579,13 @@ def ask(
                 # message (if configured) was already sent. Stop and tell the owner.
                 outcome = {"status": "unanswered", "reason": "phone_not_registered", "attempt": attempt}
                 break
+            if in_quiet_hours(now().strftime("%H:%M"), config.get("quiet_start"), config.get("quiet_end")):
+                # The heads-up wait can take minutes: look at the clock again right before dialling.
+                outcome = {"status": "deferred", "attempt": attempt - 1}
+                break
             outcome = run_attempt(asterisk, config, call_id, len(options), sleep=sleep, clock=clock)
             outcome["attempt"] = attempt
-            if outcome["status"] in ("decided", "undecided"):
+            if outcome["status"] in ("decided", "undecided") or outcome.get("live"):
                 break
             if attempt < config["attempts"]:
                 sleep(config["retry_delay_s"])
@@ -590,22 +603,32 @@ def ask(
 
 
 def check_throttle(config: Dict, wall: Callable = time.time) -> None:
-    """Refuse a new ask that starts too soon after the previous one, so a confused or manipulated
-    agent cannot ring the owner over and over. The stamp is written when an ask starts."""
-    path, gap = config.get("state_file"), config.get("min_gap_s", 0)
-    if not path or not gap:
+    """Refuse a new ask that starts too soon after the previous one, or beyond `max_per_hour`, so a
+    confused or manipulated agent cannot ring the owner over and over. The state file keeps one start
+    time per line (the last 24 hours); a start is recorded when an ask passes these checks."""
+    path, gap, per_hour = config.get("state_file"), config.get("min_gap_s", 0), config.get("max_per_hour", 0)
+    if not path or not (gap or per_hour):
         return
     resolved = Path(os.path.expanduser(path))
-    try:
-        last = float(resolved.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
-        last = None
     now_s = wall()
-    if last is not None and 0 <= now_s - last < gap:
-        raise CallError("asked again too soon: wait %d more seconds" % (gap - (now_s - last)))
+    starts = []
+    try:
+        for line in resolved.read_text(encoding="utf-8").splitlines():
+            try:
+                value = float(line.strip())
+            except ValueError:
+                continue
+            if 0 <= now_s - value < 86400:
+                starts.append(value)
+    except OSError:
+        pass
+    if gap and starts and now_s - max(starts) < gap:
+        raise CallError("asked again too soon: wait %d more seconds" % (gap - (now_s - max(starts))))
+    if per_hour and sum(1 for value in starts if now_s - value < 3600) >= per_hour:
+        raise CallError("too many asks in the last hour (limit %d)" % per_hour)
     try:
         resolved.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        resolved.write_text("%d\n" % now_s, encoding="utf-8")
+        resolved.write_text("".join("%d\n" % value for value in starts + [now_s]), encoding="utf-8")
     except OSError:
         raise CallError("cannot write the throttle state file")
 
@@ -615,7 +638,7 @@ def notify_outcome(outcome: Dict, clean: Dict, env: Dict[str, str], notifier: Ca
     token, chat_id = env.get("CEO_TELEGRAM_TOKEN"), env.get("CEO_TELEGRAM_CHAT_ID")
     outcome["notified"] = False
     if token and chat_id:
-        text = notification_text(clean["question"], clean["options"], outcome["status"])
+        text = notification_text(clean["question"], clean["options"], outcome.get("reason") or outcome["status"])
         sent = notifier(token, chat_id, text, silent=True) if silent else notifier(token, chat_id, text)
         outcome["notified"] = bool(sent)
     return outcome
@@ -624,15 +647,31 @@ def notify_outcome(outcome: Dict, clean: Dict, env: Dict[str, str], notifier: Ca
 # ---------------------------------------------------------------------------------- CLI
 
 
+def read_request(source: str) -> str:
+    """Read the request JSON: stdin or a regular file, never more than MAX_REQUEST_BYTES (a device
+    such as /dev/zero must not be able to fill memory)."""
+    try:
+        if source == "-":
+            raw = sys.stdin.read(MAX_REQUEST_BYTES + 1)
+        else:
+            if not stat.S_ISREG(os.stat(source).st_mode):
+                raise CallError("the request must be a regular file")
+            with open(source, "rb") as handle:
+                data = handle.read(MAX_REQUEST_BYTES + 1)
+            raw = data.decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        raise CallError("cannot read the request file")
+    if len(raw) > MAX_REQUEST_BYTES:
+        raise CallError("the request is longer than %d bytes" % MAX_REQUEST_BYTES)
+    return raw
+
+
 def cmd_ask(args) -> int:
     config = load_config(args.config)
     env = load_env_file(config["env_file"])
     # Turn a polite kill into a normal exit so the per-call folder is still removed.
     signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(143))
-    try:
-        raw = sys.stdin.read() if args.request == "-" else Path(args.request).read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        raise CallError("cannot read the request file")
+    raw = read_request(args.request)
     try:
         request = json.loads(raw)
     except ValueError:

@@ -231,6 +231,26 @@ class SynthesizeTests(unittest.TestCase):
         with self.assertRaises(ceo.CallError):
             ceo.synthesize("127.0.0.1", server.port, "hola", timeout=5)
 
+    def test_a_header_line_without_a_newline_is_capped(self):
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+
+        def serve():
+            conn, _ = listener.accept()
+            conn.makefile("rwb").readline()
+            try:
+                conn.sendall(b"x" * (ceo.MAX_HEADER_BYTES + 100))
+                threading.Event().wait(1)
+            except OSError:
+                pass
+            conn.close()
+
+        threading.Thread(target=serve, daemon=True).start()
+        with self.assertRaises(ceo.CallError):
+            ceo.synthesize("127.0.0.1", listener.getsockname()[1], "hola", timeout=5)
+        listener.close()
+
     def test_malformed_messages_fail_cleanly_instead_of_raising(self):
         bad_starts = [
             {"type": "audio-start", "data": {"rate": None, "width": 2, "channels": 1}},
@@ -426,6 +446,42 @@ class AskFlowTests(unittest.TestCase):
         result, _, _ = run_ask([{1: {"answered": "1"}, 3: {"result": ""}, 6: {"result": "2", "done": "1"}}], config={"attempts": 1})
         self.assertEqual((result["status"], result["choice"]), ("decided", 2))
 
+    def test_a_burst_of_asks_is_capped_per_hour(self):
+        import time as _t
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        now = _t.time()
+        state.write_text("".join("%d\n" % (now - 600 - 60 * i) for i in range(6)))
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        with self.assertRaises(ceo.CallError) as caught:
+            run_ask(["1"], config={"state_file": str(state), "min_gap_s": 120, "max_per_hour": 6})
+        self.assertIn("too many", str(caught.exception))
+        result, _, _ = run_ask(["1"], config={"state_file": str(state), "min_gap_s": 120, "max_per_hour": 7})
+        self.assertEqual(result["status"], "decided")
+
+    def test_a_call_still_live_after_the_grace_is_not_followed_by_a_second_call(self):
+        result, asterisk, _ = run_ask([{1: {"answered": "1"}}, "1", "1"], config={"call_timeout_s": 60})
+        self.assertEqual(result["status"], "hangup")
+        self.assertEqual(asterisk.originated, 1)
+
+    def test_quiet_hours_are_checked_again_after_the_heads_up_wait(self):
+        times = iter([(22, 59), (23, 1), (23, 1)])
+        reads = iter([False, False, True])
+        asterisk = FakeAsterisk(["1"])
+        asterisk.registered = lambda: next(reads, True)
+        cfg = dict(ceo.DEFAULT_CONFIG, retry_delay_s=0, poll_interval_s=2, ring_timeout_s=30, call_timeout_s=300,
+                   attempts=1, quiet_start="23:00", quiet_end="08:00", heads_up_s=90)
+        clock = FakeClock()
+        result = ceo.ask({"question": "q", "options": ["a", "b"]}, cfg, {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                         asterisk, synth=fake_synth, notifier=lambda *a, **k: True, sleep=clock.sleep, clock=clock,
+                         now=lambda: datetime(2026, 1, 1, *next(times)))
+        self.assertEqual(result["status"], "deferred")
+        self.assertEqual(asterisk.originated, 0)
+
+    def test_the_message_for_an_unregistered_phone_does_not_claim_it_rang(self):
+        text = ceo.notification_text("q", ["a", "b"], "phone_not_registered")
+        self.assertNotIn("No contestaste", text)
+        self.assertIn("teléfono", text)
+
     def test_a_second_ask_too_soon_is_refused_before_any_call(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
         self.addCleanup(lambda: state.exists() and state.unlink())
@@ -558,7 +614,7 @@ class QuietHoursTests(unittest.TestCase):
         self.assertTrue(sent[0][3])
 
     def test_quiet_hours_are_checked_again_before_every_retry(self):
-        times = iter([(21, 55), (22, 5), (22, 10)])
+        times = iter([(21, 55), (21, 55), (22, 5), (22, 10)])
         original = ceo.ask
 
         def clocked(*args, **kwargs):
@@ -956,6 +1012,32 @@ class CliTests(unittest.TestCase):
             code = ceo.main(["--config", str(self.config), "check"])
         self.assertEqual(code, 1)
         self.assertIn("FAILED", out.getvalue())
+
+    def run_ask_cli(self, *args, stdin=None):
+        import contextlib
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = ceo.main(["--config", str(self.config), "ask", *args])
+        return code, err.getvalue()
+
+    def test_a_request_must_be_a_small_regular_file(self):
+        code, err = self.run_ask_cli("--request", "/dev/zero")
+        self.assertEqual(code, 1)
+        self.assertIn("ERROR:", err)
+        big = Path(self.tmp.name) / "big.json"
+        big.write_bytes(b" " * (ceo.MAX_REQUEST_BYTES + 1))
+        code, err = self.run_ask_cli("--request", str(big))
+        self.assertEqual(code, 1)
+        self.assertIn("ERROR:", err)
+        code, err = self.run_ask_cli("--request", str(Path(self.tmp.name)))  # a directory
+        self.assertEqual(code, 1)
+
+    def test_a_huge_stdin_request_is_cut_off(self):
+        import unittest.mock as mock
+        with mock.patch.object(ceo.sys, "stdin", io.StringIO(" " * (ceo.MAX_REQUEST_BYTES + 10))):
+            code, err = self.run_ask_cli("--request", "-")
+        self.assertEqual(code, 1)
+        self.assertIn("ERROR:", err)
 
     def test_a_request_that_is_not_utf8_is_a_clean_error(self):
         import contextlib
