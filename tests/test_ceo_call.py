@@ -15,6 +15,7 @@ spec = importlib.util.spec_from_file_location("ceo_call", SCRIPT)
 ceo = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ceo)
 ceo.DEFAULT_CONFIG["state_file"] = None  # tests must never touch the real throttle file
+ceo.DEFAULT_CONFIG["lock_file"] = None  # nor the real run lock
 
 
 def fake_synth(host, port, text):
@@ -1214,6 +1215,42 @@ class AskFlowTests(unittest.TestCase):
         result, asterisk, _ = run_ask([{1: {"answered": "1", "done": "1"}}], config={"attempts": 1})
         self.assertEqual(result["status"], "hangup")
         self.assertLess(run_ask.clock.now, 5)  # no extra polling after the dialplan said it was over
+
+    def test_turning_the_throttle_off_does_not_turn_the_run_lock_off(self):
+        lock = Path(tempfile.mkdtemp()) / "run.lock"
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=None, lock_file=str(lock))
+        first = ceo.acquire_run_lock(cfg)
+        try:
+            with self.assertRaises(ceo.CallError) as caught:
+                ceo.acquire_run_lock(cfg)
+            self.assertIn("still running", str(caught.exception))
+        finally:
+            first.close()
+
+    def test_a_retry_pushed_into_quiet_hours_after_a_ring_says_so(self):
+        text = ceo.notification_text("q", ["a", "b"], "deferred_retry")
+        self.assertNotIn("no llamé", text)
+        self.assertIn("volví", text)
+        times = iter([(21, 55), (21, 55), (21, 55), (22, 5), (22, 5)])
+        sent = []
+        asterisk = FakeAsterisk(["unanswered"])
+        cfg = dict(ceo.DEFAULT_CONFIG, retry_delay_s=0, attempts=2, quiet_start="22:00", quiet_end="08:00")
+        clock = FakeClock()
+        ceo.ask({"question": "q", "options": ["a", "b"]}, cfg, {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"}, asterisk,
+                synth=fake_synth, notifier=lambda t, c, text, silent=False: sent.append(text) or True,
+                sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, *next(times, (22, 5))))
+        self.assertIn("volví", sent[0])
+
+    def test_non_utf8_stdin_is_reported_as_such(self):
+        import unittest.mock as mock
+
+        class BadStdin:
+            buffer = io.BytesIO(b"\xff\xfe{")
+
+        with mock.patch.object(ceo.sys, "stdin", BadStdin()):
+            with self.assertRaises(ceo.CallError) as caught:
+                ceo.read_request("-")
+        self.assertIn("UTF-8", str(caught.exception))
 
     def test_a_second_ask_too_soon_is_refused_before_any_call(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"

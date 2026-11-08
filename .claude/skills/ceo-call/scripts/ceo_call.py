@@ -66,7 +66,8 @@ DEFAULT_CONFIG = {
     "max_per_hour": 6,  # refuse more than this many asks within an hour (0 = off)
     "max_per_day": 24,  # and more than this many within 24 hours (0 = off)
     "min_gap_s": 120,  # refuse a new ask this soon after the previous one started (0 = off)
-    "state_file": "~/.local/state/ceo-call/last_ask",  # remembers when the last ask started; None = off
+    "state_file": "~/.local/state/ceo-call/last_ask",  # remembers when the last ask started; None = throttle off
+    "lock_file": "~/.local/state/ceo-call/run.lock",  # one ask at a time; None = off (independent of the throttle)
 }
 
 TIME_RE = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]\Z")
@@ -89,6 +90,7 @@ NOTIFY = {
     "hangup": "Colgaste antes de confirmar una decisión.",
     "undecided": "Contestaste, pero no llegaste a confirmar una opción.",
     "deferred": "Estamos en horas de silencio, así que no llamé.",
+    "deferred_retry": "Llamé una vez sin respuesta; ya estamos en horas de silencio, así que no volví a llamar.",
     "error": "No pude llamar por un fallo técnico.",
     "error_live": "Hubo un fallo técnico durante la llamada. Si ya respondiste, tu respuesta no se ha registrado: la decisión sigue pendiente.",
     "timeout": "La llamada seguía abierta cuando se acabó el tiempo, así que no se registró ninguna decisión.",
@@ -200,6 +202,8 @@ def load_config(path: Optional[str]) -> Dict:
         raise CallError("attempts, delays and timeouts add up to more than 20 hours")
     if not 1 <= config["piper_port"] <= 65535:
         raise CallError("piper_port must be between 1 and 65535")
+    if config["lock_file"] is not None and not (isinstance(config["lock_file"], str) and config["lock_file"]):
+        raise CallError("lock_file must be a non-empty path, or null to turn the run lock off")
     if config["state_file"] is not None and not (isinstance(config["state_file"], str) and config["state_file"]):
         raise CallError("state_file must be a non-empty path, or null to turn the throttle off")
     if not 1 <= config["poll_interval_s"] <= 60:
@@ -799,11 +803,11 @@ class _NoLock:
 
 def acquire_run_lock(config: Dict):
     """Hold an exclusive lock for the length of one ask. The lock vanishes with the process, even when
-    it is killed. Without a state file there is nothing to lock on, and the lock is off."""
-    path = config.get("state_file")
+    it is killed. It is independent of the throttle: `state_file: null` leaves it on."""
+    path = config.get("lock_file") or (config.get("state_file") and config["state_file"] + ".lock")
     if not path:
         return _NoLock()
-    resolved = Path(os.path.expanduser(path + ".lock"))
+    resolved = Path(os.path.expanduser(path))
     try:
         resolved.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         handle = open(resolved, "a+", encoding="utf-8")
@@ -917,7 +921,8 @@ def notify_outcome(outcome: Dict, clean: Dict, env: Dict[str, str], notifier: Ca
     token, chat_id = env.get("CEO_TELEGRAM_TOKEN"), env.get("CEO_TELEGRAM_CHAT_ID")
     outcome["notified"] = False
     if token and chat_id:
-        text = notification_text(clean["question"], clean["options"], outcome.get("reason") or outcome["status"])
+        text = notification_text(clean["question"], clean["options"], outcome.get("reason") or (
+            "deferred_retry" if outcome["status"] == "deferred" and outcome.get("attempt", 0) >= 1 else outcome["status"]))
         sent = notifier(token, chat_id, text, silent=True) if silent else notifier(token, chat_id, text)
         outcome["notified"] = bool(sent)
     return outcome
@@ -957,7 +962,9 @@ def read_request(source: str) -> str:
             with open(source, "rb") as handle:
                 data = handle.read(MAX_REQUEST_BYTES + 1)
             raw = data.decode("utf-8")
-    except (OSError, UnicodeDecodeError):
+    except UnicodeDecodeError:
+        raise CallError("the request is not valid UTF-8")
+    except OSError:
         raise CallError("cannot read the request file")
     if len(raw) > MAX_REQUEST_BYTES:
         raise CallError("the request is longer than %d bytes" % MAX_REQUEST_BYTES)

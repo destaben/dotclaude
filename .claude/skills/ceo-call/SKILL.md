@@ -28,12 +28,12 @@ alias as `remote-hosts` describes, and run the script there.
   `call_timeout_s`, `poll_interval_s`, `env_file`, and `quiet_start` / `quiet_end` (`HH:MM`; both or
   neither; checked at the start, before every retry and again right before each dial, after any
   heads-up wait), `timezone` (IANA name such as `Europe/Madrid`; default is the host's local time), `heads_up_s` (default 90),
-  `min_gap_s` (default 120), `max_per_hour` (default 6), `max_per_day` (default 24) and `state_file`. `piper_port` must be 1-65535.
+  `min_gap_s` (default 120), `max_per_hour` (default 6), `max_per_day` (default 24), `state_file` and `lock_file`. `piper_port` must be 1-65535.
   Unknown keys are rejected, and `ring_timeout_s` must be at least 5 and `call_timeout_s` at
   least 60 so a retry can never overlap a call that is still live. `poll_interval_s` must be 1 to 60
   (0 would hammer `docker exec`). A call still live at `call_timeout_s` (its folder is then kept) gets a short grace (10 polls) so a
   confirmation given right at the deadline is not lost.
-- **One ask at a time:** an exclusive lock (`<state_file>.lock`, released even if the process is killed)
+- **One ask at a time:** an exclusive lock (`lock_file`, default `~/.local/state/ceo-call/run.lock`; set `state_file: null` and it stays on, only `lock_file: null` turns it off; released even if the process is killed)
   is held for the whole run, so a second `ask` that starts meanwhile fails with `another ask is still
   running` instead of ringing the owner on top of the first.
 - **Throttle:** a new `ask` that starts less than `min_gap_s` after the previous one is refused with an
