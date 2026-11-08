@@ -9,8 +9,8 @@ stdin; exits 0 to allow and 2 to block (the message on stderr goes back to the a
 `telegram-setup` are deliberately not allowed: they are for the owner to run.
 
 Allowed (optionally prefixed by `ssh <alias>`, with no ssh options), only with the script at exactly
-`~/.claude/skills/ceo-call/scripts/ceo_call.py` (over ssh, only this `~` form; locally, also this
-machine's own absolute home path), no quotes, no shell operators, no `..`:
+`~/.claude/skills/ceo-call/scripts/ceo_call.py` (over ssh, only this `~` form, single-quoted so the remote
+shell expands it; locally, also this machine's own absolute home path), no quotes, no shell operators, no `..`:
     python3 <script> [--config ~/.config/ceo-call/<name>.json] check
     python3 <script> [--config ~/.config/ceo-call/<name>.json] ask --request <path>
     python3 <script> [--config ...] ask --request - <<'CEO_REQUEST'   (JSON lines follow, the last line
@@ -35,9 +35,11 @@ def build_patterns(home: str):
     local_script = home.rstrip("/") + "/.claude/skills/ceo-call/scripts/ceo_call.py"
     local_config = home.rstrip("/") + "/.config/ceo-call/"
     script_local = r"(?:python3\s+)?(?:%s|%s)" % (re.escape(HOME_SCRIPT), re.escape(local_script))
-    script_remote = r"(?:python3\s+)?%s" % re.escape(HOME_SCRIPT)
+    # Over ssh the local shell must not expand the ~, so the remote paths are single-quoted: the local
+    # shell strips the quotes and the remote shell expands the ~ in its own home.
+    script_remote = r"(?:python3\s+)?'%s'" % re.escape(HOME_SCRIPT)
     config_local = r"(?:--config\s+(?:%s|%s[A-Za-z0-9_.-]+\.json)\s+)?" % (HOME_CONFIG, re.escape(local_config))
-    config_remote = r"(?:--config\s+%s\s+)?" % HOME_CONFIG
+    config_remote = r"(?:--config\s+'%s'\s+)?" % HOME_CONFIG
     action = r"(?:check|ask\s+--request\s+(?:-|%s))" % REQUEST_PATH
     heredoc = r"ask\s+--request\s+-\s+<<'CEO_REQUEST'"
     patterns = []
@@ -71,7 +73,7 @@ def main() -> int:
         command = None
     if allowed(command):
         return 0
-    print("Blocked: this agent may only run ceo_call.py (check, ask, test-call). See the ceo-call skill.", file=sys.stderr)
+    print("Blocked: this agent may only run ceo_call.py (check, ask). See the ceo-call skill.", file=sys.stderr)
     return 2
 
 

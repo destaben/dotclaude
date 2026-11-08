@@ -26,11 +26,15 @@ alias as `remote-hosts` describes, and run the script there.
 - **Config file** (`--config`, JSON, optional). Keys: `container`, `piper_host`, `piper_port`,
   `endpoint` (`PJSIP/<name>`), `attempts` (1-10), `retry_delay_s`, `ring_timeout_s`,
   `call_timeout_s`, `poll_interval_s`, `env_file`, and `quiet_start` / `quiet_end` (`HH:MM`; both or
-  neither; checked before the first attempt and again before every retry), `timezone` (IANA name such as `Europe/Madrid`; default is the host's local time) and
-  `heads_up_s` (default 90). Unknown keys are rejected, and `ring_timeout_s` must be at least 5 and `call_timeout_s` at
+  neither; checked before the first attempt and again before every retry), `timezone` (IANA name such as `Europe/Madrid`; default is the host's local time) `heads_up_s` (default 90),
+  `min_gap_s` (default 120), `state_file` and `piper_port` (1-65535). Unknown keys are rejected, and `ring_timeout_s` must be at least 5 and `call_timeout_s` at
   least 60 so a retry can never overlap a call that is still live. `poll_interval_s` must be at least 1
   (0 would hammer `docker exec`). A call still live at `call_timeout_s` gets a short grace (10 polls) so a
   confirmation given right at the deadline is not lost.
+- **Throttle:** a new `ask` that starts less than `min_gap_s` after the previous one is refused with an
+  error (`asked again too soon`), so a confused or manipulated agent cannot ring the owner in a loop.
+  The start time is kept in `state_file` (default `~/.local/state/ceo-call/last_ask`; `null` or
+  `min_gap_s: 0` turns it off).
 - **Quiet hours:** inside the window no call is placed; a silent chat message is sent instead and the
   status is `deferred`. The window is re-checked before every retry, so a retry that would land inside
   it is dropped (also `deferred`).
@@ -49,9 +53,10 @@ alias as `remote-hosts` describes, and run the script there.
 The `claudio` agent reads council briefs that may quote untrusted text, so its shell is limited by a
 `PreToolUse` hook (`scripts/guard_bash.py`). Only `check` and `ask` of **this skill's own script** pass,
 and only at exactly `~/.claude/skills/ceo-call/scripts/ceo_call.py` (locally also this machine's own
-absolute home path; over ssh only the `~` form, because the remote home is unknown). Any other file
+absolute home path; over ssh only the `~` form in single quotes, because the remote home is unknown and
+the local shell must not expand it: `ssh <alias> python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' check`). Any other file
 named `ceo_call.py`, in a repository, `/tmp` or elsewhere, is refused. `--config` must be
-`~/.config/ceo-call/<name>.json`. Optionally behind `ssh <alias>` (no ssh options); no shell operators
+`~/.config/ceo-call/<name>.json` (quoted the same way over ssh). Optionally behind `ssh <alias>` (no ssh options); no shell operators
 or `..`; request JSON only through a quoted heredoc.
 
 - **User-level install required.** The hook runs `~/.claude/skills/ceo-call/scripts/guard_bash.py` and

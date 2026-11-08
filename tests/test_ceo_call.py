@@ -14,6 +14,7 @@ SCRIPT = Path(__file__).resolve().parent.parent / ".claude/skills/ceo-call/scrip
 spec = importlib.util.spec_from_file_location("ceo_call", SCRIPT)
 ceo = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ceo)
+ceo.DEFAULT_CONFIG["state_file"] = None  # tests must never touch the real throttle file
 
 
 def fake_synth(host, port, text):
@@ -115,6 +116,12 @@ def run_ask(script, request=None, env=None, notifier=None, config=None, clock_ti
 
 
 class ValidateRequestTests(unittest.TestCase):
+    def test_a_lone_surrogate_is_refused_before_any_call(self):
+        for request in ({"question": "q\ud83d", "options": ["a", "b"]}, {"question": "q", "options": ["a\ud83d", "b"]}):
+            with self.subTest(request=request):
+                with self.assertRaises(ceo.CallError):
+                    ceo.validate_request(request)
+
     def test_accepts_a_normal_request(self):
         clean = ceo.validate_request({"question": " Ship? ", "options": ["a", " b "]})
         self.assertEqual(clean, {"question": "Ship?", "options": ["a", "b"]})
@@ -419,6 +426,31 @@ class AskFlowTests(unittest.TestCase):
         result, _, _ = run_ask([{1: {"answered": "1"}, 3: {"result": ""}, 6: {"result": "2", "done": "1"}}], config={"attempts": 1})
         self.assertEqual((result["status"], result["choice"]), ("decided", 2))
 
+    def test_a_second_ask_too_soon_is_refused_before_any_call(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        cfg = {"state_file": str(state), "min_gap_s": 120}
+        result, asterisk, _ = run_ask(["1"], config=cfg)
+        self.assertEqual(result["status"], "decided")
+        self.assertTrue(state.exists())
+        with self.assertRaises(ceo.CallError) as caught:
+            run_ask(["1"], config=cfg)
+        self.assertIn("too soon", str(caught.exception))
+
+    def test_an_ask_after_the_gap_is_allowed_and_the_throttle_can_be_off(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        state.write_text(str(__import__("time").time() - 500))
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        result, _, _ = run_ask(["1"], config={"state_file": str(state), "min_gap_s": 120})
+        self.assertEqual(result["status"], "decided")
+        result, _, _ = run_ask(["1"], config={"state_file": str(state), "min_gap_s": 0})
+        self.assertEqual(result["status"], "decided")
+
+    def test_a_deferred_request_does_not_start_the_throttle(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        run_ask([], config={"state_file": str(state), "min_gap_s": 120, "quiet_start": "23:00", "quiet_end": "08:00"}, clock_time=(3, 0))
+        self.assertFalse(state.exists())
+
     def test_no_answer_retries_then_notifies_once(self):
         result, asterisk, sent = run_ask(["unanswered"] * 3, env={"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"})
         self.assertEqual(result["status"], "unanswered")
@@ -569,6 +601,20 @@ class QuietHoursTests(unittest.TestCase):
                 self.addCleanup(os.unlink, handle.name)
                 with self.assertRaises(ceo.CallError):
                     ceo.load_config(handle.name)
+
+    def test_the_port_must_be_a_real_tcp_port(self):
+        for bad in ('{"piper_port": 70000}', '{"piper_port": 0}'):
+            with self.subTest(bad=bad):
+                handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+                handle.write(bad)
+                handle.close()
+                self.addCleanup(os.unlink, handle.name)
+                with self.assertRaises(ceo.CallError):
+                    ceo.load_config(handle.name)
+
+    def test_an_out_of_range_port_in_synthesize_is_a_clean_error(self):
+        with self.assertRaises(ceo.CallError):
+            ceo.synthesize("127.0.0.1", 70000, "hola", timeout=1)
 
     def test_a_zero_poll_interval_is_refused(self):
         handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
@@ -1053,7 +1099,8 @@ class GuardTests(unittest.TestCase):
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py check",
             "python3 /home/u/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json ask --request /tmp/r.json",
             "python3 /home/u/.claude/skills/ceo-call/scripts/ceo_call.py --config /home/u/.config/ceo-call/config.json check",
-            "ssh myhost python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py check",
+            "ssh myhost python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' check",
+            "ssh myhost python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' --config '~/.config/ceo-call/c.json' ask --request -",
             "/home/u/.claude/skills/ceo-call/scripts/ceo_call.py ask --request -",
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py ask --request - <<'CEO_REQUEST'\n{\"question\": \"Ship it?\", \"options\": [\"a\", \"b\"]}\nCEO_REQUEST",
         ):
@@ -1075,6 +1122,9 @@ class GuardTests(unittest.TestCase):
             "python3 /home/u/work/.claude/skills/ceo-call/scripts/ceo_call.py check",
             "python3 /home/other/.claude/skills/ceo-call/scripts/ceo_call.py check",
             "ssh myhost python3 /home/u/.claude/skills/ceo-call/scripts/ceo_call.py check",  # remote home is unknown: ~ form only
+            "ssh myhost python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py check",  # unquoted: the LOCAL shell would expand the ~
+            "python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' check",  # quoted ~ is a literal local path that does not exist
+            "ssh myhost python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' --config '/tmp/x.json' check",
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config /tmp/evil.json check",
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/../../x.json check",
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/env check",
@@ -1097,6 +1147,16 @@ class GuardTests(unittest.TestCase):
         ):
             with self.subTest(command=command):
                 self.assertFalse(self.guard.allowed(command, home="/home/u"))
+
+    def test_the_block_message_lists_only_what_is_allowed(self):
+        import subprocess
+        out = subprocess.run(["python3", str(SCRIPT.parent / "guard_bash.py")], input=b'{"tool_input":{"command":"ls"}}', capture_output=True)
+        self.assertNotIn(b"test-call", out.stderr)
+
+    def test_the_agent_preloads_the_skill_and_gets_the_host_from_the_brief(self):
+        agent = (SCRIPT.parents[3] / "agents" / "claudio.md").read_text()
+        self.assertIn("skills: ceo-call\n", agent)
+        self.assertIn("ssh alias", agent)
 
     def test_the_hook_exit_codes_fail_closed(self):
         import subprocess

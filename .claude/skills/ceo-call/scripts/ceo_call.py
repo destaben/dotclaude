@@ -59,6 +59,8 @@ DEFAULT_CONFIG = {
     "quiet_end": None,
     "timezone": None,  # IANA name such as "Europe/Madrid"; default is the host's local time
     "heads_up_s": 90,  # when the phone is not registered, message the owner and wait this long
+    "min_gap_s": 120,  # refuse a new ask this soon after the previous one started (0 = off)
+    "state_file": "~/.local/state/ceo-call/last_ask",  # remembers when the last ask started; None = off
 }
 
 TIME_RE = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
@@ -113,6 +115,10 @@ def validate_request(request) -> Dict:
     for text in [question] + clean:
         if CONTROL_RE.search(text):
             raise CallError("text must not contain control characters")
+        try:
+            text.encode("utf-8")  # a lone surrogate would crash the final JSON output after the call
+        except UnicodeEncodeError:
+            raise CallError("text must be valid Unicode")
     return {"question": question.strip(), "options": clean}
 
 
@@ -154,13 +160,17 @@ def load_config(path: Optional[str]) -> Dict:
     quiet = (config["quiet_start"], config["quiet_end"])
     if any(quiet) and not all(isinstance(v, str) and TIME_RE.match(v) for v in quiet):
         raise CallError("quiet_start and quiet_end must both be HH:MM")
-    for key in ("piper_port", "attempts", "retry_delay_s", "ring_timeout_s", "call_timeout_s", "poll_interval_s", "heads_up_s"):
+    for key in ("piper_port", "attempts", "retry_delay_s", "ring_timeout_s", "call_timeout_s", "poll_interval_s", "heads_up_s", "min_gap_s"):
         if not isinstance(config[key], int) or isinstance(config[key], bool) or config[key] < 0:
             raise CallError("%s must be a non-negative integer" % key)
     # The whole run must stay far below the one-day age at which another run sweeps its folder.
     worst_case = config["attempts"] * (config["ring_timeout_s"] + config["call_timeout_s"] + config["retry_delay_s"] + config["heads_up_s"])
     if worst_case > 20 * 3600:
         raise CallError("attempts, delays and timeouts add up to more than 20 hours")
+    if not 1 <= config["piper_port"] <= 65535:
+        raise CallError("piper_port must be between 1 and 65535")
+    if config["state_file"] is not None and not isinstance(config["state_file"], str):
+        raise CallError("state_file must be a path or null")
     if config["poll_interval_s"] < 1:
         # 0 would make the polling loops run `docker exec` back to back for the whole call window.
         raise CallError("poll_interval_s must be at least 1")
@@ -261,7 +271,7 @@ def synthesize(host: str, port: int, text: str, timeout: int = 120) -> Tuple[int
                     break
                 elif kind == "error":
                     raise CallError("speech server reported an error")
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
         # TypeError/AttributeError: a malformed message (non-object data, null rate) must end as a
         # clean "ERROR:" line, never a traceback.
         raise CallError("cannot get speech from the speech server")
@@ -527,6 +537,7 @@ def ask(
     sleep=time.sleep,
     clock=time.monotonic,
     now: Optional[Callable] = None,
+    wall: Callable = time.time,
 ) -> Dict:
     synth = synth or synthesize
     notifier = notifier or send_telegram
@@ -537,6 +548,7 @@ def ask(
     options = clean["options"]
     if in_quiet_hours(now().strftime("%H:%M"), config.get("quiet_start"), config.get("quiet_end")):
         return notify_outcome({"status": "deferred", "attempt": 0}, clean, env, notifier, silent=True)
+    check_throttle(config, wall)
     call_id = secrets.token_hex(8)
     base = "%s/ceo/%s" % (SPOOL, call_id)
     try:
@@ -575,6 +587,27 @@ def ask(
         outcome["notified"] = False  # same keys on every outcome; a decision needs no chat message
         return outcome
     return notify_outcome(outcome, clean, env, notifier, silent=outcome["status"] == "deferred")
+
+
+def check_throttle(config: Dict, wall: Callable = time.time) -> None:
+    """Refuse a new ask that starts too soon after the previous one, so a confused or manipulated
+    agent cannot ring the owner over and over. The stamp is written when an ask starts."""
+    path, gap = config.get("state_file"), config.get("min_gap_s", 0)
+    if not path or not gap:
+        return
+    resolved = Path(os.path.expanduser(path))
+    try:
+        last = float(resolved.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        last = None
+    now_s = wall()
+    if last is not None and 0 <= now_s - last < gap:
+        raise CallError("asked again too soon: wait %d more seconds" % (gap - (now_s - last)))
+    try:
+        resolved.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        resolved.write_text("%d\n" % now_s, encoding="utf-8")
+    except OSError:
+        raise CallError("cannot write the throttle state file")
 
 
 def notify_outcome(outcome: Dict, clean: Dict, env: Dict[str, str], notifier: Callable, silent: bool = False) -> Dict:
