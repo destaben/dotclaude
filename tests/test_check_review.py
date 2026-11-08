@@ -76,6 +76,10 @@ class ValidateTests(unittest.TestCase):
         )
         self.assertIsNotNone(check_review.validate(text, "9"))
 
+    def test_hash_prefixed_body_line_is_not_a_heading(self):
+        text = GOOD.replace("### documenter", "#12 documenter docs are stale")
+        self.assertIsNotNone(check_review.validate(text, "9"))
+
     def test_formatted_heading_is_tolerated(self):
         self.assertIsNone(check_review.validate(GOOD.replace("## Review of PR #9", "**## Review of PR #9**"), "9"))
 
