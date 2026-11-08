@@ -50,3 +50,14 @@
    configured `HostName`), and the guard is inactive when no printer list exists.
    Device output is treated as
    untrusted data (the skill's own section says how).
+8. **`remote-hosts`: allow a user-maintained read-only sudoers whitelist (2026-11-08).**
+   The skill used to forbid `sudo` outright, which blocked root-only reads
+   (firewall rules, root's crontab, `dmesg`). The alternatives were keeping the ban
+   (the user types a password for every read) or full passwordless sudo (any
+   prompt-injected command runs as root). The chosen middle path is a whitelist the
+   user maintains on their own hosts, with exact paths and arguments, listed in the
+   private vault; the skill only says how to use it. It is a convenience list, not a
+   security boundary, because `docker` group membership is root-equivalent. The
+   host's sudoers file is the gate, not the vault text, and the skill adds a rule
+   that reading state never means dumping secrets. If the whitelist ever needs write
+   entries, revisit this item.

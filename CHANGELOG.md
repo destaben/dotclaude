@@ -3,6 +3,18 @@
 All notable changes to this repo are recorded here. Entries explain why a
 change was made, not just what changed — the diff already shows what.
 
+## 2026-11-08 — remote-hosts: allow the user's read-only sudoers whitelist
+
+The `remote-hosts` skill said to never run `sudo`, which left Claude unable to read root-only
+state (firewall rules, root's crontab, `dmesg`) on the user's hosts. It now allows one
+exception: a read-only whitelist the user sets up on their own hosts, run non-interactively with
+exactly the listed arguments and under the same print-state and ask-before-change rules as
+anything else. The host's sudoers file decides what may run, not the vault note, and an
+open-ended entry is not used. A new rule says reading state never means printing secrets, and
+that a whitelist does not waive it. The whitelist is described as a convenience list, not a
+security boundary, because `docker` group membership is root-equivalent. The whitelist and the
+host facts stay in the user's private vault.
+
 ## 2026-11-07 — Administer LAN devices over SSH
 
 Added a `remote-hosts` skill so Claude can act as sysadmin for the user's own
