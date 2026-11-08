@@ -87,6 +87,7 @@ jobs:
         none), and it must end with this exact last line, with real counts
         (total = severe + non-severe, 0 when there are no findings):
         Result: <total> findings (<severe> severe, <non-severe> non-severe)
+        (write "1 finding" instead of "1 findings" when the total is exactly 1)
         Between them, give one section per agent, titled "### bug-hunter" and
         "### documenter", and write the message only after both have reported.
         A final message without these parts is discarded as incomplete.

@@ -60,10 +60,10 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   section per agent and the review stays advisory. Format slips on the first
   or `Result:` line (bold, backticks, a trailing period) are tolerated so a
   good review is not discarded over cosmetics; the `## Review of PR #<n>`
-  marker itself stays exact, as the issue's contract and the prompt specify. Anything stricter-looking than
-  that is deliberate: the contract is a fixed first and last line, and a
-  drifting agent fails visibly (red job, nothing posted) instead of posting
-  something unverifiable.
+  marker itself stays exact, as the issue's contract and the prompt specify.
+  Anything stricter-looking than that is deliberate: the contract is a fixed
+  first and last line, and a drifting agent fails visibly (red job, nothing
+  posted) instead of posting something unverifiable.
 - **Fail closed on the action's outcome.** The post step now needs the action
   step to have succeeded. Before, a finished review was posted even if the
   action exited non-zero; now it is not, and the retry covers incomplete
@@ -105,8 +105,14 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
     this configuration (none were seen on this repo's runs). If it ever mirrors
     an incomplete message into a comment, that text is outside this gate:
     re-check the action's behaviour when updating its version.
-- **Not unit-tested:** the workflow gating and the retry-file fallback need a
-  real action run; the validation logic they depend on is tested.
+- **Gating coverage:** the workflow gates are covered only by text-level
+  `WorkflowContractTests`; real behaviour (the retry-file selection, the
+  outcome combinations) needs a real action run. The validation logic they
+  depend on is unit-tested.
+- **An errored final result is retried once**, like an incomplete one. Errors
+  such as max-turns or an early stop are the intermittent failure this work
+  targets, so one retry is worth its cost; a persistent error (quota) fails
+  the retry too and the job goes red with nothing posted.
 - **Retry once, then fail.** One extra run only when the first result is
   incomplete (so the normal cost is unchanged); if it is still incomplete the
   job goes red and nothing is posted.
