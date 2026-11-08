@@ -47,9 +47,10 @@ Quick is 3 model calls, full is 6, so it is kept for real decisions. See
 - `remote-hosts` (skill): administering the user's own LAN devices over ssh,
   read-only by default. It is not part of the change pipeline; see
   `docs/decisions/0004-tooling-choices.md`, item 7.
-- `ceo-call` (skill) and the `claudio` agent: a decision the council cannot
-  resolve goes to the user by phone (keypad answers, quiet hours, chat
-  fallback). Not part of the change pipeline; see
+- `ceo-call` (skill) and the `claudio` agent: the escalation the README diagram
+  shows as a dotted edge, not a step of `/release`. A decision the council
+  cannot resolve goes to the user by phone (keypad answers, quiet hours, chat
+  fallback); see
   `docs/decisions/0004-tooling-choices.md`, item 8.
 
 ## GitHub PR review (`.github/workflows/claude-pr-review.yml`)

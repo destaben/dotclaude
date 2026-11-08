@@ -51,3 +51,8 @@ was wrong.
 
 ## Follow-ups (not yet done)
 - After a restart, test whether an empty `tools:` gives the outsider no tools.
+
+## See also
+A decision the council cannot resolve is handed up to the user, by phone if the `ceo-call` skill is set
+up: see the "When the council cannot resolve it" section of the `council-policy` skill and
+`0004-tooling-choices.md`, item 8.

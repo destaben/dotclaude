@@ -60,7 +60,7 @@
    message and the call waits briefly; if the phone still has not registered, the
    result is `unanswered` with `reason: phone_not_registered`. A repeat key (9)
    or a wrong key uses up a round on purpose: the round limit bounds how long a
-   call can occupy the phone, and the skill documents it. Telephony instance data
+   call can occupy the phone, and the skill's "Rounds" section documents it. Telephony instance data
    stays in the user's private notes.
    The agent's shell is restricted to the call script by a hook, because it reads
    council briefs that can quote untrusted text and the env file holds the chat

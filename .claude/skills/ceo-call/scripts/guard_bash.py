@@ -8,41 +8,59 @@ stdin; exits 0 to allow and 2 to block (the message on stderr goes back to the a
 `test-call` (it phones the owner with no decision pending), `test-call --ignore-quiet-hours` and
 `telegram-setup` are deliberately not allowed: they are for the owner to run.
 
-Allowed, with <path> = `~/.claude/skills/ceo-call/scripts` or an absolute path ending in
-`/.claude/skills/ceo-call/scripts` (optionally prefixed by `ssh <alias>`), made only of plain
-path/word characters, no quotes, no shell operators:
-    python3 <path>/ceo_call.py [--config <path>] check
-    python3 <path>/ceo_call.py [--config <path>] ask --request <path>
-    python3 <path>/ceo_call.py [--config <path>] ask --request - <<'CEO_REQUEST'   (JSON lines follow,
-        the last line is CEO_REQUEST; the quoted delimiter means the body is never expanded)
+Allowed (optionally prefixed by `ssh <alias>`, with no ssh options), only with the script at exactly
+`~/.claude/skills/ceo-call/scripts/ceo_call.py` (over ssh, only this `~` form; locally, also this
+machine's own absolute home path), no quotes, no shell operators, no `..`:
+    python3 <script> [--config ~/.config/ceo-call/<name>.json] check
+    python3 <script> [--config ~/.config/ceo-call/<name>.json] ask --request <path>
+    python3 <script> [--config ...] ask --request - <<'CEO_REQUEST'   (JSON lines follow, the last line
+        is CEO_REQUEST; the quoted delimiter means the body is never expanded)
 """
 import json
+import os
 import re
 import sys
 
-WORD = r"[A-Za-z0-9_./@:=~+-]+"
-# Pinned to the installed skill: a ceo_call.py planted elsewhere (a cloned repo, /tmp) must not pass.
-# Absolute or ~ paths only (a relative one depends on the working directory), and no ".." segment.
-SCRIPT = r"(?:python3\s+)?(?:~/|/)(?:(?!\.{1,2}/)[A-Za-z0-9_.+-]+/)*\.claude/skills/ceo-call/scripts/ceo_call\.py"
-CONFIG = r"(?:--config\s+%s\s+)?" % WORD
+HOME_SCRIPT = "~/.claude/skills/ceo-call/scripts/ceo_call.py"
+HOME_CONFIG = r"~/\.config/ceo-call/[A-Za-z0-9_.-]+\.json"
 SSH = r"(?:ssh\s+[A-Za-z0-9_.@][A-Za-z0-9_.@-]*\s+)?"  # no ssh options: -o ProxyCommand would run anything
-ACTION = r"(?:check|ask\s+--request\s+(?:-|%s))" % WORD
-PLAIN = re.compile(r"^%s%s\s*%s\s*%s$" % (SSH, SCRIPT, CONFIG, ACTION))
-HEREDOC_HEAD = re.compile(r"^%s%s\s*%s\s*ask\s+--request\s+-\s+<<'CEO_REQUEST'$" % (SSH, SCRIPT, CONFIG))
+REQUEST_PATH = r"[A-Za-z0-9_./+-]+"
 DELIMITER = "CEO_REQUEST"
 
 
-def allowed(command: str) -> bool:
+def build_patterns(home: str):
+    """Pin the script to the one installed copy. Only that exact path passes: the `~` form (which a
+    remote host expands for itself) or this machine's own absolute home path. Any other file named
+    ceo_call.py, however deep its path ends in .claude/skills/ceo-call/scripts, is refused."""
+    local_script = home.rstrip("/") + "/.claude/skills/ceo-call/scripts/ceo_call.py"
+    local_config = home.rstrip("/") + "/.config/ceo-call/"
+    script_local = r"(?:python3\s+)?(?:%s|%s)" % (re.escape(HOME_SCRIPT), re.escape(local_script))
+    script_remote = r"(?:python3\s+)?%s" % re.escape(HOME_SCRIPT)
+    config_local = r"(?:--config\s+(?:%s|%s[A-Za-z0-9_.-]+\.json)\s+)?" % (HOME_CONFIG, re.escape(local_config))
+    config_remote = r"(?:--config\s+%s\s+)?" % HOME_CONFIG
+    action = r"(?:check|ask\s+--request\s+(?:-|%s))" % REQUEST_PATH
+    heredoc = r"ask\s+--request\s+-\s+<<'CEO_REQUEST'"
+    patterns = []
+    for ssh, script, config in (("", script_local, config_local), (r"ssh\s+[A-Za-z0-9_.@][A-Za-z0-9_.@-]*\s+", script_remote, config_remote)):
+        patterns.append((re.compile(r"^%s%s\s*%s\s*%s$" % (ssh, script, config, action)),
+                         re.compile(r"^%s%s\s*%s\s*%s$" % (ssh, script, config, heredoc))))
+    return patterns
+
+
+def allowed(command: str, home: str = None) -> bool:
     if not isinstance(command, str) or not command.strip():
         return False
+    if ".." in command.split("<<")[0]:
+        return False
+    patterns = build_patterns(home if home is not None else os.path.expanduser("~"))
     command = command.strip("\n")
     if "\n" not in command:
-        return bool(PLAIN.match(command.strip()))
+        return any(plain.match(command.strip()) for plain, _ in patterns)
     lines = command.split("\n")
     head, body, tail = lines[0].strip(), lines[1:-1], lines[-1]
     if tail != DELIMITER or any(line == DELIMITER for line in body):
         return False
-    return bool(HEREDOC_HEAD.match(head))
+    return any(heredoc.match(head) for _, heredoc in patterns)
 
 
 def main() -> int:
