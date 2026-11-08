@@ -3,6 +3,26 @@
 All notable changes to this repo are recorded here. Entries explain why a
 change was made, not just what changed — the diff already shows what.
 
+## 2026-11-08 — Background worker container on a remote Docker host
+
+Added a `worker` skill for one-shot, owner-triggered Claude Code runs in a
+container on an SSH host the owner controls, so a bounded task can run unattended
+without anything being scheduled. The container holds no GitHub credential: it
+clones a public repo anonymously, and the worker edits files on a new `worker/`
+branch under a tool allowlist with no bare shell, no GitHub CLI, no git history
+and no push. The entrypoint makes the commit itself, with a fixed author and
+message, so the worker never controls commit metadata.
+
+Publishing stays on the owner's machine. It verifies a bundle that holds only the
+run's branch, scans that branch and the pull request text for credential-shaped
+text, and pushes exactly that branch as a draft pull request. Keeping the token
+out of the container means a misbehaving run cannot push or open pull requests.
+`--issue` accepts only issues the owner authored, and issue text is quoted as
+data, not instructions. The container's claude process runs with a scrubbed
+environment. The residual risk is stated in the skill: an allowed test runner
+executes code the worker wrote, so tasks must come only from owner-authored input.
+The decision is recorded in `docs/decisions/0004-tooling-choices.md`, item 8.
+
 ## 2026-11-07 — Administer LAN devices over SSH
 
 Added a `remote-hosts` skill so Claude can act as sysadmin for the user's own

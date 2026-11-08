@@ -1,6 +1,6 @@
 # 0004 — Tooling choices
 
-- Date: 2026-10-25 (consolidates the former 0003, 0004, and 0006); items 5, 6 and 7 added 2026-11-01, 2026-11-07 and 2026-11-07 respectively
+- Date: 2026-10-25 (consolidates the former 0003, 0004, and 0006); items 5, 6 and 7 added 2026-11-01, 2026-11-07 and 2026-11-07 respectively; item 8 added 2026-11-08
 - Status: accepted; the license awaits your final confirmation
 
 1. **GitHub MCP connector by default, not `gh`.** Per your instruction, as
@@ -50,3 +50,12 @@
    configured `HostName`), and the guard is inactive when no printer list exists.
    Device output is treated as
    untrusted data (the skill's own section says how).
+8. **`worker` container holds no GitHub credential; publishing happens on the owner's
+   machine (2026-11-08).** An unattended run that could push would be able to push
+   anywhere its token reaches, including after a prompt injection. So the container
+   clones public repos anonymously and only edits files. The owner's machine fetches
+   the bundle, checks that it holds exactly one `worker/` branch, scans the branch and
+   the pull request text, then pushes that branch and opens a draft pull request with
+   the owner's own `gh`. The cost is that nothing is published until the owner's
+   machine picks the run up, and private repos are out of scope for this version.
+   The residual risks are listed in the skill's own section.
