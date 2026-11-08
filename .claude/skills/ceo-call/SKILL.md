@@ -40,7 +40,9 @@ alias as `remote-hosts` describes, and run the script there.
   error (`asked again too soon`), and so is any `ask` beyond `max_per_hour` in an hour or `max_per_day` in 24 hours (`too many asks`).
   An `ask` gives its slot back only when nothing reached the owner: no call and no chat message
   of any kind (heads-up, "not connected" notice, error notice). So a broken speech server or an asleep
-  phone cannot be used to spam the chat. A refused `ask` (too soon, too many, another running) sends no
+  phone cannot be used to spam the chat. A failure before dialling (speech server or docker down) keeps no slot on
+  purpose: a transient fault must not lock the owner out, and a loop of failing asks is still serialised by the run
+  lock and only drives local speech synthesis, never a call or a message. A refused `ask` (too soon, too many, another running) sends no
   chat message either, for the same reason; the calling workflow reports the decision as still pending. This spaces out and caps the calls a confused or manipulated agent can cause; it does not make a
   loop impossible (up to `max_per_hour` asks, each with up to `attempts` calls, can still ring). The
   limits are per host (each machine keeps its own `state_file`), so calling through two listed hosts
@@ -61,7 +63,8 @@ alias as `remote-hosts` describes, and run the script there.
   error and messages the owner, and leaves the call folder for the dialplan to finish writing to
   (a daily sweep removes it) instead of deleting it under a confirmation.
 - **Env file** (default `~/.config/ceo-call/env`, mode `0600`, refused otherwise): `CEO_TELEGRAM_TOKEN`
-  and `CEO_TELEGRAM_CHAT_ID`. Create the bot with the chat service's bot manager yourself; never
+  and `CEO_TELEGRAM_CHAT_ID`. A missing file only turns the chat messages off, but a missing
+  `env_file` path set in the config prints a `WARNING:` line on stderr, so a typo is visible. Create the bot with the chat service's bot manager yourself; never
   paste the token into a chat or a tracked file. After messaging the bot once, `ceo_call.py
   telegram-setup` prints the chat id.
 
@@ -135,9 +138,17 @@ time, about 6 minutes by default): cutting it off would drop a decision the owne
 confirming, and nothing new starts inside the window.
 
 ## Speech limits
-Each synthesis has its own deadline, all prompts of a request share a 300 s budget, one prompt's audio is
+The question and options are refused (`ERROR:`, before any call) when the first prompt, which reads the
+intro, the question, every option and the instruction, would exceed 1500 characters; with the 800 and 200
+character caps alone, a request could outgrow the audio cap below. Each synthesis has its own deadline, all prompts of a request share a 300 s budget, one prompt's audio is
 capped at 8 MiB (memory), and converting it to 8 kHz has a separate 60 s budget (the conversion is pure
 Python). Any breach is an `ERROR:` line, not a traceback.
+
+## A confirmation that comes too late
+When a call is still open at `call_timeout_s` and the grace, `ask` returns `timeout` and tells the owner that
+no decision was recorded. A confirmation given after that is written to the kept folder (a daily sweep
+removes it) and is never read, on purpose: nobody is waiting for it any more, so recording it later would be
+a decision taken with no one to act on it. The decision stays pending and `claudio` reports it as such.
 
 ## Rounds
 A call gets three rounds to produce a confirmed choice. Pressing 9 (repeat), any other key, or staying

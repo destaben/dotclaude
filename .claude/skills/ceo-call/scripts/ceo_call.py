@@ -43,6 +43,10 @@ SAMPLE_RATE = 8000
 MAX_OPTIONS = 8
 MAX_QUESTION_CHARS = 800
 MAX_OPTION_CHARS = 200
+# The first prompt reads the intro, question, every option and the instruction in one go. At Piper's
+# 22.05 kHz mono (44 KB/s) the per-prompt audio cap below is about 190 s; 1500 characters of Spanish
+# speech stay well inside it, so a request that passes validation cannot fail on audio size.
+MAX_SPOKEN_CHARS = 1500
 MAX_WYOMING_PAYLOAD = 16 * 1024 * 1024
 MAX_PCM_BYTES = 8 * 1024 * 1024  # total audio for one prompt (~3 minutes): bounds memory; the conversion time has its own budget
 MAX_HEADER_BYTES = 64 * 1024  # one Wyoming header line
@@ -147,7 +151,10 @@ def validate_request(request) -> Dict:
             text.encode("utf-8")  # a lone surrogate would crash the final JSON output after the call
         except UnicodeEncodeError:
             raise CallError("text must be valid Unicode")
-    return {"question": question.strip(), "options": clean}
+    cleaned = {"question": question.strip(), "options": clean}
+    if len(build_prompts(cleaned["question"], clean)["prompt"]) > MAX_SPOKEN_CHARS:
+        raise CallError("the question and options are too long to read aloud (limit %d characters in all)" % MAX_SPOKEN_CHARS)
+    return cleaned
 
 
 def build_prompts(question: str, options: List[str]) -> Dict[str, str]:
@@ -232,7 +239,7 @@ def load_env_file(path: str) -> Dict[str, str]:
     try:
         mode = resolved.stat().st_mode & 0o777
     except FileNotFoundError:
-        return {}
+        return {}  # callers that need to tell "not set up" from "mistyped" use load_env
     except OSError:
         raise CallError("cannot read the env file")
     if mode & 0o077:
@@ -252,6 +259,15 @@ def load_env_file(path: str) -> Dict[str, str]:
             key = key[6:].strip()  # shell style: "export NAME=value"
         values[key] = value.strip().strip("'\"")
     return values
+
+
+def load_env(config: Dict) -> Dict[str, str]:
+    """Load the env file named in the config. A missing file is allowed (chat messages are then off),
+    but a path the owner set themselves is warned about, so a typo does not silently disable the fallback."""
+    path = config["env_file"]
+    if not Path(os.path.expanduser(path)).exists() and path != DEFAULT_CONFIG["env_file"]:
+        print("WARNING: env_file %s does not exist, so no chat messages will be sent" % path, file=sys.stderr)
+    return load_env_file(path)
 
 
 # ---------------------------------------------------------------------------------- speech (Piper)
@@ -572,6 +588,9 @@ def run_attempt(asterisk, config: Dict, call_id: str, option_count: int, sleep=t
         if not answered and asterisk.read_file(base + "/answered") is None:
             return {"status": "unanswered"}
         if asterisk.read_file(base + "/done") is None:
+            # Deliberate: a confirmation given after this point lands in the kept folder and is never
+            # read. Nobody is waiting for it any more, so recording it later would be a decision taken
+            # with no one to act on it; the owner is told (`timeout` notice) that none was recorded.
             # The dialplan never signalled its end, so the call may still be open: it is not a hangup,
             # and `ask` must not start a second call on top of it.
             return {"status": "timeout"}
@@ -684,7 +703,10 @@ def ask(
     attempt = 0  # the attempt in progress; read by the error path below
 
     def settle():
-        """Give the throttle slot back only if nothing reached the owner: no call, no chat message."""
+        """Give the throttle slot back only if nothing reached the owner: no call, no chat message.
+        Deliberate: a failure before dialling (speech server down, docker error) keeps no slot, so a
+        transient fault does not lock the owner out. A loop of failing asks is still serialised by the
+        run lock, and the work it drives is local speech synthesis, not calls or messages."""
         if not (dialled or reached["owner"]):
             release_throttle(config, stamp)
 
@@ -973,7 +995,7 @@ def read_request(source: str) -> str:
 
 def cmd_ask(args) -> int:
     config = load_config(args.config)
-    env = load_env_file(config["env_file"])
+    env = load_env(config)
     exit_cleanly_on_sigterm()
     raw = read_request(args.request)
     try:
@@ -1001,7 +1023,7 @@ def cmd_test_call(args) -> int:
     config = load_config(args.config)
     if args.ignore_quiet_hours:
         config["quiet_start"] = config["quiet_end"] = None
-    env = load_env_file(config["env_file"])
+    env = load_env(config)
     exit_cleanly_on_sigterm()
     request = {"question": TEST_PASSAGE, "options": TEST_OPTIONS}
     outcome = ask(request, config, env, DockerAsterisk(config["container"]))
@@ -1025,7 +1047,7 @@ def cmd_check(args) -> int:
     except CallError as error:
         ok = False
         print("asterisk: FAILED (%s)" % error)
-    env = load_env_file(config["env_file"])
+    env = load_env(config)
     print("telegram: %s" % ("configured" if env.get("CEO_TELEGRAM_TOKEN") and env.get("CEO_TELEGRAM_CHAT_ID") else "not configured"))
     return 0 if ok else 1
 

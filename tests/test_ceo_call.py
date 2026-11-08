@@ -6,6 +6,7 @@ import socket
 import tempfile
 import threading
 import unittest
+import unittest.mock
 import wave
 from datetime import datetime
 from pathlib import Path
@@ -143,6 +144,32 @@ class ValidateRequestTests(unittest.TestCase):
             with self.subTest(request=request):
                 with self.assertRaises(ceo.CallError):
                     ceo.validate_request(request)
+
+
+    def test_the_largest_allowed_request_fits_the_audio_cap_and_a_longer_one_is_refused(self):
+        # The first prompt reads the intro, question, options and instruction in one audio file.
+        # 22.05 kHz mono 16-bit is Piper's usual output; its audio must stay under MAX_PCM_BYTES.
+        bytes_per_second, chars_per_second = 22050 * 2, 10  # a deliberately slow reading speed
+        self.assertLessEqual(ceo.MAX_SPOKEN_CHARS / chars_per_second * bytes_per_second, ceo.MAX_PCM_BYTES)
+        options = ["o" * 150] * 8
+        too_long = {"question": "q" * 800, "options": options}
+        with self.assertRaises(ceo.CallError) as caught:
+            ceo.validate_request(too_long)
+        self.assertIn("too long to read aloud", str(caught.exception))
+        fits = {"question": "q" * 300, "options": ["o" * 100] * 8}
+        self.assertEqual(len(ceo.validate_request(fits)["options"]), 8)
+        spoken = ceo.build_prompts(fits["question"], fits["options"])["prompt"]
+        self.assertLessEqual(len(spoken), ceo.MAX_SPOKEN_CHARS)
+
+    def test_the_spoken_limit_is_checked_on_the_text_that_is_really_read(self):
+        # A request just under the limit on raw text but over it once the phrases are added.
+        question = "q" * 700
+        options = ["o" * 80] * 8
+        total_raw = len(question) + sum(len(o) for o in options)
+        self.assertLess(total_raw, ceo.MAX_SPOKEN_CHARS)
+        self.assertGreater(len(ceo.build_prompts(question, options)["prompt"]), ceo.MAX_SPOKEN_CHARS)
+        with self.assertRaises(ceo.CallError):
+            ceo.validate_request({"question": question, "options": options})
 
 
 class PromptTests(unittest.TestCase):
@@ -441,6 +468,30 @@ class EnvFileTests(unittest.TestCase):
 
     def test_missing_file_means_nothing_configured(self):
         self.assertEqual(ceo.load_env_file("/nonexistent/ceo-env"), {})
+
+    def test_a_missing_env_file_the_owner_named_is_warned_about_but_not_fatal(self):
+        import contextlib
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            env = ceo.load_env(dict(ceo.DEFAULT_CONFIG, env_file="/nonexistent/ceo-env"))
+        self.assertEqual(env, {})
+        self.assertIn("WARNING: env_file /nonexistent/ceo-env does not exist", err.getvalue())
+
+    def test_the_default_env_file_missing_is_not_warned_about(self):
+        import contextlib
+        err = io.StringIO()
+        with tempfile.TemporaryDirectory() as home:
+            with unittest.mock.patch.dict(os.environ, {"HOME": home}), contextlib.redirect_stderr(err):
+                self.assertEqual(ceo.load_env(dict(ceo.DEFAULT_CONFIG)), {})
+        self.assertEqual(err.getvalue(), "")
+
+    def test_a_present_env_file_is_not_warned_about(self):
+        import contextlib
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            env = ceo.load_env(dict(ceo.DEFAULT_CONFIG, env_file=self.make(0o600)))
+        self.assertEqual(env["CEO_TELEGRAM_TOKEN"], "abc")
+        self.assertEqual(err.getvalue(), "")
 
 
 class TelegramTests(unittest.TestCase):
@@ -1758,7 +1809,10 @@ class CliTests(unittest.TestCase):
         self.request = Path(self.tmp.name) / "request.json"
         self.request.write_text(json.dumps({"question": "Ship it?", "options": ["Yes", "No"]}))
         self.config = Path(self.tmp.name) / "config.json"
-        self.config.write_text(json.dumps({"env_file": str(Path(self.tmp.name) / "env")}))
+        env_file = Path(self.tmp.name) / "env"
+        env_file.write_text("")
+        env_file.chmod(0o600)
+        self.config.write_text(json.dumps({"env_file": str(env_file)}))
         self.originals = (ceo.DockerAsterisk, ceo.synthesize)
         self.addCleanup(self.restore)
         ceo.synthesize = fake_synth
