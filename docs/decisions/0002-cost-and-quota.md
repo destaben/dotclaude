@@ -62,8 +62,10 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
 - **Fail closed on the action's outcome.** The post step now needs the action
   step to have succeeded. Before, a finished review was posted even if the
   action exited non-zero; now it is not, and the retry covers incomplete
-  results only, not failed runs. A script error (exit 2, missing file) fails
-  the job at once instead of spending a retry.
+  results only, not failed runs. A script error (exit 2, or the script itself
+  missing) fails the job at once; a missing or unreadable execution file is an
+  incomplete review (exit 1) and is retried. A failed retry run is never
+  posted.
 - **Not unit-tested:** the workflow gating and the retry-file fallback need a
   real action run; the validation logic they depend on is tested.
 - **Retry once, then fail.** One extra run only when the first result is

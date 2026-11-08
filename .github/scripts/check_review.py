@@ -39,20 +39,29 @@ def last_result(execution_file: Path):
         data = [data]
     if not isinstance(data, list):
         return None
-    results = [
-        m.get("result")
-        for m in data
-        if isinstance(m, dict)
-        and m.get("type") == "result"
-        and m.get("subtype") == "success"
-        and not m.get("is_error")
-    ]
-    return results[-1] if results and isinstance(results[-1], str) else None
+    # Only the run's final result counts: if it errored, an earlier success
+    # must not be posted in its place.
+    results = [m for m in data if isinstance(m, dict) and m.get("type") == "result"]
+    if not results:
+        return None
+    final = results[-1]
+    if final.get("subtype") != "success" or final.get("is_error"):
+        return None
+    text = final.get("result")
+    return text if isinstance(text, str) else None
+
+
+def unfence(text):
+    """Drop a code fence wrapped around the whole message, if any."""
+    lines = (text or "").strip().splitlines()
+    if len(lines) >= 2 and lines[0].startswith("```") and lines[-1].strip() == "```":
+        return "\n".join(lines[1:-1])
+    return text or ""
 
 
 def validate(text, pr_number):
     """Return None if `text` is a finished review, else the reason it is not."""
-    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    lines = [ln.strip() for ln in unfence(text).splitlines() if ln.strip()]
     if not lines:
         return "empty result"
     heading = f"## Review of PR #{pr_number}"
@@ -82,7 +91,7 @@ def main(argv):
     if reason:
         print(f"incomplete review, not posting: {reason}", file=sys.stderr)
         return 1
-    output_file.write_text(text.strip() + "\n")
+    output_file.write_text(unfence(text).strip() + "\n")
     return 0
 
 

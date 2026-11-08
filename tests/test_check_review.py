@@ -60,6 +60,9 @@ class ValidateTests(unittest.TestCase):
             text = GOOD.replace("Result: 0 findings (0 severe, 0 non-severe)", last)
             self.assertIsNone(check_review.validate(text, "9"), last)
 
+    def test_code_fenced_review_is_accepted(self):
+        self.assertIsNone(check_review.validate("```markdown\n" + GOOD + "```\n", "9"))
+
     def test_counts_must_add_up(self):
         text = GOOD.replace("0 findings (0 severe", "3 findings (1 severe")
         self.assertIsNotNone(check_review.validate(text, "9"))
@@ -105,8 +108,18 @@ class CliTests(unittest.TestCase):
         code, _ = self.run_cli([err])
         self.assertEqual(code, 1)
 
-    def test_missing_or_invalid_execution_file_fails(self):
+    def test_fenced_review_is_posted_without_the_fence(self):
+        code, body = self.run_cli([self.result("```markdown\n" + GOOD + "```")])
+        self.assertEqual(code, 0)
+        self.assertEqual(body, GOOD)
+
+    def test_missing_execution_file_fails(self):
         self.assertEqual(self.run_cli(None)[0], 1)
+
+    def test_final_error_result_does_not_fall_back_to_earlier_success(self):
+        code, body = self.run_cli([self.result(GOOD), self.result(GOOD, is_error=True)])
+        self.assertEqual(code, 1)
+        self.assertIsNone(body)
 
     def test_non_success_subtype_is_ignored(self):
         msg = self.result(GOOD, subtype="error_max_turns")

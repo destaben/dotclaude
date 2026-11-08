@@ -159,8 +159,13 @@ jobs:
       # asks for it. Treat the review as advisory. A workflow_dispatch run has
       # no PR number, so there is nothing to post to and it is skipped.
       # A review that is still incomplete here is not posted: the job fails so
-      # the gap shows as a red check, and the only comment this workflow ever
-      # posts is a finished review whose last line states the outcome.
+      # the gap shows as a red check, and the only comment this step ever
+      # posts is a finished review whose last line states the outcome. (The
+      # action itself could add its own comments; none were seen on this
+      # repo's runs.) The gate script runs from the checkout: on a same-repo PR
+      # the author can edit it, but they can already edit this workflow, so it
+      # grants nothing new; fork PRs are skipped, and the `@claude review`
+      # path checks out the default branch.
       - name: Post the review
         if: ${{ !cancelled() && steps.review.outcome == 'success' && (github.event.pull_request.number || github.event.issue.number) }}
         env:
@@ -168,7 +173,12 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
           FIRST_FILE: ${{ steps.review.outputs.execution_file }}
           RETRY_FILE: ${{ steps.retry.outputs.execution_file }}
+          RETRY_OUTCOME: ${{ steps.retry.outcome }}
         run: |
+          if [ "$RETRY_OUTCOME" = "failure" ]; then
+            echo "::error::the retry run failed; not posting its output"
+            exit 1
+          fi
           EXECUTION_FILE="${RETRY_FILE:-$FIRST_FILE}"
           if ! python3 .github/scripts/check_review.py "$EXECUTION_FILE" "$PR_NUMBER" "$RUNNER_TEMP/review.md"; then
             echo "::error::the review run ended without a finished review; nothing posted"
@@ -188,7 +198,8 @@ jobs:
 # out the target repo, not your ~/.claude — user-scope install isn't visible
 # to it. Run `python3 scripts/install.py --mode project --target <path-to-that-repo>`
 # from this dotclaude repo to install the agents/skills there, then copy this
-# workflow file in too. `destaben/github-config`'s `apply.sh` automates the
+# workflow file in too, plus .github/scripts/check_review.py (without it the
+# check step fails and no review is ever posted). `destaben/github-config`'s `apply.sh` automates the
 # `CLAUDE_CODE_OAUTH_TOKEN` secret for every public repo tagged with the
 # `github-config` topic, but not the agent/skill files or this workflow file
 # itself — those still need `install.py --mode project` plus a manual copy

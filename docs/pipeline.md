@@ -51,7 +51,8 @@ Quick is 3 model calls, full is 6, so it is kept for real decisions. See
 ## GitHub PR review (`.github/workflows/claude-pr-review.yml`)
 This workflow is dotclaude's own project-specific CI — it is *not* installed
 by `install.py`; to use it in another repo, project-scope install the agents
-there too (see the README's Install section) and copy this workflow file in.
+there too (see the README's Install section) and copy this workflow file in,
+together with `.github/scripts/check_review.py` (without it no review is posted).
 It runs the same `bug-hunter` agent against a GitHub pull request, instead of
 a local diff — no second agent, see
 `docs/decisions/0001-pipeline-and-agents.md`. Triggered on every
