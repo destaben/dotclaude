@@ -31,8 +31,8 @@ python3 scripts/install.py --uninstall      # remove what a prior run installed
   work in afterward.
 - **Project scope**: installs `CLAUDE.md` and `.claude/{agents,commands,skills}`
   into one specific project. The `claudio` agent needs the user-scope install:
-  a project-level copy can change its shell-guard hook (see "Agent safety" in
-  the `ceo-call` skill). Use project scope for a project where you want a
+  a project-level copy takes precedence over it and can change or drop its
+  shell-guard hook (see "Agent safety" in the `ceo-call` skill). Use project scope for a project where you want a
   GitHub Actions workflow (like `claude-pr-review.yml`) to see these agents — a
   CI runner only checks out that project, not your `~/.claude/`.
 - Everything is symlinked (or copied with `--copy`) whole, **except
@@ -126,8 +126,8 @@ The diagram's boxes map to the `planner`, `implementer`, `bug-hunter`, and
 by default, or a full one (adding first principles, visionary, executor),
 whose chair's verdict settles the choice (see the `council-policy` skill). The
 dotted edge to `claudio` is an escalation, not a step of `/release` (see
-`council-policy`). Two more entry points sit outside the diagram: `/pr` runs the `commit-and-pr`
-skill directly, for a change you've already verified yourself and don't want
+`council-policy`). Two more entry points sit outside the diagram: `/pr` runs
+the `commit-and-pr` skill directly, for a change you've already verified yourself and don't want
 the full `/release` pipeline for. The `token-auditor` agent runs on demand
 (not part of this diagram) to report context bloat in `CLAUDE.md`, skills,
 and agents.

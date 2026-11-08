@@ -57,6 +57,5 @@ Decision 2 stands for the pipeline. The one exception in the repo is the shell g
 agent's own frontmatter, scoped to that agent and outside the pipeline (`0004-tooling-choices.md`, item 8).
 
 ## See also
-A decision the council cannot resolve is handed up to the user, by phone if the `ceo-call` skill is set
-up: see the "When the council cannot resolve it" section of the `council-policy` skill and
-`0004-tooling-choices.md`, item 8.
+What happens when the council cannot resolve a decision: `council-policy`, "When the council cannot
+resolve it".
