@@ -22,9 +22,9 @@ Anything else (a progress message, an empty result, a missing or unreadable
 execution file) exits 3 and writes nothing, so the caller can retry or fail
 the job instead of posting an unfinished review as if it were one. Exit 3 is
 reserved for "incomplete review"; every other non-zero code (2 for misuse, an
-unwritable output or a review that contains a secret's value, 1 for an
-uncaught crash or a syntax error) is a setup
-problem, so the workflow does not retry on it.
+unwritable output, a review that contains a secret's value or an uncaught
+error, 1 only if the script cannot even start, e.g. a syntax error) is a
+setup problem, so the workflow does not retry on it.
 """
 import json
 import os
@@ -88,11 +88,14 @@ def validate(text, pr_number):
     heading = f"## Review of PR #{pr_number}"
     # An agent that was blocked may still format a "0 findings" review around
     # an admission that it checked nothing; that is not a review.
-    # Only the opening lines are checked, so a finding that merely quotes one
-    # of these phrases does not block a good review.
-    admitted = "\n".join(lines[:4]).lower()
-    for phrase in ("review is incomplete", "could not complete", "review incomplete"):
-        if phrase in admitted:
+    # Only lines that START with one of these phrases (markdown marks ignored)
+    # in the opening lines count, so a finding that merely quotes one does not
+    # block a good review.
+    for ln in lines[:4]:
+        opening = ln.lstrip("#*_> `").lower()
+        if opening.startswith(
+            ("this review is incomplete", "review incomplete", "could not complete")
+        ):
             return "the review says it is incomplete"
     # One markdown heading per agent, so a sentence that merely names an agent
     # ("still waiting for the documenter") does not count as its section.
@@ -136,7 +139,15 @@ def leaked_secret(text, environ=None):
     environ = os.environ if environ is None else environ
     for name in SECRET_ENV_VARS:
         value = environ.get(name, "")
-        if len(value) >= 8 and value in text:
+        if len(value) < 8:
+            continue
+        if value in text:
+            return name
+        # A long secret quoted in part (or split) still leaks it: any
+        # 16-character window of the value counts.
+        if len(value) > 16 and any(
+            value[i : i + 16] in text for i in range(len(value) - 15)
+        ):
             return name
     return None
 

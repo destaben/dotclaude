@@ -114,7 +114,9 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   `/proc`, `/etc` and `/run` are denied (not `/home`: the runner checks the
   repo out under the runner user's home directory), and the gate refuses to
   post, with exit 2 and no retry, any review that contains the value of
-  `CLAUDE_CODE_OAUTH_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN`. Neither layer
+  `CLAUDE_CODE_OAUTH_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN`, or any
+  16-character piece of one. The agent is also not given `git show`, since
+  `git show --output=<path>` can write files. Neither layer
   catches a transformed secret (for example base64), so the review stays
   advisory and fork PRs stay skipped on the automatic trigger. Open question:
   the `Read(//...)`-style absolute-path deny syntax follows the Claude Code

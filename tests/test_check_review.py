@@ -122,6 +122,12 @@ class ValidateTests(unittest.TestCase):
         )
         self.assertIsNone(check_review.validate(text, "9"))
 
+    def test_phrase_must_open_a_line_to_count_as_an_admission(self):
+        mid = GOOD.replace("Nothing.", "The agent could not complete a probe.", 1)
+        self.assertIsNone(check_review.validate(mid, "9"))
+        start = GOOD.replace("Nothing.", "**Could not complete** the check.", 1)
+        self.assertIsNotNone(check_review.validate(start, "9"))
+
     def test_counts_must_add_up(self):
         text = GOOD.replace("0 findings (0 severe", "3 findings (1 severe")
         self.assertIsNotNone(check_review.validate(text, "9"))
@@ -166,6 +172,9 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertGreaterEqual(self.text.count("          GITHUB_TOKEN: ${{ secrets."), 1)
         self.assertGreaterEqual(self.text.count("          GH_TOKEN: ${{ secrets."), 1)
 
+    def test_agent_cannot_use_git_show_which_can_write_files(self):
+        self.assertNotIn("Bash(git show", self.text)
+
     def test_workspace_is_not_denied(self):
         # The runner checks the repo out under /home/runner/work.
         self.assertNotIn("Read(//home", self.text)
@@ -174,6 +183,19 @@ class WorkflowContractTests(unittest.TestCase):
     def test_prompt_names_both_required_marker_lines(self):
         self.assertIn("## Review of PR #", self.text)
         self.assertIn("Result: <total> findings", self.text)
+
+
+class LeakTests(unittest.TestCase):
+    def test_partial_secret_is_detected(self):
+        secret = "ghs_abcdefghijklmnopqrstuvwxyz0123456789"
+        self.assertEqual(
+            check_review.leaked_secret(f"saw {secret[5:25]} there", {"GH_TOKEN": secret}),
+            "GH_TOKEN",
+        )
+
+    def test_short_fragment_is_not_a_leak(self):
+        secret = "ghs_abcdefghijklmnopqrstuvwxyz0123456789"
+        self.assertIsNone(check_review.leaked_secret("saw ghs_abc only", {"GH_TOKEN": secret}))
 
 
 class CliTests(unittest.TestCase):
