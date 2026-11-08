@@ -73,7 +73,7 @@ def validate(text, pr_number):
         if not any(ln.startswith("#") and agent in ln.lower() for ln in lines[1:]):
             return f"review has no heading for {agent}"
     first = lines[0].replace("*", "").replace("`", "").strip()
-    if not re.match(re.escape(heading) + r"(?!\d)", first):
+    if not re.match(re.escape(heading) + r"(?![0-9A-Za-z])", first):
         return f"first line is not '{heading}'"
     last = lines[-1].replace("*", "").replace("`", "").rstrip(".").strip()
     match = RESULT_RE.match(last)

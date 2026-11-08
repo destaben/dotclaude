@@ -29,7 +29,7 @@ class ValidateTests(unittest.TestCase):
         text = GOOD.replace("#9", "#9 (08e77a7)")
         self.assertIsNone(check_review.validate(text, "9"))
 
-    def test_provisional_status_message_is_rejected(self):
+    def test_provisional_message_without_heading_is_rejected(self):
         self.assertIsNotNone(check_review.validate(PROVISIONAL, "9"))
 
     def test_empty_and_none_are_rejected(self):
@@ -38,6 +38,9 @@ class ValidateTests(unittest.TestCase):
 
     def test_heading_may_have_a_colon_suffix(self):
         self.assertIsNone(check_review.validate(GOOD.replace("#9", "#9: summary"), "9"))
+
+    def test_heading_with_glued_suffix_is_rejected(self):
+        self.assertIsNotNone(check_review.validate(GOOD.replace("#9", "#9abc"), "9"))
 
     def test_wrong_pr_number_is_rejected(self):
         self.assertIsNotNone(check_review.validate(GOOD, "90"))
