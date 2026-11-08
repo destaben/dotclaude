@@ -66,12 +66,14 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
 - **Fail closed on the action's outcome.** The post step now needs the action
   step to have succeeded. Before, a finished review was posted even if the
   action exited non-zero; now it is not, and the retry covers incomplete
-  results only, not failed runs. A script error (exit 2, or the script itself
-  missing) fails the job at once; a missing or unreadable execution file is an
-  incomplete review (exit 1) and is retried. A failed retry run is never
+  results only, not failed runs. Only exit 3 means "incomplete"; any other
+  failure (exit 2, a crash or syntax error, or the script itself missing)
+  fails the job at once; a missing or unreadable execution file is an
+  incomplete review (exit 3) and is retried. A failed retry run is never
   posted.
 - **Depends on** the action expanding `env` inside its `with:` inputs and
-  populating the `execution_file` output (observed on this repo's review runs, 2026-11-08;
+  populating the `execution_file` output (observed on this repo's review runs,
+  2026-11-08;
   re-check with the action version, see the note at the end of the workflow).
   An uncaught script error (for example an unwritable output path) exits 2, so
   it fails the job instead of retrying. An empty `execution_file` output counts

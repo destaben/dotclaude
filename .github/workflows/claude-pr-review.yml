@@ -127,11 +127,11 @@ jobs:
             python3 .github/scripts/check_review.py "$EXECUTION_FILE" "$PR_NUMBER" "$RUNNER_TEMP/review.md" || rc=$?
             if [ "$rc" -eq 0 ]; then
               echo "valid=true" >> "$GITHUB_OUTPUT"
-            elif [ "$rc" -eq 1 ]; then
+            elif [ "$rc" -eq 3 ]; then
               echo "valid=false" >> "$GITHUB_OUTPUT"
               echo "::warning::first review run was incomplete; retrying once"
             else
-              # exit 2 or a missing script is a setup error, not a bad review:
+              # any other code (2, a crash, a missing script) is a setup error, not a bad review:
               # a retry would not help, so fail without spending another run.
               echo "::error::check_review.py failed (exit $rc); is .github/scripts/check_review.py copied into the repo?"
               exit 1

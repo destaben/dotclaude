@@ -144,13 +144,13 @@ class CliTests(unittest.TestCase):
 
     def test_provisional_last_result_fails_and_writes_nothing(self):
         code, body = self.run_cli([self.result(GOOD), self.result(PROVISIONAL)])
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 3)
         self.assertIsNone(body)
 
     def test_error_results_are_ignored(self):
         err = self.result(GOOD, is_error=True)
         code, _ = self.run_cli([err])
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 3)
 
     def test_fenced_review_is_posted_without_the_fence(self):
         code, body = self.run_cli([self.result("```markdown\n" + GOOD + "```")])
@@ -158,16 +158,16 @@ class CliTests(unittest.TestCase):
         self.assertEqual(body, GOOD)
 
     def test_missing_execution_file_fails(self):
-        self.assertEqual(self.run_cli(None)[0], 1)
+        self.assertEqual(self.run_cli(None)[0], 3)
 
     def test_final_error_result_does_not_fall_back_to_earlier_success(self):
         code, body = self.run_cli([self.result(GOOD), self.result(GOOD, is_error=True)])
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 3)
         self.assertIsNone(body)
 
     def test_non_success_subtype_is_ignored(self):
         msg = self.result(GOOD, subtype="error_max_turns")
-        self.assertEqual(self.run_cli([msg])[0], 1)
+        self.assertEqual(self.run_cli([msg])[0], 3)
 
     def test_invalid_json_and_non_list_json_fail(self):
         for raw in ("not json", "42", '"text"'):
@@ -178,7 +178,7 @@ class CliTests(unittest.TestCase):
                     [sys.executable, str(SCRIPT), str(f), "9", str(Path(tmp) / "o.md")],
                     capture_output=True,
                 )
-                self.assertEqual(proc.returncode, 1, raw)
+                self.assertEqual(proc.returncode, 3, raw)
 
     def test_single_result_object_is_accepted(self):
         self.assertEqual(self.run_cli(self.result(GOOD))[0], 0)

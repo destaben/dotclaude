@@ -18,9 +18,11 @@ replaced by an earlier success):
   heuristic, not proof that both ran: the prompt asks for one section per
   agent.
 
-Anything else (a progress message, an empty result, a missing file) exits 1
+Anything else (a progress message, an empty result, a missing file) exits 3
 and writes nothing, so the caller can retry or fail the job instead of posting
-an unfinished review as if it were one. Exit 2 means misuse, not a bad review.
+an unfinished review as if it were one. Exit 3 is reserved for "incomplete review"; every other non-zero code (2 for
+misuse or an I/O error, 1 for an uncaught crash or a syntax error) is a setup
+problem, so the workflow does not retry on it.
 """
 import json
 import re
@@ -94,7 +96,7 @@ def main(argv):
     reason = validate(text, pr_number)
     if reason:
         print(f"incomplete review, not posting: {reason}", file=sys.stderr)
-        return 1
+        return 3
     output_file.write_text(unfence(text).strip() + "\n", encoding="utf-8")
     return 0
 
