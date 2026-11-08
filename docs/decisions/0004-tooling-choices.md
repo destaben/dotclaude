@@ -56,9 +56,9 @@
    not speech recognition: telephone audio is least reliable on exactly the short
    words (yes, no, numbers) that binding decisions rest on. Quiet hours are
    checked before every attempt, so a retry never rings inside the window. A
-   phone that is not registered is never dialled: the owner gets a heads-up chat
-   message and the call waits briefly; if the phone still has not registered, the
-   result is `unanswered` with `reason: phone_not_registered`. A repeat key (9)
+   phone that is not registered is not dialled until it registers: the owner gets
+   a heads-up chat message and the call waits briefly; if the phone still has not
+   registered, the result is `unanswered` with `reason: phone_not_registered`. A repeat key (9)
    or a wrong key uses up a round on purpose: the round limit bounds how long a
    call can occupy the phone, and the skill's "Rounds" section documents it. Telephony instance data
    stays in the user's private notes.

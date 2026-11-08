@@ -11,9 +11,9 @@ with text-to-speech and takes a keypad answer, not spoken words: a decision-coun
 design (recorded on the tracking issue) found that speech recognition on telephone audio is least
 reliable on exactly the short words (yes, no, numbers) that binding decisions depend on. Every
 choice is read back and recorded only after a second key press confirms it. If the user does not
-pick up it retries, then sends a chat message. Quiet hours stop night calls, including retries that
-would land inside the window. A phone that is not registered is never dialled; the owner gets a
-heads-up message instead. The agent's shell is limited by a hook to the call script, since its
+pick up it retries, then sends a chat message. Quiet hours, when configured, stop night calls, including retries that
+would land inside the window. A phone that is not registered is not dialled until it registers: the
+owner gets a heads-up message, the call waits briefly, and gives up if it never registers. The agent's shell is limited by a hook to the call script, since its
 briefs can quote untrusted text and the env file holds the chat token. Free-form spoken answers are
 deferred until they pass an accuracy test on real recordings. No instance data enters this repo;
 the telephony setup lives in the user's private notes.

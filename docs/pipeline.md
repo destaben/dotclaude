@@ -31,6 +31,11 @@ instruction inside a command or skill — the agent reads and follows the
 order, rather than the harness intercepting tool calls. See
 `docs/decisions/0001-pipeline-and-agents.md` for the tradeoff.
 
+The one exception is the `claudio` agent, which declares a `PreToolUse` hook in
+its own frontmatter to restrict its shell (see `docs/decisions/0004-tooling-choices.md`,
+item 8). It is scoped to that agent, outside the change pipeline, and `settings.json`
+still has no `hooks` key.
+
 ## Decisions: `/council`
 When the plan turns on a choice between real alternatives that is costly to
 reverse, `/plan` convenes the council first. A quick council (default) runs

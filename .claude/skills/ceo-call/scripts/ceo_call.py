@@ -17,6 +17,7 @@ Subcommands:
 
 import argparse
 import array
+import fcntl
 import io
 import json
 import os
@@ -223,6 +224,43 @@ def load_env_file(path: str) -> Dict[str, str]:
 # ---------------------------------------------------------------------------------- speech (Piper)
 
 
+class DeadlineReader:
+    """Buffered reads from a socket that all stop at one overall deadline. A plain socket timeout
+    restarts on every received byte, so a server trickling one byte at a time could hold it forever."""
+
+    def __init__(self, sock, deadline: float, clock=time.monotonic):
+        self.sock, self.deadline, self.clock = sock, deadline, clock
+        self.buffer = b""
+
+    def _fill(self) -> bool:
+        remaining = self.deadline - self.clock()
+        if remaining <= 0:
+            raise CallError("speech server took too long")
+        self.sock.settimeout(remaining)
+        try:
+            chunk = self.sock.recv(65536)
+        except socket.timeout:
+            raise CallError("speech server took too long")
+        self.buffer += chunk
+        return bool(chunk)
+
+    def readline(self, limit: int) -> bytes:
+        while b"\n" not in self.buffer[:limit] and len(self.buffer) < limit:
+            if not self._fill():
+                break
+        end = self.buffer.find(b"\n", 0, limit)
+        end = end + 1 if end != -1 else min(len(self.buffer), limit)
+        line, self.buffer = self.buffer[:end], self.buffer[end:]
+        return line
+
+    def read(self, count: int) -> bytes:
+        while len(self.buffer) < count:
+            if not self._fill():
+                break
+        data, self.buffer = self.buffer[:count], self.buffer[count:]
+        return data
+
+
 def _read_event(handle):
     line = handle.readline(MAX_HEADER_BYTES + 1)
     if not line:
@@ -251,14 +289,13 @@ def _read_event(handle):
 def synthesize(host: str, port: int, text: str, timeout: int = 120) -> Tuple[int, int, int, bytes]:
     """Return (rate, width, channels, pcm) for one text using the Wyoming protocol."""
     try:
+        deadline = time.monotonic() + timeout
         with socket.create_connection((host, port), timeout=timeout) as sock:
-            handle = sock.makefile("rwb")
             request = {"type": "synthesize", "data": {"text": text}}
-            handle.write((json.dumps(request) + "\n").encode("utf-8"))
-            handle.flush()
+            sock.sendall((json.dumps(request) + "\n").encode("utf-8"))
+            handle = DeadlineReader(sock, deadline)
             fmt = None
             pcm = bytearray()
-            deadline = time.monotonic() + timeout
             while True:
                 if time.monotonic() > deadline:
                     raise CallError("speech server took too long")
@@ -611,26 +648,30 @@ def check_throttle(config: Dict, wall: Callable = time.time) -> None:
         return
     resolved = Path(os.path.expanduser(path))
     now_s = wall()
-    starts = []
     try:
-        for line in resolved.read_text(encoding="utf-8").splitlines():
+        resolved.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        handle = open(resolved, "a+", encoding="utf-8")
+    except OSError:
+        raise CallError("cannot write the throttle state file")
+    with handle:
+        # The lock makes read-check-write atomic, so two asks started together cannot both pass.
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        handle.seek(0)
+        starts = []
+        for line in handle.read().splitlines():
             try:
                 value = float(line.strip())
             except ValueError:
                 continue
             if 0 <= now_s - value < 86400:
                 starts.append(value)
-    except OSError:
-        pass
-    if gap and starts and now_s - max(starts) < gap:
-        raise CallError("asked again too soon: wait %d more seconds" % (gap - (now_s - max(starts))))
-    if per_hour and sum(1 for value in starts if now_s - value < 3600) >= per_hour:
-        raise CallError("too many asks in the last hour (limit %d)" % per_hour)
-    try:
-        resolved.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        resolved.write_text("".join("%d\n" % value for value in starts + [now_s]), encoding="utf-8")
-    except OSError:
-        raise CallError("cannot write the throttle state file")
+        if gap and starts and now_s - max(starts) < gap:
+            raise CallError("asked again too soon: wait %d more seconds" % (gap - (now_s - max(starts))))
+        if per_hour and sum(1 for value in starts if now_s - value < 3600) >= per_hour:
+            raise CallError("too many asks in the last hour (limit %d)" % per_hour)
+        handle.seek(0)
+        handle.truncate()
+        handle.write("".join("%d\n" % value for value in starts + [now_s]))
 
 
 def notify_outcome(outcome: Dict, clean: Dict, env: Dict[str, str], notifier: Callable, silent: bool = False) -> Dict:
@@ -647,12 +688,19 @@ def notify_outcome(outcome: Dict, clean: Dict, env: Dict[str, str], notifier: Ca
 # ---------------------------------------------------------------------------------- CLI
 
 
+def exit_cleanly_on_sigterm() -> None:
+    """Turn a polite kill into a normal exit so the per-call folder is still removed."""
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(143))
+
+
 def read_request(source: str) -> str:
     """Read the request JSON: stdin or a regular file, never more than MAX_REQUEST_BYTES (a device
     such as /dev/zero must not be able to fill memory)."""
     try:
         if source == "-":
             raw = sys.stdin.read(MAX_REQUEST_BYTES + 1)
+            if len(raw.encode("utf-8", "replace")) > MAX_REQUEST_BYTES:
+                raise CallError("the request is longer than %d bytes" % MAX_REQUEST_BYTES)
         else:
             if not stat.S_ISREG(os.stat(source).st_mode):
                 raise CallError("the request must be a regular file")
@@ -669,8 +717,7 @@ def read_request(source: str) -> str:
 def cmd_ask(args) -> int:
     config = load_config(args.config)
     env = load_env_file(config["env_file"])
-    # Turn a polite kill into a normal exit so the per-call folder is still removed.
-    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(143))
+    exit_cleanly_on_sigterm()
     raw = read_request(args.request)
     try:
         request = json.loads(raw)
@@ -698,7 +745,7 @@ def cmd_test_call(args) -> int:
     if args.ignore_quiet_hours:
         config["quiet_start"] = config["quiet_end"] = None
     env = load_env_file(config["env_file"])
-    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(143))
+    exit_cleanly_on_sigterm()
     request = {"question": TEST_PASSAGE, "options": TEST_OPTIONS}
     outcome = ask(request, config, env, DockerAsterisk(config["container"]))
     print(json.dumps(outcome, ensure_ascii=False))
@@ -738,22 +785,34 @@ def telegram_api(token: str, method: str):
     return body.get("result")
 
 
+def expect_type(value, kind, method: str):
+    """The chat service's answer must have the documented shape; None counts as empty."""
+    if value is None:
+        return kind()
+    if not isinstance(value, kind):
+        raise CallError("unexpected answer from the chat service (%s)" % method)
+    return value
+
+
 def cmd_telegram_setup(args) -> int:
     config = load_config(args.config)
     token = load_env_file(config["env_file"]).get("CEO_TELEGRAM_TOKEN")
     if not token:
         raise CallError("put CEO_TELEGRAM_TOKEN in the env file first")
-    bot = telegram_api(token, "getMe") or {}
+    bot = expect_type(telegram_api(token, "getMe"), dict, "getMe")
     print("This token belongs to the bot @%s" % bot.get("username", "?"))
-    webhook = telegram_api(token, "getWebhookInfo") or {}
+    webhook = expect_type(telegram_api(token, "getWebhookInfo"), dict, "getWebhookInfo")
     if webhook.get("url"):
         print("A webhook is set on this bot, which stops getUpdates from returning messages.")
         return 1
     seen = {}
-    for update in telegram_api(token, "getUpdates") or []:
+    for update in expect_type(telegram_api(token, "getUpdates"), list, "getUpdates"):
+        if not isinstance(update, dict):
+            continue
         for key in ("message", "edited_message", "channel_post", "my_chat_member"):
-            chat = (update.get(key) or {}).get("chat") or {}
-            if "id" in chat:
+            part = update.get(key)
+            chat = part.get("chat") if isinstance(part, dict) else None
+            if isinstance(chat, dict) and "id" in chat:
                 seen.pop(chat["id"], None)  # move to the end: the dict then runs oldest to newest
                 seen[chat["id"]] = chat.get("type", "?")
     if not seen:

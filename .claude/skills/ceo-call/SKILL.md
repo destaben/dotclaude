@@ -38,7 +38,7 @@ alias as `remote-hosts` describes, and run the script there.
   loop impossible (up to `max_per_hour` asks, each with up to `attempts` calls, can still ring). The
   start times are kept in `state_file` (default `~/.local/state/ceo-call/last_ask`; `null`,
   or both limits at 0, turns it off).
-- **Quiet hours:** inside the window no call is placed; a silent chat message is sent instead and the
+- **Quiet hours** (off unless `quiet_start` and `quiet_end` are both set): inside the window no call is placed; a silent chat message is sent instead and the
   status is `deferred`. The window is re-checked before every retry, so a retry that would land inside
   it is dropped (also `deferred`).
 - **Heads-up:** if the phone is not registered when a call is due (typical for an iPhone softphone that
@@ -58,10 +58,13 @@ The `claudio` agent reads council briefs that may quote untrusted text, so its s
 `PreToolUse` hook (`scripts/guard_bash.py`). Only `check` and `ask` of **this skill's own script** pass,
 and only at exactly `~/.claude/skills/ceo-call/scripts/ceo_call.py` (locally also this machine's own
 absolute home path; over ssh only the `~` form in single quotes, because the remote home is unknown and
-the local shell must not expand it: `ssh <alias> python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' check`). Any other file
+the local shell must not expand it: `ssh <alias> python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' check`.
+The single quotes protect the `~` only from the *local* shell: `ssh` joins its arguments with spaces and
+hands the string to the remote shell, which sees no quotes and expands the `~` in its own home). Any other file
 named `ceo_call.py`, in a repository, `/tmp` or elsewhere, is refused. `--config` must be
 `~/.config/ceo-call/<name>.json` (quoted the same way over ssh). Optionally behind `ssh <alias>` (no ssh options); no shell operators
-or `..`; request JSON only through a quoted heredoc.
+or `..`; the request JSON only through a quoted heredoc (`ask --request -`): a request file path is
+refused, because the agent cannot write files and an existing file must not be spoken.
 
 - **User-level install required.** The hook runs `~/.claude/skills/ceo-call/scripts/guard_bash.py` and
   never one from the project, so a repository cannot swap in a permissive guard. Without the user-level

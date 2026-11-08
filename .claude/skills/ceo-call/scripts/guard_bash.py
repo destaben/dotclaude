@@ -12,9 +12,9 @@ Allowed (optionally prefixed by `ssh <alias>`, with no ssh options), only with t
 `~/.claude/skills/ceo-call/scripts/ceo_call.py` (over ssh, only this `~` form, single-quoted so the remote
 shell expands it; locally, also this machine's own absolute home path), no quotes, no shell operators, no `..`:
     python3 <script> [--config ~/.config/ceo-call/<name>.json] check
-    python3 <script> [--config ~/.config/ceo-call/<name>.json] ask --request <path>
     python3 <script> [--config ...] ask --request - <<'CEO_REQUEST'   (JSON lines follow, the last line
-        is CEO_REQUEST; the quoted delimiter means the body is never expanded)
+        is CEO_REQUEST; the quoted delimiter means the body is never expanded). A request file path
+        is not accepted: the agent has no way to write a file, and an existing one must not be spoken.
 """
 import json
 import os
@@ -23,8 +23,7 @@ import sys
 
 HOME_SCRIPT = "~/.claude/skills/ceo-call/scripts/ceo_call.py"
 HOME_CONFIG = r"~/\.config/ceo-call/[A-Za-z0-9_.-]+\.json"
-SSH = r"(?:ssh\s+[A-Za-z0-9_.@][A-Za-z0-9_.@-]*\s+)?"  # no ssh options: -o ProxyCommand would run anything
-REQUEST_PATH = r"[A-Za-z0-9_./+-]+"
+# The ssh prefix below takes no ssh options: -o ProxyCommand would run anything.
 DELIMITER = "CEO_REQUEST"
 
 
@@ -40,7 +39,7 @@ def build_patterns(home: str):
     script_remote = r"(?:python3\s+)?'%s'" % re.escape(HOME_SCRIPT)
     config_local = r"(?:--config\s+(?:%s|%s[A-Za-z0-9_.-]+\.json)\s+)?" % (HOME_CONFIG, re.escape(local_config))
     config_remote = r"(?:--config\s+'%s'\s+)?" % HOME_CONFIG
-    action = r"(?:check|ask\s+--request\s+(?:-|%s))" % REQUEST_PATH
+    action = r"check"
     heredoc = r"ask\s+--request\s+-\s+<<'CEO_REQUEST'"
     patterns = []
     for ssh, script, config in (("", script_local, config_local), (r"ssh\s+[A-Za-z0-9_.@][A-Za-z0-9_.@-]*\s+", script_remote, config_remote)):

