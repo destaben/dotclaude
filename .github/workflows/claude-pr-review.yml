@@ -180,7 +180,13 @@ jobs:
             echo "::error::the retry run failed; not posting its output"
             exit 1
           fi
-          EXECUTION_FILE="${RETRY_FILE:-$FIRST_FILE}"
+          # If the retry ran, only its output counts: falling back to the
+          # first (incomplete) file would discard a good retry silently.
+          if [ "$RETRY_OUTCOME" = "success" ]; then
+            EXECUTION_FILE="$RETRY_FILE"
+          else
+            EXECUTION_FILE="$FIRST_FILE"
+          fi
           if ! python3 .github/scripts/check_review.py "$EXECUTION_FILE" "$PR_NUMBER" "$RUNNER_TEMP/review.md"; then
             echo "::error::the review run ended without a finished review; nothing posted"
             exit 1

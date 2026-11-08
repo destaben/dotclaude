@@ -71,7 +71,7 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   incomplete review (exit 1) and is retried. A failed retry run is never
   posted.
 - **Depends on** the action expanding `env` inside its `with:` inputs and
-  populating the `execution_file` output (checked on real runs, 2026-11-08;
+  populating the `execution_file` output (observed on this repo's review runs, 2026-11-08;
   re-check with the action version, see the note at the end of the workflow).
   An uncaught script error (for example an unwritable output path) exits 2, so
   it fails the job instead of retrying. An empty `execution_file` output counts

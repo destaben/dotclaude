@@ -50,7 +50,8 @@ don't reach for it as a general shell substitute.
      always pass `--paginate` or you will silently miss the newest entries), and answer per the "Comments" rule below.
      A green run whose newest comment is a status message rather than a review
      (no findings list, no stated outcome) is not "zero findings": the review never happened.
-     Re-run it (e.g. `gh run rerun <id>`) instead of counting it toward the stop condition.
+     Re-run it (e.g. `gh run rerun <id>`) instead of counting it toward the stop condition,
+     at most once per push; if it is still red or status-only, stop and report that to the user.
   4. **Precondition: the user asked, in this session, to iterate on the PR's automated review until
      it has no findings.** Without that request, and in every other context (including `/release`),
      justify nothing: report the non-severe findings to the user and follow `release-policy`. This

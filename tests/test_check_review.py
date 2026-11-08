@@ -91,6 +91,29 @@ class ValidateTests(unittest.TestCase):
         self.assertIsNone(check_review.validate(text, "9"))
 
 
+class WorkflowContractTests(unittest.TestCase):
+    """Cheap guards on the workflow text the validation depends on."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = (REPO_ROOT / ".github" / "workflows" / "claude-pr-review.yml").read_text()
+
+    def test_post_step_is_gated_on_review_and_check(self):
+        self.assertIn("steps.review.outcome == 'success'", self.text)
+        self.assertIn("steps.check.outcome != 'failure'", self.text)
+
+    def test_retry_runs_only_on_an_incomplete_result(self):
+        self.assertIn("steps.check.outputs.valid == 'false'", self.text)
+
+    def test_post_step_uses_retry_output_only_when_retry_succeeded(self):
+        self.assertIn('[ "$RETRY_OUTCOME" = "success" ]', self.text)
+        self.assertIn('[ "$RETRY_OUTCOME" = "failure" ]', self.text)
+
+    def test_prompt_names_both_required_marker_lines(self):
+        self.assertIn("## Review of PR #", self.text)
+        self.assertIn("Result: <total> findings", self.text)
+
+
 class CliTests(unittest.TestCase):
     def run_cli(self, messages):
         with tempfile.TemporaryDirectory() as tmp:
