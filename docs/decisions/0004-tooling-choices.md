@@ -62,3 +62,8 @@
    or a wrong key uses up a round on purpose: the round limit bounds how long a
    call can occupy the phone, and the skill documents it. Telephony instance data
    stays in the user's private notes.
+   The agent has `Bash` only (no `Read`), and a frontmatter `PreToolUse` hook lets
+   through nothing but `ceo_call.py` invocations, because the agent reads council
+   briefs that can quote untrusted text and the env file holds the chat token.
+   A phone registered without qualify shows as `NonQual` in Asterisk and counts as
+   available. `check` exits 1 only for a real failure; a sleeping phone is exit 0.

