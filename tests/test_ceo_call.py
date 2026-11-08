@@ -1076,6 +1076,29 @@ class AskFlowTests(unittest.TestCase):
             ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, attempts=1), {}, Both(["1"]), synth=fake_synth,
                     sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
 
+    def test_a_failed_cleanup_before_attempt_two_does_not_claim_a_live_call(self):
+        class SecondCleanupFails(FakeAsterisk):
+            strict_calls = 0
+
+            def remove(self, *paths, strict=False):
+                if strict:
+                    self.strict_calls += 1
+                    if self.strict_calls == 2:
+                        raise ceo.DockerError("a command inside the Asterisk container failed")
+                return super().remove(*paths)
+
+        sent = []
+        asterisk = SecondCleanupFails(["unanswered"])
+        clock = FakeClock()
+        with self.assertRaises(ceo.DockerError):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, retry_delay_s=0, attempts=2),
+                    {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"}, asterisk, synth=fake_synth,
+                    notifier=lambda t, c, text, silent=False: sent.append(text) or True,
+                    sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual(asterisk.originated, 1)
+        self.assertNotIn("no se ha registrado", sent[0])  # attempt 1 was over: nothing is live
+        self.assertEqual(asterisk.dirs, set())
+
     def test_a_second_ask_too_soon_is_refused_before_any_call(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
         self.addCleanup(lambda: state.exists() and state.unlink())

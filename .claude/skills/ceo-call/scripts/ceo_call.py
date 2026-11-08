@@ -659,7 +659,8 @@ def ask(
     except BaseException:
         run_lock.close()
         raise
-    dialled = False
+    dialled = False  # a call was placed at some point: this ask keeps its throttle slot
+    maybe_live = False  # a call of the CURRENT attempt may still be open (per attempt, not per ask)
     keep_folder = False
     completed = False
     attempt = 0  # the attempt in progress; read by the error path below
@@ -709,9 +710,11 @@ def ask(
             # A stale marker from an earlier attempt must not survive into this one, so a failure here is an
             # error. It happens before any call exists, so it is not treated as a possibly live call.
             asterisk.remove(*["%s/%s" % (base, m) for m in ("answered", "result", "done")], strict=True)
-            dialled = True  # a call is about to be placed: this ask keeps its throttle slot
+            dialled = True
+            maybe_live = True
             outcome = run_attempt(asterisk, config, call_id, len(options), sleep=sleep, clock=clock)
             outcome["attempt"] = attempt
+            maybe_live = outcome["status"] == "timeout"  # every other outcome means that call is over
             # A hangup is the owner's choice: they picked up and put the phone down, so no re-ring.
             if outcome["status"] == "timeout":
                 keep_folder = True  # the owner may still be on the line, and the dialplan still needs its prompts
@@ -723,7 +726,7 @@ def ask(
     except CallError as error:
         # With docker failing mid-call the owner may still be confirming: leave the folder for the
         # dialplan to write into (the daily sweep removes it) instead of deleting it underneath.
-        keep_folder = dialled and isinstance(error, MayBeLive)
+        keep_folder = maybe_live and isinstance(error, MayBeLive)
         if keep_folder:
             # A failed read or a stop request must not lose a confirmation that is already on disk:
             # look once more.
@@ -744,7 +747,7 @@ def ask(
     except BaseException:
         # Anything else (an unexpected bug) must not delete the folder of a call that may be live, and
         # the owner still hears that the decision is pending.
-        keep_folder = dialled
+        keep_folder = maybe_live
         try:
             notify_outcome({"status": "error_live" if keep_folder else "error"}, clean, env, notifier)
         except Exception:  # noqa: BLE001 - never hide the original problem
