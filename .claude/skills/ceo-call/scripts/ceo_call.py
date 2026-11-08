@@ -207,6 +207,9 @@ def load_config(path: Optional[str]) -> Dict:
     worst_case = config["attempts"] * (config["ring_timeout_s"] + config["call_timeout_s"] + config["retry_delay_s"] + config["heads_up_s"] + polls)
     if worst_case > 20 * 3600:
         raise CallError("attempts, delays and timeouts add up to more than 20 hours")
+    if config["min_gap_s"] > 86400:
+        # The state file keeps 24 hours of starts, so a longer gap could never be enforced.
+        raise CallError("min_gap_s must be at most 86400 (the throttle remembers 24 hours)")
     if not 1 <= config["piper_port"] <= 65535:
         raise CallError("piper_port must be between 1 and 65535")
     if config["lock_file"] is not None and not (isinstance(config["lock_file"], str) and config["lock_file"]):
@@ -585,20 +588,23 @@ def run_attempt(asterisk, config: Dict, call_id: str, option_count: int, sleep=t
                 break  # the digit is already read: do not lose the decision over the thank-you wait
             sleep(config["poll_interval_s"])
     else:
+        # `done` is read before `result` and its snapshot is kept: a confirmation is written before `done`,
+        # so if `done` was already there, the result read that follows cannot miss it.
+        finished = asterisk.read_file(base + "/done") is not None
         result = asterisk.read_file(base + "/result") or None
-        if result is None and answered and asterisk.read_file(base + "/done") is None:
+        if result is None and answered and not finished:
             # The call is still live at the deadline: the owner may be confirming right now. Give the
             # dialplan a short grace to finish before the folder is removed, so a confirmation is not lost.
             for _ in range(GRACE_POLLS):
                 sleep(config["poll_interval_s"])
-                done = asterisk.read_file(base + "/done") is not None
+                finished = asterisk.read_file(base + "/done") is not None
                 result = asterisk.read_file(base + "/result") or None
-                if result is not None or done:
+                if result is not None or finished:
                     break
     if result is None:
         if not answered and asterisk.read_file(base + "/answered") is None:
             return {"status": "unanswered"}
-        if asterisk.read_file(base + "/done") is None:
+        if not finished:
             # Deliberate: a confirmation given after this point lands in the kept folder and is never
             # read. Nobody is waiting for it any more, so recording it later would be a decision taken
             # with no one to act on it; the owner is told (`timeout` notice) that none was recorded.
@@ -719,7 +725,7 @@ def ask(
         transient fault does not lock the owner out. A loop of failing asks is still serialised by the
         run lock, and the work it drives is local speech synthesis, not calls or messages."""
         if not (dial["placed"] or reached["owner"]):
-            release_throttle(config, stamp)
+            release_throttle(config, stamp, wall)
 
     if quiet():
         # Inside quiet hours only a silent chat message is sent. It goes through the same lock and
@@ -755,10 +761,6 @@ def ask(
                 # message (if configured) was already sent. Stop and tell the owner.
                 outcome = {"status": "unanswered", "reason": "phone_not_registered", "attempt": attempt}
                 break
-            if quiet():
-                # The heads-up wait can take minutes: look at the clock again right before dialling.
-                outcome = {"status": "deferred", "attempt": attempt - 1}
-                break
             if asterisk.endpoint_in_call(config["endpoint"]):
                 # An earlier ask that timed out or was stopped may still have its call open: dialling now
                 # would put a second call on the same phone. Nothing of this attempt is placed yet.
@@ -766,6 +768,11 @@ def ask(
             # A stale marker from an earlier attempt must not survive into this one, so a failure here is an
             # error. It happens before any call exists, so it is not treated as a possibly live call.
             asterisk.remove(*["%s/%s" % (base, m) for m in ("answered", "result", "done")], strict=True)
+            if quiet():
+                # The heads-up wait and the preparation above can take minutes: look at the clock again as
+                # close to the dial as the call file allows (only staging and moving it remain).
+                outcome = {"status": "deferred", "attempt": attempt - 1}
+                break
             maybe_live = True
             outcome = run_attempt(asterisk, config, call_id, len(options), sleep=sleep, clock=clock,
                                   on_dial=lambda: dial.update(placed=True))
@@ -933,7 +940,7 @@ def check_throttle(config: Dict, wall: Callable = time.time) -> Optional[float]:
     return now_s
 
 
-def release_throttle(config: Dict, stamp: Optional[float]) -> None:
+def release_throttle(config: Dict, stamp: Optional[float], wall: Callable = time.time) -> None:
     """Take back the start recorded by check_throttle when nothing reached the owner (no call and no
     chat message), so such asks do not use up the limits."""
     path = config.get("state_file")
@@ -942,7 +949,9 @@ def release_throttle(config: Dict, stamp: Optional[float]) -> None:
     resolved = Path(os.path.expanduser(path))
     try:
         with _state_lock(resolved):
-            starts = _read_starts(resolved, stamp)
+            # Read against the current time, not the refunded start: a run can last hours, and asks that
+            # started meanwhile (possible with the run lock off) must stay in the file.
+            starts = _read_starts(resolved, wall())
             for index, value in enumerate(starts):
                 if abs(value - stamp) < 1e-6:
                     del starts[index]  # only our own line, not another ask's from the same second

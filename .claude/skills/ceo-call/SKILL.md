@@ -123,7 +123,7 @@ placed; rename the AOR.
 ## Throttle and clock errors
 The caps are per host and trust the host's clock. A start more than an hour in the future is treated as a
 clock error and ignored, so a wrongly set clock cannot lock the owner out for a day; the price is that a
-clock stepped back by more than an hour resets the caps. Before every dial, `ask` also refuses when the phone endpoint already has a channel up (an earlier ask that
+clock stepped back by more than an hour resets the caps. `min_gap_s` can be at most 86400, because the state file keeps 24 hours of starts. Before every dial, `ask` also refuses when the phone endpoint already has a channel up (an earlier ask that
 timed out or was stopped, or the owner's own call): that is an error, so no second call is placed on top of one
 that is still open, whichever run started it, and the owner gets the usual chat notice. The caps limit what a confused agent can do, they
 are not a security boundary, and the owner's own clock error is out of scope. The run lock is released
@@ -135,7 +135,7 @@ telephony host, an alias is listed in `~/.config/ceo-call/hosts`) and `check` su
 a decision to `claudio`: ask the user in the terminal.
 
 ## Quiet hours and a call already running
-The window is checked before the heads-up and before every dial, and chat notices sent after it opened
+The window is checked before the heads-up and before every dial (after the busy-phone check and the marker cleanup, so only staging and moving the call file remain), and chat notices sent after it opened
 are silent. A call dialled just before the window starts is allowed to finish (at most ring plus call
 time, about 6 minutes by default): cutting it off would drop a decision the owner is in the middle of
 confirming, and nothing new starts inside the window.

@@ -430,6 +430,11 @@ class ConfigTests(unittest.TestCase):
                 with self.assertRaises(ceo.CallError):
                     ceo.load_config(self.write(content))
 
+    def test_a_gap_longer_than_the_throttle_memory_is_refused(self):
+        self.assertEqual(ceo.load_config(self.write('{"min_gap_s": 86400}'))["min_gap_s"], 86400)
+        with self.assertRaises(ceo.CallError):
+            ceo.load_config(self.write('{"min_gap_s": 86401}'))
+
     def test_rejects_unknown_keys_and_bad_values(self):
         for content in ['{"nope": 1}', '{"endpoint": "SIP/x"}', '{"attempts": 0}', '{"attempts": "3"}', '{"container": "a b"}', "[]", "not json"]:
             with self.subTest(content=content):
@@ -714,9 +719,18 @@ class AskFlowTests(unittest.TestCase):
         cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=0, max_per_hour=6)
         first = ceo.check_throttle(cfg, wall=lambda: 1000.2)
         second = ceo.check_throttle(cfg, wall=lambda: 1000.7)
-        ceo.release_throttle(cfg, second)
+        ceo.release_throttle(cfg, second, wall=lambda: 1001.0)
         remaining = [float(x) for x in state.read_text().split()]
         self.assertEqual(remaining, [first])
+
+    def test_a_refund_after_a_long_run_keeps_asks_that_started_meanwhile(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=0, max_per_hour=6)
+        first = ceo.check_throttle(cfg, wall=lambda: 1000.0)
+        later = ceo.check_throttle(cfg, wall=lambda: 1000.0 + 7200)  # started two hours later (lock off)
+        ceo.release_throttle(cfg, first, wall=lambda: 1000.0 + 7300)
+        self.assertEqual([float(x) for x in state.read_text().split()], [later])
 
     def test_a_clock_that_steps_back_does_not_reset_the_hourly_limit(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
@@ -1336,6 +1350,46 @@ class AskFlowTests(unittest.TestCase):
             ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG), {}, asterisk,
                     synth=slow_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
         self.assertIn("speech took too long", str(caught.exception))
+        self.assertEqual(asterisk.originated, 0)
+
+    def test_a_call_that_finishes_between_the_last_reads_keeps_its_confirmation(self):
+        clock = FakeClock()
+        call_id = "ab" * 8
+        base = "%s/ceo/%s" % (ceo.SPOOL, call_id)
+
+        class Racy(FakeAsterisk):
+            """The call ends (result, then done) right after the last result read at the deadline."""
+            finished = False
+
+            def originate(self, name, call_file):
+                self.files[base + "/answered"] = "1"
+
+            def read_file(self, path):
+                if path.endswith("/result") and clock.now >= 330 and not self.finished:
+                    self.finished = True
+                    self.files[base + "/result"] = "2"
+                    self.files[base + "/done"] = "1"
+                    return None
+                return self.files.get(path)
+
+        cfg = dict(ceo.DEFAULT_CONFIG, poll_interval_s=2, ring_timeout_s=30, call_timeout_s=300)
+        outcome = ceo.run_attempt(Racy([]), cfg, call_id, 3, sleep=clock.sleep, clock=clock)
+        self.assertEqual(outcome, {"status": "decided", "choice": 2})
+
+    def test_quiet_hours_are_checked_again_after_the_preparation_before_the_call_file(self):
+        clock = FakeClock()
+        hour = [12]
+
+        class SlowDocker(FakeAsterisk):
+            def endpoint_in_call(self, endpoint):
+                hour[0] = 23  # the quiet window opens while the checks run
+                return False
+
+        asterisk = SlowDocker(["1"])
+        result = ceo.ask({"question": "q", "options": ["a", "b"]},
+                         dict(ceo.DEFAULT_CONFIG, quiet_start="22:00", quiet_end="07:00"), {}, asterisk,
+                         synth=fake_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, hour[0], 30))
+        self.assertEqual(result["status"], "deferred")
         self.assertEqual(asterisk.originated, 0)
 
     def test_a_phone_that_is_already_in_a_call_is_not_dialled(self):
