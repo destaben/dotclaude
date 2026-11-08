@@ -48,6 +48,8 @@ don't reach for it as a general shell substitute.
      review bodies (`gh pr view <n> --json comments,reviews`) and inline comments
      (`gh api --paginate repos/<owner>/<repo>/pulls/<n>/comments`; REST lists are paged at 30, so
      always pass `--paginate` or you will silently miss the newest entries), and answer per the "Comments" rule below.
+     Confirm the comment belongs to the run you watched (its time is after your push, and the run
+     itself succeeded): a red run may post nothing, so the newest comment can be an older push's review.
      A green run whose newest comment is a status message rather than a review
      (no findings list, no stated outcome) is not "zero findings": the review never happened.
      Re-run it (e.g. `gh run rerun <id>`) instead of counting it toward the stop condition,

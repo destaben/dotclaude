@@ -61,6 +61,14 @@ class ValidateTests(unittest.TestCase):
         )
         self.assertIsNotNone(check_review.validate(text, "9"))
 
+    def test_bold_or_spaced_agent_labels_are_accepted(self):
+        bold = GOOD.replace("### bug-hunter", "**bug-hunter**").replace(
+            "### documenter", "**Documenter**"
+        )
+        self.assertIsNone(check_review.validate(bold, "9"))
+        spaced = GOOD.replace("### bug-hunter", "### Bug Hunter")
+        self.assertIsNone(check_review.validate(spaced, "9"))
+
     def test_formatted_heading_is_tolerated(self):
         self.assertIsNone(check_review.validate(GOOD.replace("## Review of PR #9", "**## Review of PR #9**"), "9"))
 

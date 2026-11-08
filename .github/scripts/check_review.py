@@ -64,6 +64,16 @@ def unfence(text):
     return text or ""
 
 
+def _norm(line):
+    return line.lower().replace("bug hunter", "bug-hunter")
+
+
+def _is_heading(line):
+    return line.startswith("#") or (
+        len(line) > 4 and line.startswith("**") and line.endswith("**")
+    )
+
+
 def validate(text, pr_number):
     """Return None if `text` is a finished review, else the reason it is not."""
     lines = [ln.strip() for ln in unfence(text).splitlines() if ln.strip()]
@@ -72,8 +82,10 @@ def validate(text, pr_number):
     heading = f"## Review of PR #{pr_number}"
     # One markdown heading per agent, so a sentence that merely names an agent
     # ("still waiting for the documenter") does not count as its section.
+    # A heading is a `#` line or a line that is only a bold label; "Bug Hunter"
+    # spelled with a space counts as the bug-hunter.
     for agent in ("bug-hunter", "documenter"):
-        if not any(ln.startswith("#") and agent in ln.lower() for ln in lines[1:]):
+        if not any(_is_heading(ln) and agent in _norm(ln) for ln in lines[1:]):
             return f"review has no heading for {agent}"
     first = lines[0].replace("*", "").replace("`", "").strip()
     if not re.match(re.escape(heading) + r"(?![0-9A-Za-z])", first):
