@@ -33,7 +33,7 @@ order, rather than the harness intercepting tool calls. See
 
 The one exception is the `claudio` agent, which declares a `PreToolUse` hook in
 its own frontmatter to restrict its shell (see `docs/decisions/0004-tooling-choices.md`,
-item 8). It is scoped to that agent, outside the change pipeline, and `settings.json`
+item 9). It is scoped to that agent, outside the change pipeline, and `settings.json`
 still has no `hooks` key.
 
 ## Decisions: `/council`
@@ -55,7 +55,7 @@ cannot resolve it" there, and the `ceo-call` entry below.
   read-only by default. It is not part of the change pipeline; see
   `docs/decisions/0004-tooling-choices.md`, item 7.
 - `ceo-call` and `claudio`: an escalation path outside the change pipeline; see `council-policy` and
-  `docs/decisions/0004-tooling-choices.md`, item 8.
+  `docs/decisions/0004-tooling-choices.md`, item 9.
 
 ## GitHub PR review (`.github/workflows/claude-pr-review.yml`)
 This workflow is dotclaude's own project-specific CI — it is *not* installed

@@ -54,7 +54,7 @@ was wrong.
 
 ## Amendment (2026-11-07): one scoped hook
 Decision 2 stands for the pipeline. The one exception in the repo is the shell guard in the `claudio`
-agent's own frontmatter, scoped to that agent and outside the pipeline (`0004-tooling-choices.md`, item 8).
+agent's own frontmatter, scoped to that agent and outside the pipeline (`0004-tooling-choices.md`, item 9).
 
 ## See also
 What happens when the council cannot resolve a decision: `council-policy`, "When the council cannot
