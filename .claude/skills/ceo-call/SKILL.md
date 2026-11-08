@@ -40,7 +40,7 @@ alias as `remote-hosts` describes, and run the script there.
   error (`asked again too soon`), and so is any `ask` beyond `max_per_hour` in an hour or `max_per_day` in 24 hours (`too many asks`).
   An `ask` gives its slot back only when nothing reached the owner: no call and no chat message
   of any kind (heads-up, "not connected" notice, error notice). So a broken speech server or an asleep
-  phone cannot be used to spam the chat. A failure before dialling (speech server or docker down) keeps no slot on
+  phone cannot be used to spam the chat. A failure before dialling (speech server down, or a call file that definitely never got in) keeps no slot on
   purpose: a transient fault must not lock the owner out, and a loop of failing asks is still serialised by the run
   lock and only drives local speech synthesis, never a call or a message. A refused `ask` (too soon, too many, another running) sends no
   chat message either, for the same reason; the calling workflow reports the decision as still pending. This spaces out and caps the calls a confused or manipulated agent can cause; it does not make a
@@ -66,7 +66,8 @@ alias as `remote-hosts` describes, and run the script there.
   and `CEO_TELEGRAM_CHAT_ID`. A missing file only turns the chat messages off, but a missing
   `env_file` path set in the config prints a `WARNING:` line on stderr, so a typo is visible. Create the bot with the chat service's bot manager yourself; never
   paste the token into a chat or a tracked file. After messaging the bot once, `ceo_call.py
-  telegram-setup` prints the chat id.
+  telegram-setup` prints the chat id as a line `CEO_TELEGRAM_CHAT_ID=<id>` that you can copy as it is,
+  after a `# chat type: ...` comment line.
 
 ## Agent safety
 The `claudio` agent reads council briefs that may quote untrusted text, so its shell is limited by a
@@ -122,7 +123,9 @@ placed; rename the AOR.
 ## Throttle and clock errors
 The caps are per host and trust the host's clock. A start more than an hour in the future is treated as a
 clock error and ignored, so a wrongly set clock cannot lock the owner out for a day; the price is that a
-clock stepped back by more than an hour resets the caps. The caps limit what a confused agent can do, they
+clock stepped back by more than an hour resets the caps. Before every dial, `ask` also refuses when the phone endpoint already has a channel up (an earlier ask that
+timed out or was stopped, or the owner's own call): that is an error, so no second call is placed on top of one
+that is still open, whichever run started it, and the owner gets the usual chat notice. The caps limit what a confused agent can do, they
 are not a security boundary, and the owner's own clock error is out of scope. The run lock is released
 before the final chat message because the throttle already refuses a second ask within `min_gap_s`.
 
@@ -140,7 +143,7 @@ confirming, and nothing new starts inside the window.
 ## Speech limits
 The question and options are refused (`ERROR:`, before any call) when the first prompt, which reads the
 intro, the question, every option and the instruction, would exceed 1500 characters; with the 800 and 200
-character caps alone, a request could outgrow the audio cap below. Each synthesis has its own deadline, all prompts of a request share a 300 s budget, one prompt's audio is
+character caps alone, a request could outgrow the audio cap below. Each synthesis has its own deadline, all prompts of a request share a 300 s budget (checked after each prompt, the last included, so an over-budget request fails before dialling), one prompt's audio is
 capped at 8 MiB (memory), and converting it to 8 kHz has a separate 60 s budget (the conversion is pure
 Python). Any breach is an `ERROR:` line, not a traceback.
 

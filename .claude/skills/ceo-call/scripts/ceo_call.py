@@ -498,6 +498,13 @@ class DockerAsterisk:
         # endpoint has qualify turned off; "Unavail" is a contact that stopped answering.
         return any(pattern.match(line) and re.search(r"\b(Avail|NonQual)\b", line) for line in text.splitlines())
 
+    def endpoint_in_call(self, endpoint: str) -> bool:
+        """True while a channel of the endpoint is up, whichever ask (or person) started it."""
+        name = endpoint.split("/", 1)[1]
+        result = self._exec(["asterisk", "-rx", "core show channels concise"])  # a failure is an error, not "idle"
+        pattern = re.compile(r"^PJSIP/%s-[0-9A-Za-z]+!" % re.escape(name))
+        return any(pattern.match(line) for line in result.stdout.decode("utf-8", "replace").splitlines())
+
 
 def build_call_file(endpoint: str, call_id: str, option_count: int, ring_timeout: int) -> str:
     if not ENDPOINT_RE.match(endpoint) or not re.match(r"^[0-9a-f]{16,64}\Z", call_id):
@@ -534,8 +541,10 @@ SYNTH_BUDGET_S = 300  # all prompts of one request; each single synthesis also h
 GRACE_POLLS = 10  # polls to wait for a call that is still live at call_timeout_s
 
 
-def run_attempt(asterisk, config: Dict, call_id: str, option_count: int, sleep=time.sleep, clock=time.monotonic) -> Dict:
-    """Place one call and wait for its outcome. Never trusts the result file beyond a digit check."""
+def run_attempt(asterisk, config: Dict, call_id: str, option_count: int, sleep=time.sleep, clock=time.monotonic,
+                on_dial: Callable[[], None] = lambda: None) -> Dict:
+    """Place one call and wait for its outcome. Never trusts the result file beyond a digit check.
+    `on_dial` is called as soon as a call may exist, and not when the call file definitely never got in."""
     base = "%s/ceo/%s" % (SPOOL, call_id)
     try:
         asterisk.originate(
@@ -543,10 +552,12 @@ def run_attempt(asterisk, config: Dict, call_id: str, option_count: int, sleep=t
             build_call_file(config["endpoint"], call_id, option_count, config["ring_timeout_s"]),
         )
     except (DockerTimeout, Interrupted):
+        on_dial()
         raise  # the move may have completed before the timeout or the stop: the phone may be ringing
     except MayBeLive as error:
         # The call file is moved into place in one step, so a plain failure here means no call exists.
         raise CallError(str(error))
+    on_dial()
     started = clock()
     answer_deadline = started + config["ring_timeout_s"] + 15
     total_deadline = started + config["ring_timeout_s"] + config["call_timeout_s"]
@@ -696,7 +707,7 @@ def ask(
     except BaseException:
         run_lock.close()
         raise
-    dialled = False  # a call was placed at some point: this ask keeps its throttle slot
+    dial = {"placed": False}  # a call may exist from some attempt: this ask keeps its throttle slot
     maybe_live = False  # a call of the CURRENT attempt may still be open (per attempt, not per ask)
     keep_folder = False
     completed = False
@@ -707,7 +718,7 @@ def ask(
         Deliberate: a failure before dialling (speech server down, docker error) keeps no slot, so a
         transient fault does not lock the owner out. A loop of failing asks is still serialised by the
         run lock, and the work it drives is local speech synthesis, not calls or messages."""
-        if not (dialled or reached["owner"]):
+        if not (dial["placed"] or reached["owner"]):
             release_throttle(config, stamp)
 
     if quiet():
@@ -726,10 +737,11 @@ def ask(
         asterisk.make_dir(base)
         synth_started = clock()
         for name, text in build_prompts(clean["question"], options).items():
-            if clock() - synth_started > SYNTH_BUDGET_S:
-                raise CallError("speech took too long for the whole request")
             wav = to_wav(*synth(config["piper_host"], config["piper_port"], text))
             asterisk.write_file("%s/%s.wav" % (base, name), wav)
+            # Checked after each prompt, the last included, so an over-budget request fails before dialling.
+            if clock() - synth_started > SYNTH_BUDGET_S:
+                raise CallError("speech took too long for the whole request")
         outcome = {"status": "unanswered"}
         heads_up_state: Dict = {}
         for attempt in range(1, config["attempts"] + 1):
@@ -747,12 +759,16 @@ def ask(
                 # The heads-up wait can take minutes: look at the clock again right before dialling.
                 outcome = {"status": "deferred", "attempt": attempt - 1}
                 break
+            if asterisk.endpoint_in_call(config["endpoint"]):
+                # An earlier ask that timed out or was stopped may still have its call open: dialling now
+                # would put a second call on the same phone. Nothing of this attempt is placed yet.
+                raise CallError("the phone is already in a call: try again when it has ended")
             # A stale marker from an earlier attempt must not survive into this one, so a failure here is an
             # error. It happens before any call exists, so it is not treated as a possibly live call.
             asterisk.remove(*["%s/%s" % (base, m) for m in ("answered", "result", "done")], strict=True)
-            dialled = True
             maybe_live = True
-            outcome = run_attempt(asterisk, config, call_id, len(options), sleep=sleep, clock=clock)
+            outcome = run_attempt(asterisk, config, call_id, len(options), sleep=sleep, clock=clock,
+                                  on_dial=lambda: dial.update(placed=True))
             outcome["attempt"] = attempt
             maybe_live = outcome["status"] == "timeout"  # every other outcome means that call is over
             # A hangup is the owner's choice: they picked up and put the phone down, so no re-ring.
@@ -983,6 +999,8 @@ def read_request(source: str) -> str:
                 raise CallError("the request must be a regular file")
             with open(source, "rb") as handle:
                 data = handle.read(MAX_REQUEST_BYTES + 1)
+            if len(data) > MAX_REQUEST_BYTES:
+                raise CallError("the request is longer than %d bytes" % MAX_REQUEST_BYTES)
             raw = data.decode("utf-8")
     except UnicodeDecodeError:
         raise CallError("the request is not valid UTF-8")
@@ -1102,7 +1120,8 @@ def cmd_telegram_setup(args) -> int:
     if len(seen) > 1:
         print("%d chats have written to this bot; pick only your own. Listed oldest first; the last one is the most recent." % len(seen))
     for chat_id, kind in seen.items():
-        print("CEO_TELEGRAM_CHAT_ID=%s  (chat type: %s)" % (chat_id, kind))
+        print("# chat type: %s" % kind)  # a comment line, so the assignment below can be copied as it is
+        print("CEO_TELEGRAM_CHAT_ID=%s" % chat_id)
     return 0
 
 

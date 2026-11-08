@@ -48,6 +48,7 @@ class FakeAsterisk:
         self.originated = 0
         self.swept = 0
         self.registered = True
+        self.in_call = False
         self.timeline = {}
         self.reads = 0
 
@@ -57,6 +58,9 @@ class FakeAsterisk:
     def endpoint_available(self, endpoint):
         value = self.registered
         return value() if callable(value) else value
+
+    def endpoint_in_call(self, endpoint):
+        return self.in_call
 
     def make_dir(self, path):
         self.dirs.add(path)
@@ -1292,6 +1296,15 @@ class AskFlowTests(unittest.TestCase):
                 sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, *next(times, (22, 5))))
         self.assertIn("volví", sent[0])
 
+    def test_a_request_file_over_the_byte_limit_is_refused_not_truncated(self):
+        path = Path(tempfile.mkdtemp()) / "request.json"
+        self.addCleanup(lambda: path.exists() and path.unlink())
+        # Valid JSON for the first 64 KiB + 1 bytes would otherwise pass a character count after decoding.
+        path.write_bytes(b'["' + "é".encode() * (ceo.MAX_REQUEST_BYTES // 2) + b'"]')
+        with self.assertRaises(ceo.CallError) as caught:
+            ceo.read_request(str(path))
+        self.assertIn("longer than", str(caught.exception))
+
     def test_non_utf8_stdin_is_reported_as_such(self):
         import unittest.mock as mock
 
@@ -1310,6 +1323,64 @@ class AskFlowTests(unittest.TestCase):
         second = ceo.acquire_run_lock(cfg)  # no lock: a second one is not refused
         first.close()
         second.close()
+
+    def test_the_last_prompt_cannot_push_the_request_over_the_speech_budget(self):
+        clock = FakeClock()
+
+        def slow_synth(host, port, text):
+            clock.sleep(70)  # two options: five prompts, the last one ends at 350 s
+            return fake_synth(host, port, text)
+
+        asterisk = FakeAsterisk(["1"])
+        with self.assertRaises(ceo.CallError) as caught:
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG), {}, asterisk,
+                    synth=slow_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertIn("speech took too long", str(caught.exception))
+        self.assertEqual(asterisk.originated, 0)
+
+    def test_a_phone_that_is_already_in_a_call_is_not_dialled(self):
+        asterisk = FakeAsterisk(["1"])
+        asterisk.in_call = True
+        clock = FakeClock()
+        sent = []
+        with self.assertRaises(ceo.CallError) as caught:
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG), {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                    asterisk, synth=fake_synth, notifier=lambda t, c, text, silent=False: sent.append(text) or True,
+                    sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertIn("already in a call", str(caught.exception))
+        self.assertEqual(asterisk.originated, 0)
+        self.assertEqual(len(sent), 1)  # the owner is told the decision is pending
+        self.assertEqual(asterisk.dirs, set())
+
+    def test_a_call_file_that_definitely_never_got_in_gives_the_slot_back(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+
+        class OriginateFails(FakeAsterisk):
+            def originate(self, name, call_file):
+                raise ceo.DockerError("a command inside the Asterisk container failed")
+
+        asterisk = OriginateFails([])
+        clock = FakeClock()
+        with self.assertRaises(ceo.CallError):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=120), {}, asterisk,
+                    synth=fake_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual(state.read_text().strip(), "")  # no call exists and nothing reached the owner
+
+    def test_a_call_file_move_that_timed_out_may_have_rung_so_it_keeps_the_slot(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+
+        class OriginateTimesOut(FakeAsterisk):
+            def originate(self, name, call_file):
+                raise ceo.DockerTimeout("cannot run docker (timed out)")
+
+        asterisk = OriginateTimesOut([])
+        clock = FakeClock()
+        with self.assertRaises(ceo.CallError):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=120), {}, asterisk,
+                    synth=fake_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertNotEqual(state.read_text().strip(), "")
 
     def test_a_second_ask_too_soon_is_refused_before_any_call(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
@@ -1683,6 +1754,15 @@ class DockerStateTests(unittest.TestCase):
         result.returncode, result.stdout, result.stderr = returncode, stdout, stderr
         return ceo.DockerAsterisk("asterisk", run=lambda command, **kwargs: result)
 
+    def test_a_channel_of_the_endpoint_means_the_phone_is_in_a_call(self):
+        busy = b"PJSIP/phone-0000001a!ceo-ask!s!1!Up!Read!!!!3!00:00:12!\nPJSIP/other-0000001b!x!s!1!Up!\n"
+        idle = b"PJSIP/phone2-0000001c!x!s!1!Up!\n0 active channels\n"
+        self.assertTrue(self.asterisk(0, stdout=busy).endpoint_in_call("PJSIP/phone"))
+        self.assertFalse(self.asterisk(0, stdout=idle).endpoint_in_call("PJSIP/phone"))  # another endpoint, not a prefix match
+        self.assertFalse(self.asterisk(0, stdout=b"").endpoint_in_call("PJSIP/phone"))
+        with self.assertRaises(ceo.CallError):
+            self.asterisk(1, stderr=b"no asterisk").endpoint_in_call("PJSIP/phone")  # a failure is not "idle"
+
     def test_a_missing_file_means_no_marker_yet(self):
         # Detected by exit code, so a translated "No such file" message (non-C locale) still works.
         self.assertIsNone(self.asterisk(3, stderr=b"cat: /x: No existe el fichero o el directorio").read_file("/x"))
@@ -2027,7 +2107,7 @@ class CliTests(unittest.TestCase):
         code, out = self.run_telegram_setup(self.answers([update]))
         self.assertEqual(code, 0)
         self.assertIn("@my_bot", out)
-        self.assertIn("CEO_TELEGRAM_CHAT_ID=4242", out)
+        self.assertIn("\nCEO_TELEGRAM_CHAT_ID=4242\n", out)  # nothing else on the line: it can be copied as it is
         self.assertNotIn("SECRETTOKEN", out)
         self.assertNotIn("Someone", out)
 
