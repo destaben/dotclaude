@@ -14,8 +14,10 @@ incomplete, and fails the job rather than posting it. The prompt states the
 format explicitly. One-comment-per-PR editing and a higher effort level were
 considered and left out; reasons are in `docs/decisions/0002-cost-and-quota.md`.
 The gate also refuses to post a review that contains a secret's value, and the
-agent can no longer read `/proc`, `/etc` or `/run`, closing a path by
-which an injected diff could have leaked a token into a comment.
+agent is denied `Read`, `Grep` and `Glob` of `/proc`, `/etc` and `/run` (added,
+not yet confirmed on a real run), to close a path by which an injected diff
+could have leaked a token into a comment. A first attempt that also denied
+`/home` blinded the agent, because the runner checks the repo out there.
 Only an incomplete result (exit 3 of the script) is retried; a crash or setup
 error fails the job at once, and a run where the action itself failed is never
 posted.

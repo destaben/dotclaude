@@ -75,8 +75,8 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
 - **Depends on** GitHub expanding `env` inside the action's `with:` inputs (an
   Actions expression feature, not the action itself) and the action
   populating the `execution_file` output (observed on this repo's review runs,
-  2026-11-08;
-  re-check with the action version, see the note at the end of the workflow).
+  2026-11-08; re-check with the action version, see the note at the end of
+  the workflow).
   An uncaught script error (for example an unwritable output path) exits 2, so
   it fails the job instead of retrying. An empty `execution_file` output counts
   as an incomplete review and costs the one retry; that is intended, since
@@ -98,6 +98,8 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   - The gate checks the shape of the message, not whether it is true. A
     prompt-injected diff can still produce a well-formed `Result: 0 findings`;
     the review is advisory (see `docs/pipeline.md`).
+  - A line after the `Result:` line (a rule, a sign-off) makes a finished
+    review fail both runs; the fixed last line is the issue's contract.
   - A `workflow_dispatch` run still performs the full review (quota only) and
     has no PR to post to, so its result is not validated or retried; nothing is
     posted and nothing waits on it.
@@ -105,25 +107,25 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
     this configuration (none were seen on this repo's runs). If it ever mirrors
     an incomplete message into a comment, that text is outside this gate:
     re-check the action's behaviour when updating its version.
-- **Secret-leak defence (severe finding on PR #16, fixed here).** The agent
-  has `Read`, and its final message is posted verbatim, so a prompt-injected
-  diff could try to make it read a secret (for example the process
-  environment under `/proc`) and echo it into a public comment. This pre-dates
-  the PR but this step is the publishing path, so two layers were added:
-  `Read` of `/proc`, `/etc` and `/run` is denied (not `/home`: the runner
-  checks the repo out under the runner user's home directory, and denying it blinded the
-  agent on the first try), and the gate
-  refuses to post, with exit 2 and no retry, any review that contains the
-  value of `CLAUDE_CODE_OAUTH_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN`. Neither
-  layer catches a transformed secret (for example base64), so the review stays
-  advisory and fork PRs stay skipped on the automatic trigger. The `Read(//...)`
-  absolute-path rule syntax follows the Claude Code permissions reference and
-  was not exercised on a real run.
+- **Secret-leak defence.** The agent has `Read`, `Grep` and `Glob`, and its
+  final message is posted verbatim, so a prompt-injected diff could try to make
+  it read a secret (for example the process environment under `/proc`) and
+  echo it into a public comment. Two layers: `Read`, `Grep` and `Glob` of
+  `/proc`, `/etc` and `/run` are denied (not `/home`: the runner checks the
+  repo out under the runner user's home directory), and the gate refuses to
+  post, with exit 2 and no retry, any review that contains the value of
+  `CLAUDE_CODE_OAUTH_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN`. Neither layer
+  catches a transformed secret (for example base64), so the review stays
+  advisory and fork PRs stay skipped on the automatic trigger. Open question:
+  the `Read(//...)`-style absolute-path deny syntax follows the Claude Code
+  permissions reference but was not confirmed on a real run for each tool.
 - **Gating coverage:** the workflow gates are covered only by text-level
   `WorkflowContractTests`; real behaviour (the retry-file selection, the
   outcome combinations) needs a real action run. The validation logic they
   depend on is unit-tested.
-- **An errored final result is retried once**, like an incomplete one. Errors
+- **An errored final result is retried once**, like an incomplete one, when
+  the action step still exits green; if the action step itself exits non-zero
+  the job fails and nothing is retried or posted. Errors
   such as max-turns or an early stop are the intermittent failure this work
   targets, so one retry is worth its cost; a persistent error (quota) fails
   the retry too and the job goes red with nothing posted.

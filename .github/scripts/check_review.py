@@ -88,7 +88,9 @@ def validate(text, pr_number):
     heading = f"## Review of PR #{pr_number}"
     # An agent that was blocked may still format a "0 findings" review around
     # an admission that it checked nothing; that is not a review.
-    admitted = "\n".join(lines).lower()
+    # Only the opening lines are checked, so a finding that merely quotes one
+    # of these phrases does not block a good review.
+    admitted = "\n".join(lines[:4]).lower()
     for phrase in ("review is incomplete", "could not complete", "review incomplete"):
         if phrase in admitted:
             return "the review says it is incomplete"

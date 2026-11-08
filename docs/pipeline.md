@@ -69,7 +69,9 @@ with `## Review of PR #<n>` and end with
 `Result: <total> findings (<severe> severe, <non-severe> non-severe)`
 (`.github/scripts/check_review.py`, copy it with the workflow). An incomplete
 message, such as a "waiting for the agents" status, is retried once and then
-fails the job instead of being posted as if it were a review. It also needs
+fails the job instead of being posted as if it were a review. A review that
+contains the value of one of the job's tokens is never posted either (exit 2,
+no retry). It also needs
 the action step itself to have succeeded. The review is advisory: a
 prompt-injected diff can still influence what it says. Inactive until you
 add a `CLAUDE_CODE_OAUTH_TOKEN` repository secret. There is no API-key

@@ -115,6 +115,13 @@ class ValidateTests(unittest.TestCase):
             text = GOOD.replace("Nothing.", phrase, 1)
             self.assertIsNotNone(check_review.validate(text, "9"), phrase)
 
+    def test_quoting_an_incomplete_phrase_deep_in_a_finding_is_fine(self):
+        text = GOOD.replace(
+            "### documenter\nNothing.",
+            '### documenter\nA test string says "could not complete" on purpose.',
+        )
+        self.assertIsNone(check_review.validate(text, "9"))
+
     def test_counts_must_add_up(self):
         text = GOOD.replace("0 findings (0 severe", "3 findings (1 severe")
         self.assertIsNotNone(check_review.validate(text, "9"))
@@ -145,16 +152,19 @@ class WorkflowContractTests(unittest.TestCase):
     def test_retry_runs_only_on_an_incomplete_result(self):
         self.assertIn("steps.check.outputs.valid == 'false'", self.text)
 
-    def test_post_step_uses_retry_output_only_when_retry_succeeded(self):
+    def test_text_guard_post_step_retry_output_selection(self):
         self.assertIn('[ "$RETRY_OUTCOME" = "success" ]', self.text)
         self.assertIn('[ "$RETRY_OUTCOME" = "failure" ]', self.text)
 
     def test_agent_cannot_read_process_or_system_paths(self):
         for path in ("//proc/**", "//etc/**", "//run/**"):
-            self.assertIn(f"Read({path})", self.text)
+            for tool in ("Read", "Grep", "Glob"):
+                self.assertIn(f"{tool}({path})", self.text)
 
-    def test_post_and_check_steps_pass_secrets_to_the_leak_check(self):
+    def test_text_guard_secrets_reach_the_leak_check(self):
         self.assertEqual(self.text.count("          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets."), 2)
+        self.assertGreaterEqual(self.text.count("          GITHUB_TOKEN: ${{ secrets."), 1)
+        self.assertGreaterEqual(self.text.count("          GH_TOKEN: ${{ secrets."), 1)
 
     def test_workspace_is_not_denied(self):
         # The runner checks the repo out under /home/runner/work.
