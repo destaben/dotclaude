@@ -10,9 +10,7 @@
 2. **The pipeline is ordered steps, not hooks.** `/release` runs five steps
    written in its command file: full tests, bug-hunter, severity routing,
    documenter, commit-and-pr. `settings.json` has no `hooks` key and the
-   validator enforces that. The one exception is the shell-guard hook inside the
-   `claudio` agent's own frontmatter, scoped to that agent and outside the
-   pipeline: see `0004-tooling-choices.md`, item 8. "Gate" here means the documented order, which the
+   validator enforces that. "Gate" here means the documented order, which the
    agent follows; the harness does not enforce it, but the validator checks
    that `release.md` numbers these steps in this order. If stronger enforcement is
    ever needed, add a hook deliberately and revisit this. The real backstops are the
@@ -55,6 +53,9 @@ was wrong.
 - After a restart, test whether an empty `tools:` gives the outsider no tools.
 
 ## See also
+The one hook in the repo is the shell guard in the `claudio` agent's own frontmatter, scoped to that
+agent and outside the pipeline (`0004-tooling-choices.md`, item 8).
+
 A decision the council cannot resolve is handed up to the user, by phone if the `ceo-call` skill is set
 up: see the "When the council cannot resolve it" section of the `council-policy` skill and
 `0004-tooling-choices.md`, item 8.

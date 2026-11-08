@@ -5,20 +5,14 @@ change was made, not just what changed — the diff already shows what.
 
 ## 2026-11-07 — Claudio, a CEO agent that phones the user
 
-Added `claudio`, a CEO agent above the council and a `ceo-call` skill, so a decision the council
-cannot resolve reaches the user by phone instead of waiting in a terminal. The first version asks
-with text-to-speech and takes a keypad answer, not spoken words: a decision-council review of the
-design (recorded in `docs/decisions/0004-tooling-choices.md`, item 8) found that speech recognition
-on telephone audio is least reliable on exactly the short words (yes, no, numbers) that binding
-decisions depend on. Every choice is read back and recorded only after a second key press confirms
-it. If the user does not pick up it retries, then sends a chat message; a call picked up and hung up
-is not retried. Quiet hours, when configured, stop night calls, including retries that would land
-inside the window. A phone that is not registered is not dialled until it registers: the owner gets
-a heads-up message, the call waits briefly, and gives up if it never registers. The agent's shell is
-limited by a hook scoped to that agent (an exception to the repo's no-hooks rule) to the call
-script, since its briefs can quote untrusted text and the env file holds the chat token. Free-form
-spoken answers are deferred until they pass an accuracy test on real recordings. No instance data
-enters this repo; the telephony setup lives in the user's private notes.
+Added `claudio`, a CEO agent above the council, and a `ceo-call` skill, so a decision the council
+cannot resolve reaches the user by phone instead of waiting in a terminal. It asks with text-to-
+speech and takes a keypad answer, not spoken words, because speech recognition on telephone audio is
+least reliable on exactly the short words (yes, no, numbers) that binding decisions depend on; a
+choice counts only after a second key press confirms it. Night calls, a sleeping phone, retries and
+abuse by a manipulated agent are handled by the skill's rules, and the agent's shell is limited by a
+hook to the call script, since its briefs can quote untrusted text. Why:
+`docs/decisions/0004-tooling-choices.md`, item 8. No instance data enters this repo.
 
 ## 2026-11-07 — Administer LAN devices over SSH
 

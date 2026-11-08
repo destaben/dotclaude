@@ -73,7 +73,8 @@ ENDPOINT_RE = re.compile(r"^PJSIP/[A-Za-z0-9_.-]+\Z")
 CONTAINER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
-# Spoken phrases (Spanish). They are data for the voice, not documentation.
+# Spoken and chat phrases (Spanish): the owner's language. They are data for the voice and the chat,
+# not code comments or documentation, so the English-only rule does not apply to them.
 PHRASES = {
     "intro": "Hola, soy Claudio. Necesito una decisión.",
     "option": "Opción {n}: {text}.",
@@ -88,6 +89,7 @@ NOTIFY = {
     "undecided": "Contestaste, pero no llegaste a confirmar una opción.",
     "deferred": "Estamos en horas de silencio, así que no llamé.",
     "error": "No pude llamar por un fallo técnico.",
+    "error_live": "Hubo un fallo técnico durante la llamada. Si ya respondiste, tu respuesta no se ha registrado: la decisión sigue pendiente.",
     "timeout": "La llamada seguía abierta cuando se acabó el tiempo, así que no se registró ninguna decisión.",
     "phone_not_registered": "Tu teléfono no estaba conectado, así que no llamé.",
 }
@@ -694,14 +696,15 @@ def ask(
         # dialplan to write into (the daily sweep removes it) instead of deleting it underneath.
         keep_folder = dialled and isinstance(error, MayBeLive)
         # The decision is still pending: tell the owner by chat, then let the error reach the caller.
-        notify_outcome({"status": "error"}, clean, env, notifier)
+        # If the call may be live, say that an answer given now is not recorded.
+        notify_outcome({"status": "error_live" if keep_folder else "error"}, clean, env, notifier)
         raise
     except BaseException:
         # Anything else (an unexpected bug) must not delete the folder of a call that may be live, and
         # the owner still hears that the decision is pending.
         keep_folder = dialled
         try:
-            notify_outcome({"status": "error"}, clean, env, notifier)
+            notify_outcome({"status": "error_live" if keep_folder else "error"}, clean, env, notifier)
         except Exception:  # noqa: BLE001 - never hide the original problem
             pass
         raise
@@ -749,6 +752,46 @@ def acquire_run_lock(config: Dict):
     return handle
 
 
+def _read_starts(path: Path, now_s: float) -> List[float]:
+    starts = []
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")  # a damaged file must not crash
+    except OSError:
+        return starts
+    for line in text.splitlines():
+        try:
+            value = float(line.strip())
+        except ValueError:
+            continue
+        if abs(now_s - value) < 86400:  # a start slightly in the future (clock stepped back) still counts
+            starts.append(value)
+    return starts
+
+
+def _write_starts(path: Path, starts: List[float]) -> None:
+    """Replace the state file whole (temp file + rename), so a kill can never leave it empty."""
+    temp = path.with_name(path.name + ".tmp.%d" % os.getpid())
+    try:
+        temp.write_text("".join("%.6f\n" % value for value in starts), encoding="utf-8")
+        os.replace(temp, path)
+    except OSError:
+        raise CallError("cannot write the throttle state file")
+    finally:
+        try:
+            temp.unlink()
+        except OSError:
+            pass
+
+
+def _state_lock(path: Path):
+    """Lock for read-modify-write of the state file. It is a separate file, because the state file
+    itself is replaced (a new inode) and a lock on the old one would protect nothing."""
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    handle = open(path.with_name(path.name + ".state.lock"), "a+", encoding="utf-8")
+    fcntl.flock(handle, fcntl.LOCK_EX)
+    return handle
+
+
 def check_throttle(config: Dict, wall: Callable = time.time) -> Optional[float]:
     """Refuse a new ask that starts too soon after the previous one, or beyond `max_per_hour`, so a
     confused or manipulated agent cannot ring the owner over and over. The state file keeps one start
@@ -759,56 +802,35 @@ def check_throttle(config: Dict, wall: Callable = time.time) -> Optional[float]:
     resolved = Path(os.path.expanduser(path))
     now_s = wall()
     try:
-        resolved.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        handle = open(resolved, "a+", encoding="utf-8", errors="replace")  # a damaged file must not crash
+        lock = _state_lock(resolved)
     except OSError:
         raise CallError("cannot write the throttle state file")
-    with handle:
-        # The lock makes read-check-write atomic, so two asks started together cannot both pass.
-        fcntl.flock(handle, fcntl.LOCK_EX)
-        handle.seek(0)
-        starts = []
-        for line in handle.read().splitlines():
-            try:
-                value = float(line.strip())
-            except ValueError:
-                continue
-            if abs(now_s - value) < 86400:  # a start slightly in the future (clock stepped back) still counts
-                starts.append(value)
+    with lock:
+        starts = _read_starts(resolved, now_s)
         if gap and starts and now_s - max(starts) < gap:  # also true for a start in the future
             raise CallError("asked again too soon: wait %d more seconds" % (gap - (now_s - max(starts))))
         if per_hour and sum(1 for value in starts if now_s - value < 3600) >= per_hour:  # future starts count
             raise CallError("too many asks in the last hour (limit %d)" % per_hour)
-        handle.seek(0)
-        handle.truncate()
-        handle.write("".join("%.6f\n" % value for value in starts + [now_s]))
+        _write_starts(resolved, starts + [now_s])
     return now_s
 
 
 def release_throttle(config: Dict, stamp: Optional[float]) -> None:
-    """Take back the start recorded by check_throttle when nothing reached the owner (speech failed, or
-    the phone was asleep and no heads-up could be sent), so such asks do not use up the limits."""
+    """Take back the start recorded by check_throttle when nothing reached the owner (no call and no
+    chat message), so such asks do not use up the limits."""
     path = config.get("state_file")
     if stamp is None or not path:
         return
     resolved = Path(os.path.expanduser(path))
     try:
-        with open(resolved, "r+", encoding="utf-8") as handle:
-            fcntl.flock(handle, fcntl.LOCK_EX)
-            kept, removed = [], False
-            for line in handle.read().splitlines():
-                try:
-                    same = abs(float(line.strip()) - stamp) < 1e-6
-                except ValueError:
-                    same = False
-                if same and not removed:
-                    removed = True  # only our own line, not another ask's from the same second
-                    continue
-                kept.append(line)
-            handle.seek(0)
-            handle.truncate()
-            handle.write("".join(line + "\n" for line in kept))
-    except OSError:
+        with _state_lock(resolved):
+            starts = _read_starts(resolved, stamp)
+            for index, value in enumerate(starts):
+                if abs(value - stamp) < 1e-6:
+                    del starts[index]  # only our own line, not another ask's from the same second
+                    break
+            _write_starts(resolved, starts)
+    except (OSError, CallError):
         pass  # best effort: the limit then stays slightly stricter than needed
 
 

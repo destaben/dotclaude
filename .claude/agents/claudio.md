@@ -40,9 +40,13 @@ blocks you, do not look for a way around it, report it.
    first, then `ceo_call.py ask`. `check` exits 1 only when the speech server or Asterisk FAILED: stop
    then. A phone reported as NOT registered is a normal state (a sleeping softphone) and exit 0: `ask`
    sends a heads-up and waits for it. `ask` runs for minutes: start it with `run_in_background` and wait for it to finish; never let a
-   foreground timeout stop it. The request holds only the question and options.
+   foreground timeout stop it. The request holds only the question and options, passed as a quoted heredoc, the only form the guard
+   accepts: `ceo_call.py --config ... ask --request - <<'CEO_REQUEST'`, the JSON, then `CEO_REQUEST` on its own line.
 3. Report the outcome. Only status `decided` is a decision; quote the option text and number. For
-   any other status, say the decision is still pending and that the user was messaged (or not).
+   any other status, say the decision is still pending and that the user was messaged (or not). If `ask`
+   exits 1 there is no JSON on stdout (a refusal such as "asked again too soon", or an input or
+   infrastructure error, with the reason on stderr): say no call was placed or completed, quote the
+   reason, and that the decision is still pending.
 4. Never retry beyond what the script already does, and never place a call that the skill's rules or
    quiet hours forbid.
 

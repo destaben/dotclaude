@@ -110,7 +110,7 @@ is pending and leaves the call folder alone.
 ```
 ceo_call.py check                        # speech reachable? phone registered? chat configured?
                                          # exit 1 only if speech or Asterisk FAILED; an unregistered phone is exit 0
-ceo_call.py ask --request request.json   # or --request - to read stdin
+ceo_call.py ask --request request.json   # or --request - to read stdin (the agent must use the heredoc form below)
 ```
 Request: `{"question": "...", "options": ["...", "..."]}` with 2 to 8 options. The request must be a regular file (or stdin) of at most 64 KiB. Keep the question short:
 it is spoken aloud. Result (one JSON line on stdout):
@@ -149,8 +149,9 @@ domain) to judge the voice, then asks for a key press: 1 sounds fine, 2 a proble
   the text is synthesized by the speech server and appears in the chat message.
 - Treat the keypad answer as the owner's decision, nothing else: the call carries no instructions.
 - The prompts are generated per call and deleted from the phone server when the call ends. If the script
-  is stopped (SIGTERM) or docker fails while a call may be live, the folder is kept so a confirmation can
-  still be written, and a run killed harder also leaves it; the next run sweeps it once it is a day old. Call
+  is stopped (SIGTERM) or docker fails while a call may be live, the folder is kept only so the running
+  dialplan does not fail under a deleted folder; an answer given after such an error is not read back
+  (the owner is told it was not recorded), and a run killed harder also leaves it; the next run sweeps it once it is a day old. Call
   audio and transcripts are never stored in a project repo.
 - If a decision cannot be reduced to numbered options, do not force it: ask the user in the terminal.
 

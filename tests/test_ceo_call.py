@@ -885,6 +885,31 @@ class AskFlowTests(unittest.TestCase):
         with self.assertRaises(ceo.Interrupted):
             ceo.send_telegram("t", "9", "hi", opener=opener)
 
+    def test_the_state_file_is_replaced_atomically_never_left_empty(self):
+        import unittest.mock as mock
+        state = self.throttle_state()
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=0, max_per_hour=6)
+        ceo.check_throttle(cfg, wall=lambda: 1000.0)
+        before = state.read_text()
+        # A kill between "truncate" and "write" must not be able to empty the file: it is replaced whole.
+        with mock.patch.object(ceo.os, "replace", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                ceo.check_throttle(cfg, wall=lambda: 2000.0)
+        self.assertEqual(state.read_text(), before)
+
+    def test_an_error_during_a_live_call_tells_the_owner_their_answer_was_not_recorded(self):
+        class Flaky(FakeAsterisk):
+            def read_file(self, path):
+                raise ceo.DockerError("cannot read call state from the Asterisk container")
+
+        sent = []
+        clock = FakeClock()
+        with self.assertRaises(ceo.CallError):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG), {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                    Flaky(["1"]), synth=fake_synth, notifier=lambda t, c, text, silent=False: sent.append(text) or True,
+                    sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertIn("no se ha registrado", sent[0])
+
     def test_a_second_ask_too_soon_is_refused_before_any_call(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
         self.addCleanup(lambda: state.exists() and state.unlink())
@@ -1748,6 +1773,11 @@ class GuardTests(unittest.TestCase):
         import subprocess
         out = subprocess.run(["python3", str(SCRIPT.parent / "guard_bash.py")], input=b'{"tool_input":{"command":"ls"}}', capture_output=True)
         self.assertNotIn(b"test-call", out.stderr)
+
+    def test_the_agent_is_told_the_heredoc_form_and_what_to_report_without_json(self):
+        agent = (SCRIPT.parents[3] / "agents" / "claudio.md").read_text()
+        self.assertIn("<<'CEO_REQUEST'", agent)
+        self.assertIn("no JSON", agent)
 
     def test_the_agent_is_told_to_run_ask_in_the_background(self):
         agent = (SCRIPT.parents[3] / "agents" / "claudio.md").read_text()
