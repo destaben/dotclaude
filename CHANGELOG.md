@@ -40,7 +40,19 @@ out of the container means a misbehaving run cannot push or open pull requests.
 data, not instructions. The container's claude process runs with a scrubbed
 environment. The residual risk is stated in the skill: an allowed test runner
 executes code the worker wrote, so tasks must come only from owner-authored input.
-The decision is recorded in `docs/decisions/0004-tooling-choices.md`, item 8.
+The decision is recorded in `docs/decisions/0004-tooling-choices.md`, item 9.
+
+## 2026-11-08 — remote-hosts: allow the user's read-only sudoers whitelist
+
+The `remote-hosts` skill said to never run `sudo`, which left Claude unable to read root-only
+state (firewall rules, root's crontab, `dmesg`) on the user's hosts. It now allows one
+exception: a read-only whitelist the user sets up on their own hosts, run non-interactively with
+exactly the listed arguments and under the same print-state and ask-before-change rules as
+anything else. The host's sudoers file decides what may run, not the vault note, and an
+open-ended entry is not used. A new rule says reading state never means printing secrets, and
+that a whitelist does not waive it. The whitelist is described as a convenience list, not a
+security boundary, because `docker` group membership is root-equivalent. The whitelist and the
+host facts stay in the user's private vault.
 
 ## 2026-11-07 — Administer LAN devices over SSH
 

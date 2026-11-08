@@ -50,7 +50,7 @@ Quick is 3 model calls, full is 6, so it is kept for real decisions. See
 - `worker` (skill): a one-shot, owner-triggered Claude Code run in a container on
   an owner-listed SSH host. The owner's machine publishes the result as a draft
   pull request. It is not part of the change pipeline; see
-  `docs/decisions/0004-tooling-choices.md`, item 8.
+  `docs/decisions/0004-tooling-choices.md`, item 9.
 
 ## GitHub PR review (`.github/workflows/claude-pr-review.yml`)
 This workflow is dotclaude's own project-specific CI — it is *not* installed
