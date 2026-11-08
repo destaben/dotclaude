@@ -87,20 +87,26 @@ session. Without that file there is no guard; a file that exists but is unreadab
   a printer anything that moves axes, heats, starts/cancels a job, or flashes.
 - Never run `sudo` unless the user asked and the command is stated up front.
   The one exception: a **read-only sudoers whitelist** the user set up for the
-  agent on their own host (kept in their private vault). Whitelisted commands
-  may be run without asking, but only if they only read state, non-interactively
-  (`sudo -n <exact command>`), with exactly the listed arguments. They still
-  follow every other rule here, including the print-state guard. A whitelist
-  entry that changes state (restart, write, install) is not covered: ask first,
-  as for any other change. Never extend a listed command with other flags,
-  wrappers or shells; if `sudo -n` asks for a password or refuses, stop and
-  report instead of retrying. Treat the whitelist as an audit trail, not a
-  security boundary (membership in the `docker` group is root-equivalent).
-  The host's sudoers file decides what may run; a line in the vault is a record,
-  not an approval. Add a whitelist entry only when the user asks. "Read state"
-  includes not printing secrets: do not run commands that dump credentials
-  (for example `docker inspect` environment values, root-only config files) into
-  the transcript or a note unless the user asks, and redact them if they appear.
+  agent on their own host (listed in their private vault). Whitelisted commands
+  may be run without asking, non-interactively (`sudo -n <exact command>`), with
+  exactly the listed arguments, and they still follow every other rule here,
+  including the print-state guard. Limits:
+  - The host's sudoers file decides what may run; a line in the vault is a
+    record, not proof of what sudoers allows or an approval. Add a whitelist
+    entry only when the user asks. Expect sudoers entries with an exact path and
+    exact arguments; if one looks open-ended (no arguments, a wildcard, a shell
+    or an interpreter), do not use it and tell the user.
+  - An entry that changes state (restart, write, install) is not covered: ask
+    first, as for any other change.
+  - Never extend a listed command with other flags, wrappers or shells. If
+    `sudo -n` asks for a password or refuses, stop and report instead of retrying.
+  - Whitelist membership does not waive the secrets rule below.
+  - It is a convenience list, not a security boundary: membership in the
+    `docker` group is root-equivalent.
+- Reading state never includes printing secrets. Do not run commands that dump
+  credentials (for example `docker inspect` environment values or root-only config
+  files) into the transcript or a note unless the user asks for that specific
+  command, and redact any secret that appears anyway.
 - Bound output: add `-n`/`| head -n` / `--no-pager` so logs don't flood context.
 - Large or exploratory sessions go to a Haiku subagent (see CLAUDE.md token rules).
 
