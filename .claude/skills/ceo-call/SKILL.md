@@ -129,7 +129,7 @@ is pending and leaves the call folder alone.
 
 ```
 ceo_call.py check                        # speech reachable? phone registered? chat configured?
-                                         # exit 1 only if speech or Asterisk FAILED; an unregistered phone is exit 0
+                                         # exit 1 only on a real failure (speech, Asterisk or a bad config); an unregistered phone is exit 0
 ceo_call.py ask --request request.json   # or --request - to read stdin (the agent must use the heredoc form below)
 ```
 Request: `{"question": "...", "options": ["...", "..."]}` with 2 to 8 options. The request must be a regular file (or stdin) of at most 64 KiB. Keep the question short:

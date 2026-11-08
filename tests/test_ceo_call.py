@@ -967,6 +967,22 @@ class AskFlowTests(unittest.TestCase):
         self.assertNotIn("no se ha registrado", sent[0])  # no call exists, so no "your answer" warning
         self.assertEqual(asterisk.dirs, set())  # the folder is not kept either
 
+    def test_a_failed_originate_is_not_reported_as_a_live_call(self):
+        class OriginateFails(FakeAsterisk):
+            def originate(self, name, call_file):
+                raise ceo.DockerError("a command inside the Asterisk container failed")
+
+        asterisk = OriginateFails([])
+        clock = FakeClock()
+        sent = []
+        with self.assertRaises(ceo.CallError) as caught:
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG), {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                    asterisk, synth=fake_synth, notifier=lambda t, c, text, silent=False: sent.append(text) or True,
+                    sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertNotIsInstance(caught.exception, ceo.MayBeLive)
+        self.assertNotIn("no se ha registrado", sent[0])
+        self.assertEqual(asterisk.dirs, set())
+
     def test_a_second_ask_too_soon_is_refused_before_any_call(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
         self.addCleanup(lambda: state.exists() and state.unlink())
@@ -1178,6 +1194,14 @@ class QuietHoursTests(unittest.TestCase):
                 self.addCleanup(os.unlink, handle.name)
                 with self.assertRaises(ceo.CallError):
                     ceo.load_config(handle.name)
+
+    def test_an_empty_state_file_path_is_refused_not_a_silent_off_switch(self):
+        handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        handle.write('{"state_file": ""}')
+        handle.close()
+        self.addCleanup(os.unlink, handle.name)
+        with self.assertRaises(ceo.CallError):
+            ceo.load_config(handle.name)
 
     def test_a_zero_poll_interval_is_refused(self):
         handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)

@@ -195,8 +195,8 @@ def load_config(path: Optional[str]) -> Dict:
         raise CallError("attempts, delays and timeouts add up to more than 20 hours")
     if not 1 <= config["piper_port"] <= 65535:
         raise CallError("piper_port must be between 1 and 65535")
-    if config["state_file"] is not None and not isinstance(config["state_file"], str):
-        raise CallError("state_file must be a path or null")
+    if config["state_file"] is not None and not (isinstance(config["state_file"], str) and config["state_file"]):
+        raise CallError("state_file must be a non-empty path, or null to turn the throttle off")
     if not 1 <= config["poll_interval_s"] <= 60:
         # 0 would run `docker exec` back to back for the whole call window; a huge value would let a
         # run outlast the one-day age at which another run sweeps its folder.
@@ -504,10 +504,14 @@ GRACE_POLLS = 10  # polls to wait for a call that is still live at call_timeout_
 def run_attempt(asterisk, config: Dict, call_id: str, option_count: int, sleep=time.sleep, clock=time.monotonic) -> Dict:
     """Place one call and wait for its outcome. Never trusts the result file beyond a digit check."""
     base = "%s/ceo/%s" % (SPOOL, call_id)
-    asterisk.originate(
-        "ceo-%s" % call_id,
-        build_call_file(config["endpoint"], call_id, option_count, config["ring_timeout_s"]),
-    )
+    try:
+        asterisk.originate(
+            "ceo-%s" % call_id,
+            build_call_file(config["endpoint"], call_id, option_count, config["ring_timeout_s"]),
+        )
+    except MayBeLive as error:
+        # The call file is moved into place in one step, so a failure here means no call exists.
+        raise CallError(str(error))
     started = clock()
     answer_deadline = started + config["ring_timeout_s"] + 15
     total_deadline = started + config["ring_timeout_s"] + config["call_timeout_s"]

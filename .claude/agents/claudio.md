@@ -41,7 +41,8 @@ blocks you, do not look for a way around it, report it.
    in the skill's "Agent safety" section: use them verbatim (over ssh, `ssh <alias>` first and the two
    paths single-quoted). The request goes in as a quoted heredoc, `<<'CEO_REQUEST'`, followed by the
    request JSON and `CEO_REQUEST` on its own line. Run `check` first: it exits 1 only
-   when the speech server or Asterisk FAILED (stop then); a phone reported NOT registered is normal and
+   on a real failure (speech server or Asterisk FAILED, or an invalid config: stop then, and report the
+   message); a phone reported NOT registered is normal and
    exit 0, because `ask` sends a heads-up and waits. `ask` runs for minutes: start it with
    `run_in_background` and wait for it to finish; never let a foreground timeout stop it. The request
    holds only the question and options.
