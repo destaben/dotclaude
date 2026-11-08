@@ -127,8 +127,17 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   was confirmed only by a run that still reviewed the repo, not by a probe
   that tries to read outside it; and it is not verified that
   `claude-code-action` never writes the token inside the workspace.
+- **Assumption: headless CI denies tools that are not pre-approved.**
+  `.claude/agents/bug-hunter.md` lists `Grep` and `Glob` in its `tools`
+  frontmatter, but the workflow's `--allowedTools` omits them on purpose. The
+  no-Grep/Glob defence relies on `claude-code-action` running headless, where
+  a tool outside `--allowedTools` is denied rather than prompted for. This is
+  not verified by a probe; if a run ever shows the agent using `Grep` or
+  `Glob`, scope them like `Read` or remove them from the agent file for CI.
 - **Gating coverage:** the workflow gates are covered only by text-level
-  `WorkflowContractTests`; real behaviour (the retry-file selection, the
+  `WorkflowContractTests` (they parse the `--allowedTools` and
+  `--disallowedTools` values of `REVIEW_ARGS` and assert the exact sets, not
+  substrings); real behaviour (the retry-file selection, the
   outcome combinations) needs a real action run. The validation logic they
   depend on is unit-tested.
 - **An errored final result is retried once**, like an incomplete one, only

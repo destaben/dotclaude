@@ -1,4 +1,6 @@
 import json
+import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -162,31 +164,40 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn('[ "$RETRY_OUTCOME" = "success" ]', self.text)
         self.assertIn('[ "$RETRY_OUTCOME" = "failure" ]', self.text)
 
-    def test_agent_cannot_read_process_or_system_paths(self):
-        for path in ("//proc/**", "//etc/**", "//run/**"):
-            self.assertIn(f"Read({path})", self.text)
-
     def test_text_guard_secrets_reach_the_leak_check(self):
         self.assertEqual(self.text.count("          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets."), 2)
         self.assertGreaterEqual(self.text.count("          GITHUB_TOKEN: ${{ secrets."), 1)
         self.assertGreaterEqual(self.text.count("          GH_TOKEN: ${{ secrets."), 1)
 
-    def test_agent_has_no_grep_or_glob_outside_read_scoping(self):
-        allowed = self.text.split("--allowedTools", 1)[1].split("\n", 1)[0]
-        self.assertNotIn("Grep", allowed)
-        self.assertNotIn("Glob", allowed)
+    def tool_lists(self):
+        """Parse the job-level REVIEW_ARGS block into {flag: [tool, ...]}."""
+        match = re.search(r"^ +REVIEW_ARGS: >-\n((?: {8,}\S.*\n)+)", self.text, re.MULTILINE)
+        self.assertIsNotNone(match, "REVIEW_ARGS block not found")
+        tokens = shlex.split(" ".join(line.strip() for line in match.group(1).splitlines()))
+        flags = {}
+        for flag, value in zip(tokens, tokens[1:]):
+            if flag in ("--allowedTools", "--disallowedTools"):
+                self.assertNotIn(flag, flags, f"{flag} given twice")
+                flags[flag] = value.split(",")
+        return flags
 
-    def test_read_is_scoped_to_the_workspace(self):
-        self.assertIn("Read(/${{ github.workspace }}/**)", self.text)
-        self.assertNotIn(",Read,", self.text)
+    def test_agent_gets_exactly_the_expected_tools(self):
+        # Exact set: a bare Read, Grep, Glob or git show anywhere in the list fails.
+        self.assertCountEqual(
+            self.tool_lists()["--allowedTools"],
+            ["Bash(gh pr diff:*)", "Bash(gh pr view:*)", "Read(/${{ github.workspace }}/**)"],
+        )
 
-    def test_agent_cannot_use_git_show_which_can_write_files(self):
-        self.assertNotIn("Bash(git show", self.text)
+    def test_agent_cannot_read_git_or_system_paths(self):
+        expected = ["Read(.git/**)"]
+        for path in ("//proc/**", "//etc/**", "//run/**"):
+            expected += [f"{tool}({path})" for tool in ("Read", "Grep", "Glob")]
+        self.assertCountEqual(self.tool_lists()["--disallowedTools"], expected)
 
-    def test_workspace_is_not_denied(self):
+    def test_no_tool_list_denies_the_workspace(self):
         # The runner checks the repo out under /home/runner/work.
-        self.assertNotIn("Read(//home", self.text)
-        self.assertNotIn("Read(//github", self.text)
+        for tool in self.tool_lists()["--disallowedTools"]:
+            self.assertFalse(tool.startswith(("Read(//home", "Read(//github")), tool)
 
     def test_prompt_names_both_required_marker_lines(self):
         self.assertIn("## Review of PR #", self.text)
