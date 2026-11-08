@@ -1190,6 +1190,20 @@ class AskFlowTests(unittest.TestCase):
         ceo.check_throttle(dict(cfg, max_per_day=25), wall=lambda: now)
         ceo.check_throttle(dict(cfg, max_per_day=0), wall=lambda: now)  # off
 
+    def test_council_command_policy_and_agent_name_the_same_two_triggers(self):
+        root = SCRIPT.parents[2]
+        texts = {
+            "command": (root / ".." / "commands" / "council.md").read_text(),
+            "policy": (root / "council-policy" / "SKILL.md").read_text(),
+            "agent": (root / ".." / "agents" / "claudio.md").read_text(),
+        }
+        import re as _re
+        for name, text in texts.items():
+            flat = _re.sub(r"\s+", " ", text)
+            with self.subTest(doc=name):
+                self.assertIn("unanswered fatal flaw", flat) if name != "command" else self.assertIn("fatal flaw from the contrarian went unanswered", flat)
+                self.assertNotIn("unanswered security or data-loss flaw: the two cases", flat)
+
     def test_the_skill_defines_what_set_up_means(self):
         skill = (SCRIPT.parents[1] / "SKILL.md").read_text()
         self.assertIn("## Is it set up?", skill)

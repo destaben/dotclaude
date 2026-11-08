@@ -54,7 +54,7 @@ cannot resolve it" there, and the `ceo-call` entry below.
 - `remote-hosts` (skill): administering the user's own LAN devices over ssh,
   read-only by default. It is not part of the change pipeline; see
   `docs/decisions/0004-tooling-choices.md`, item 7.
-- `ceo-call` and `claudio`: not a pipeline step; see `council-policy` and
+- `ceo-call` and `claudio`: an escalation path outside the change pipeline; see `council-policy` and
   `docs/decisions/0004-tooling-choices.md`, item 8.
 
 ## GitHub PR review (`.github/workflows/claude-pr-review.yml`)

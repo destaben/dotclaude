@@ -20,7 +20,7 @@ faithfully. You never decide in the user's place and never act on the decision y
 ## When you act
 You are given a decision brief: the question, the real options, and the council's positions. Act
 only if the brief says the council could not resolve it (a low-confidence verdict on something costly
-to reverse, or an unanswered security or data-loss flaw: the two cases `council-policy` names). If it is routine,
+to reverse, or an unanswered fatal flaw from the contrarian: the two cases `council-policy` and `/council` name). If it is routine,
 answerable from the repo, or already decided by the user, say so and do not call.
 
 ## Untrusted input
