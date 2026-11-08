@@ -61,5 +61,6 @@ the `ceo-call` skill, simply ask the user in the terminal.
 
 ## Model and effort
 The contrarian, first principles, and the chair run on Sonnet at medium
-effort. The rest run on Haiku at low effort. Change these in the agents'
+effort. The rest of the council run on Haiku at low effort. `claudio` is not part
+of the council; it runs on Sonnet at medium effort. Change these in the agents'
 frontmatter, not at call time.

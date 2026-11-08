@@ -65,4 +65,7 @@
    user's private notes. The agent's shell is restricted to the call script by a
    hook, because it reads council briefs that can quote untrusted text and the
    env file holds the chat token; the details (guard location, user-level
-   install, what is allowed) live in the skill's "Agent safety" section.
+   install, what is allowed) live in the skill's "Agent safety" section. The guard cannot check the wording of
+   the question, so injected text could reword an option; that residual risk is
+   accepted because the owner hears the text, the choice is read back, and
+   nothing is recorded until a second key press.

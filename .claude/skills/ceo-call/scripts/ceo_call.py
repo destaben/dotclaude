@@ -804,7 +804,7 @@ class _NoLock:
 def acquire_run_lock(config: Dict):
     """Hold an exclusive lock for the length of one ask. The lock vanishes with the process, even when
     it is killed. It is independent of the throttle: `state_file: null` leaves it on."""
-    path = config.get("lock_file") or (config.get("state_file") and config["state_file"] + ".lock")
+    path = config.get("lock_file")  # None switches the lock off; it never falls back to another setting
     if not path:
         return _NoLock()
     resolved = Path(os.path.expanduser(path))

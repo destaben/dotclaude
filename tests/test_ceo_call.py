@@ -738,7 +738,7 @@ class AskFlowTests(unittest.TestCase):
     def test_a_second_ask_cannot_start_while_another_is_running(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
         self.addCleanup(lambda: state.exists() and state.unlink())
-        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=0, max_per_hour=0)
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), lock_file=str(state) + ".lock", min_gap_s=0, max_per_hour=0)
         first = ceo.acquire_run_lock(cfg)
         try:
             with self.assertRaises(ceo.CallError) as caught:
@@ -751,7 +751,7 @@ class AskFlowTests(unittest.TestCase):
     def test_ask_holds_the_run_lock_for_its_whole_run(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
         self.addCleanup(lambda: state.exists() and state.unlink())
-        cfg = {"state_file": str(state), "min_gap_s": 0, "max_per_hour": 0}
+        cfg = {"state_file": str(state), "lock_file": str(state) + ".lock", "min_gap_s": 0, "max_per_hour": 0}
         seen = []
         original = FakeAsterisk.originate
 
@@ -1251,6 +1251,14 @@ class AskFlowTests(unittest.TestCase):
             with self.assertRaises(ceo.CallError) as caught:
                 ceo.read_request("-")
         self.assertIn("UTF-8", str(caught.exception))
+
+    def test_lock_file_null_turns_the_run_lock_off_even_when_a_state_file_is_set(self):
+        state = self.throttle_state()
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), lock_file=None)
+        first = ceo.acquire_run_lock(cfg)
+        second = ceo.acquire_run_lock(cfg)  # no lock: a second one is not refused
+        first.close()
+        second.close()
 
     def test_a_second_ask_too_soon_is_refused_before_any_call(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
