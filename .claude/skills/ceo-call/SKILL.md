@@ -45,7 +45,7 @@ alias as `remote-hosts` describes, and run the script there.
 - **Heads-up:** if the phone is not registered when a call is due (typical for an iPhone softphone that
   the OS suspended while the screen was locked), the owner gets a chat message asking to open the app,
   and the call waits up to `heads_up_s` for the registration. A registered phone is called at once. A call that is still open when `call_timeout_s` and the grace
-  run out ends as `hangup` and is never followed by a retry, so two calls cannot overlap. If the phone is still not registered after
+  run out ends as `hangup`, and a `hangup` is never followed by a retry, so two calls cannot overlap. If the phone is still not registered after
   the wait (or no chat is configured, or `heads_up_s` is 0), no call is placed, because an unregistered
   endpoint can only ring out: the status is `unanswered` with `reason: phone_not_registered`, and the
   owner gets the chat message.
@@ -83,6 +83,11 @@ silent starts the next round, so a wrong key uses one up; after three the call e
 The limit bounds how long a call can occupy the phone.
 
 ## Use
+`ask` can take several minutes (heads-up wait, ringing, the call itself, up to `attempts` times),
+longer than a default foreground command timeout: run it in the background and wait for it to finish.
+If the process is stopped (SIGTERM) mid-call it reports the error, messages the owner that the decision
+is pending and leaves the call folder alone.
+
 ```
 ceo_call.py check                        # speech reachable? phone registered? chat configured?
                                          # exit 1 only if speech or Asterisk FAILED; an unregistered phone is exit 0
@@ -95,7 +100,7 @@ it is spoken aloud. Result (one JSON line on stdout):
 |---|---|---|
 | `decided` | the owner chose and confirmed; `choice` (1-based) and `option` are set | 0 |
 | `unanswered` | no pickup after all attempts; the chat message was sent (`notified`) | 3 |
-| `hangup` | picked up but hung up before confirming | 3 |
+| `hangup` | picked up but hung up before confirming (not retried: they chose to hang up) | 3 |
 | `undecided` | three rounds without a confirmed choice | 3 |
 | `deferred` | quiet hours; no (further) call placed | 3 |
 

@@ -616,6 +616,29 @@ class AskFlowTests(unittest.TestCase):
         with self.assertRaises(ceo.CallError):
             ceo.check_throttle(cfg, wall=lambda: 9000.0)  # the clock is now before the recorded starts
 
+    def test_sigterm_mid_call_messages_the_owner_and_leaves_the_folder(self):
+        import signal as _signal
+
+        class Terminated(FakeAsterisk):
+            def read_file(self, path):
+                if not getattr(self, "killed", False):
+                    self.killed = True
+                    os.kill(os.getpid(), _signal.SIGTERM)
+                return super().read_file(path)
+
+        previous = _signal.getsignal(_signal.SIGTERM)
+        self.addCleanup(_signal.signal, _signal.SIGTERM, previous)
+        ceo.exit_cleanly_on_sigterm()
+        sent = []
+        asterisk = Terminated(["unanswered"])
+        clock = FakeClock()
+        with self.assertRaises(ceo.CallError):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG), {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                    asterisk, synth=fake_synth, notifier=lambda t, c, text, silent=False: sent.append(text) or True,
+                    sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual(len(sent), 1)  # the owner is told the decision is still pending
+        self.assertTrue(asterisk.dirs)  # a live call keeps its folder
+
     def test_a_second_ask_too_soon_is_refused_before_any_call(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
         self.addCleanup(lambda: state.exists() and state.unlink())
@@ -652,14 +675,15 @@ class AskFlowTests(unittest.TestCase):
         self.assertFalse(sent[0][3])
 
     def test_answer_on_a_later_attempt_is_accepted_without_notifying(self):
-        result, asterisk, sent = run_ask(["unanswered", "hangup", "3"], env={"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"})
+        result, asterisk, sent = run_ask(["unanswered", "unanswered", "3"], env={"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"})
         self.assertEqual((result["status"], result["choice"], result["attempt"]), ("decided", 3, 3))
         self.assertEqual(asterisk.originated, 3)
         self.assertEqual(sent, [])
 
     def test_hanging_up_before_confirming_is_not_a_decision(self):
-        result, _, sent = run_ask(["hangup"] * 3, env={"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"})
+        result, asterisk, sent = run_ask(["hangup"] * 3, env={"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"})
         self.assertEqual(result["status"], "hangup")
+        self.assertEqual(asterisk.originated, 1)  # the owner picked up and chose to hang up: no re-ring
         self.assertEqual(len(sent), 1)
 
     def test_undecided_is_final_and_notifies(self):
@@ -1423,6 +1447,10 @@ class GuardTests(unittest.TestCase):
         import subprocess
         out = subprocess.run(["python3", str(SCRIPT.parent / "guard_bash.py")], input=b'{"tool_input":{"command":"ls"}}', capture_output=True)
         self.assertNotIn(b"test-call", out.stderr)
+
+    def test_the_agent_is_told_to_run_ask_in_the_background(self):
+        agent = (SCRIPT.parents[3] / "agents" / "claudio.md").read_text()
+        self.assertIn("run_in_background", agent)
 
     def test_the_agent_preloads_the_skill_and_gets_the_host_from_the_brief(self):
         agent = (SCRIPT.parents[3] / "agents" / "claudio.md").read_text()

@@ -96,8 +96,16 @@ class CallError(Exception):
     """An infrastructure or input problem; the message never contains secrets."""
 
 
-class DockerError(CallError):
-    """Docker or the Asterisk container failed. A call placed before it may still be live."""
+class MayBeLive(CallError):
+    """An error after which a call that was already placed may still be live."""
+
+
+class DockerError(MayBeLive):
+    """Docker or the Asterisk container failed."""
+
+
+class Interrupted(MayBeLive):
+    """The process was asked to stop (SIGTERM)."""
 
 
 # ---------------------------------------------------------------------------------- request
@@ -635,14 +643,15 @@ def ask(
             dialled = True
             outcome = run_attempt(asterisk, config, call_id, len(options), sleep=sleep, clock=clock)
             outcome["attempt"] = attempt
-            if outcome["status"] in ("decided", "undecided") or outcome.get("live"):
+            # A hangup is the owner's choice: they picked up and put the phone down, so no re-ring.
+            if outcome["status"] in ("decided", "undecided", "hangup"):
                 break
             if attempt < config["attempts"]:
                 sleep(config["retry_delay_s"])
     except CallError as error:
         # With docker failing mid-call the owner may still be confirming: leave the folder for the
         # dialplan to write into (the daily sweep removes it) instead of deleting it underneath.
-        keep_folder = dialled and isinstance(error, DockerError)
+        keep_folder = dialled and isinstance(error, MayBeLive)
         # The decision is still pending: tell the owner by chat, then let the error reach the caller.
         notify_outcome({"status": "error"}, clean, env, notifier)
         raise
@@ -740,7 +749,10 @@ def notify_outcome(outcome: Dict, clean: Dict, env: Dict[str, str], notifier: Ca
 
 def exit_cleanly_on_sigterm() -> None:
     """Turn a polite kill into a normal exit so the per-call folder is still removed."""
-    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(143))
+    def stop(signum, frame):
+        raise Interrupted("interrupted before the call finished")
+
+    signal.signal(signal.SIGTERM, stop)
 
 
 def read_request(source: str) -> str:

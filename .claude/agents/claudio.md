@@ -39,7 +39,8 @@ blocks you, do not look for a way around it, report it.
    to run locally; if it gives neither, run locally and report that the host was not given. Run `ceo_call.py check`
    first, then `ceo_call.py ask`. `check` exits 1 only when the speech server or Asterisk FAILED: stop
    then. A phone reported as NOT registered is a normal state (a sleeping softphone) and exit 0: `ask`
-   sends a heads-up and waits for it. The request holds only the question and options.
+   sends a heads-up and waits for it. `ask` runs for minutes: start it with `run_in_background` and wait for it to finish; never let a
+   foreground timeout stop it. The request holds only the question and options.
 3. Report the outcome. Only status `decided` is a decision; quote the option text and number. For
    any other status, say the decision is still pending and that the user was messaged (or not).
 4. Never retry beyond what the script already does, and never place a call that the skill's rules or
