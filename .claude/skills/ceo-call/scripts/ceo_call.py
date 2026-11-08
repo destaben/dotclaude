@@ -555,7 +555,7 @@ def run_attempt(asterisk, config: Dict, call_id: str, option_count: int, sleep=t
             sleep(config["poll_interval_s"])
     else:
         result = asterisk.read_file(base + "/result") or None
-        if result is None and answered:
+        if result is None and answered and asterisk.read_file(base + "/done") is None:
             # The call is still live at the deadline: the owner may be confirming right now. Give the
             # dialplan a short grace to finish before the folder is removed, so a confirmation is not lost.
             for _ in range(GRACE_POLLS):
@@ -770,6 +770,8 @@ def ask(
             pass
         raise
     finally:
+        # The run lock is released here, before the final chat message: the throttle (which that message
+        # keeps or releases) still refuses a second ask within `min_gap_s`, so two runs cannot overlap.
         if not completed:
             settle()  # an error is propagating; its chat message (if any) was sent above
         if not keep_folder:
@@ -827,7 +829,9 @@ def _read_starts(path: Path, now_s: float) -> List[float]:
         except ValueError:
             continue
         # A start slightly ahead (clock stepped back) still counts; one more than an hour ahead is a
-        # clock error and is ignored, so a wrong clock cannot lock the owner out for a day.
+        # clock error and is ignored, so a wrong clock cannot lock the owner out for a day. The price: a
+        # step back of more than an hour resets the caps. Accepted, see "Throttle and clock errors" in
+        # the skill.
         if -3600 < now_s - value < 86400:
             starts.append(value)
     return starts

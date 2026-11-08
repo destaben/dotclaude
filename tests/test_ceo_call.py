@@ -1196,6 +1196,11 @@ class AskFlowTests(unittest.TestCase):
         for doc in (SCRIPT.parents[2] / "council-policy" / "SKILL.md", SCRIPT.parents[2] / ".." / "commands" / "council.md"):
             self.assertIn("Is it set up?", doc.read_text(), str(doc))
 
+    def test_a_hangup_with_the_end_marker_already_there_does_not_wait_for_a_grace_period(self):
+        result, asterisk, _ = run_ask([{1: {"answered": "1", "done": "1"}}], config={"attempts": 1})
+        self.assertEqual(result["status"], "hangup")
+        self.assertLess(run_ask.clock.now, 5)  # no extra polling after the dialplan said it was over
+
     def test_a_second_ask_too_soon_is_refused_before_any_call(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
         self.addCleanup(lambda: state.exists() and state.unlink())

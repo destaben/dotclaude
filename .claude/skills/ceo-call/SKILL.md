@@ -116,6 +116,13 @@ endpoint `PJSIP/<name>` (the usual setup where the AOR is named after the endpoi
 map to one device: any device registered on it, or on a ring group behind it, can answer and confirm. If your AOR is named differently, `check` always says NOT registered and no call is
 placed; rename the AOR.
 
+## Throttle and clock errors
+The caps are per host and trust the host's clock. A start more than an hour in the future is treated as a
+clock error and ignored, so a wrongly set clock cannot lock the owner out for a day; the price is that a
+clock stepped back by more than an hour resets the caps. The caps limit what a confused agent can do, they
+are not a security boundary, and the owner's own clock error is out of scope. The run lock is released
+before the final chat message because the throttle already refuses a second ask within `min_gap_s`.
+
 ## Is it set up?
 Treat `ceo-call` as set up when `~/.config/ceo-call/config.json` exists on this machine (or, for a remote
 telephony host, an alias is listed in `~/.config/ceo-call/hosts`) and `check` succeeds. If not, do not hand
