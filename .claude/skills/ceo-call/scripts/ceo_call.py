@@ -940,9 +940,17 @@ def read_request(source: str) -> str:
     such as /dev/zero must not be able to fill memory)."""
     try:
         if source == "-":
-            raw = sys.stdin.read(MAX_REQUEST_BYTES + 1)
-            if len(raw.encode("utf-8", "replace")) > MAX_REQUEST_BYTES:
-                raise CallError("the request is longer than %d bytes" % MAX_REQUEST_BYTES)
+            binary = getattr(sys.stdin, "buffer", None)
+            if binary is not None:
+                # Bytes, decoded as UTF-8 whatever the locale says (a latin-1 locale would garble accents).
+                data = binary.read(MAX_REQUEST_BYTES + 1)
+                if len(data) > MAX_REQUEST_BYTES:
+                    raise CallError("the request is longer than %d bytes" % MAX_REQUEST_BYTES)
+                raw = data.decode("utf-8")
+            else:
+                raw = sys.stdin.read(MAX_REQUEST_BYTES + 1)
+                if len(raw.encode("utf-8", "replace")) > MAX_REQUEST_BYTES:
+                    raise CallError("the request is longer than %d bytes" % MAX_REQUEST_BYTES)
         else:
             if not stat.S_ISREG(os.stat(source).st_mode):
                 raise CallError("the request must be a regular file")

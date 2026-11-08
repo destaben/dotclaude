@@ -1816,6 +1816,18 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("longer than", err)
 
+    def test_stdin_is_decoded_as_utf8_whatever_the_locale(self):
+        import unittest.mock as mock
+
+        class LocaleStdin:
+            buffer = io.BytesIO("¿puedes atender?".encode("utf-8"))
+
+            def read(self, n=-1):
+                return "Â¿puedes atender?"  # what a latin-1 locale would produce
+
+        with mock.patch.object(ceo.sys, "stdin", LocaleStdin()):
+            self.assertEqual(ceo.read_request("-"), "¿puedes atender?")
+
     def test_a_huge_stdin_request_is_cut_off(self):
         import unittest.mock as mock
         with mock.patch.object(ceo.sys, "stdin", io.StringIO(" " * (ceo.MAX_REQUEST_BYTES + 10))):
