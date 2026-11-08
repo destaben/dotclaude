@@ -947,6 +947,26 @@ class AskFlowTests(unittest.TestCase):
         self.assertIn("no se ha registrado", sent[0])
         self.assertTrue(asterisk.dirs)
 
+    def test_a_failed_marker_cleanup_means_no_call_was_placed(self):
+        class MarkerCleanupFails(FakeAsterisk):
+            def remove(self, *paths, strict=False):
+                if strict:
+                    raise ceo.DockerError("a command inside the Asterisk container failed")
+                return super().remove(*paths)
+
+        state = self.throttle_state()
+        asterisk = MarkerCleanupFails(["1"])
+        clock = FakeClock()
+        sent = []
+        with self.assertRaises(ceo.DockerError):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=120),
+                    {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"}, asterisk, synth=fake_synth,
+                    notifier=lambda t, c, text, silent=False: sent.append(text) or True,
+                    sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual(asterisk.originated, 0)
+        self.assertNotIn("no se ha registrado", sent[0])  # no call exists, so no "your answer" warning
+        self.assertEqual(asterisk.dirs, set())  # the folder is not kept either
+
     def test_a_second_ask_too_soon_is_refused_before_any_call(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
         self.addCleanup(lambda: state.exists() and state.unlink())
@@ -1148,6 +1168,16 @@ class QuietHoursTests(unittest.TestCase):
     def test_an_out_of_range_port_in_synthesize_is_a_clean_error(self):
         with self.assertRaises(ceo.CallError):
             ceo.synthesize("127.0.0.1", 70000, "hola", timeout=1)
+
+    def test_container_and_hosts_must_be_strings(self):
+        for bad in ('{"container": 5}', '{"container": null}', '{"endpoint": 5}', '{"piper_host": 5}'):
+            with self.subTest(bad=bad):
+                handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+                handle.write(bad)
+                handle.close()
+                self.addCleanup(os.unlink, handle.name)
+                with self.assertRaises(ceo.CallError):
+                    ceo.load_config(handle.name)
 
     def test_a_zero_poll_interval_is_refused(self):
         handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)

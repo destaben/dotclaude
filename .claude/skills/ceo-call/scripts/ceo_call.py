@@ -174,6 +174,9 @@ def load_config(path: Optional[str]) -> Dict:
         if unknown:
             raise CallError("unknown config keys: %s" % ", ".join(sorted(unknown)))
         config.update(loaded)
+    for key in ("endpoint", "container"):
+        if not isinstance(config[key], str):
+            raise CallError("%s must be a string" % key)
     if not ENDPOINT_RE.match(str(config["endpoint"])):
         raise CallError("endpoint must look like PJSIP/<name>")
     if not CONTAINER_RE.match(str(config["container"])):
@@ -501,8 +504,6 @@ GRACE_POLLS = 10  # polls to wait for a call that is still live at call_timeout_
 def run_attempt(asterisk, config: Dict, call_id: str, option_count: int, sleep=time.sleep, clock=time.monotonic) -> Dict:
     """Place one call and wait for its outcome. Never trusts the result file beyond a digit check."""
     base = "%s/ceo/%s" % (SPOOL, call_id)
-    # A stale marker from an earlier attempt must not survive into this one, so failing here is an error.
-    asterisk.remove(*["%s/%s" % (base, marker) for marker in ("answered", "result", "done")], strict=True)
     asterisk.originate(
         "ceo-%s" % call_id,
         build_call_file(config["endpoint"], call_id, option_count, config["ring_timeout_s"]),
@@ -685,6 +686,9 @@ def ask(
                 # The heads-up wait can take minutes: look at the clock again right before dialling.
                 outcome = {"status": "deferred", "attempt": attempt - 1}
                 break
+            # A stale marker from an earlier attempt must not survive into this one, so a failure here is an
+            # error. It happens before any call exists, so it is not treated as a possibly live call.
+            asterisk.remove(*["%s/%s" % (base, m) for m in ("answered", "result", "done")], strict=True)
             dialled = True  # a call is about to be placed: this ask keeps its throttle slot
             outcome = run_attempt(asterisk, config, call_id, len(options), sleep=sleep, clock=clock)
             outcome["attempt"] = attempt
