@@ -45,5 +45,25 @@ The council kept decisions 1 and 2, with changes:
   effort.** The risk stays real; the answer to it is to log escalations and
   missed defects per role and revisit with data, not to spend more by default.
 
+## Only finished reviews are posted (2026-11-08, issue #10)
+On PR #9 a green run posted an interim message ("I'm waiting for the
+bug-hunter and documenter agents...") as the review, so anything waiting for
+"no findings" read it as an empty review. Decisions:
+- **Validate, then post.** The agent's final message must start with
+  `## Review of PR #<n>` and end with a `Result: ... findings (...)` line whose
+  counts add up. The check lives in `.github/scripts/check_review.py` and is
+  unit-tested; the prompt alone was already ignored once.
+- **Retry once, then fail.** One extra run only when the first result is
+  incomplete (so the normal cost is unchanged); if it is still incomplete the
+  job goes red and nothing is posted.
+- **Not done: one edited comment per PR** (`gh pr comment --edit-last`). An
+  edit raises no new comment, so a session or automation waiting for new
+  comments would miss it, and the per-commit history would be lost. A comment
+  per push stays.
+- **Not done: raising the effort.** The early turn end is intermittent (one in
+  about six runs) and unproven to be an effort problem. If an incomplete result
+  still survives the retry, raise `--effort` for this workflow only and weigh
+  the cost then; the failed runs are visible as red checks with a warning line.
+
 ## Follow-ups (not yet done)
 - Log escalations and missed defects per role.

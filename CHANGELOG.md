@@ -3,6 +3,19 @@
 All notable changes to this repo are recorded here. Entries explain why a
 change was made, not just what changed — the diff already shows what.
 
+## 2026-11-08 — PR review only posts finished reviews
+
+The `claude-pr-review` workflow could post an interim message ("waiting for the
+agents...") as the review and still pass, which a wait-for-zero-findings loop
+reads as an empty review. The posting step now validates the message (a
+`## Review of PR #<n>` first line and a `Result: ... findings (...)` last line
+with consistent counts) in a tested script, retries the review once when it is
+incomplete, and fails the job rather than posting it. The prompt states the
+format explicitly. One-comment-per-PR editing and a higher effort level were
+considered and left out; reasons are in `docs/decisions/0002-cost-and-quota.md`.
+`github-ops` also tells the waiting recipe not to count a green run with a
+status-only comment as zero findings.
+
 ## 2026-11-07 — Administer LAN devices over SSH
 
 Added a `remote-hosts` skill so Claude can act as sysadmin for the user's own

@@ -58,6 +58,36 @@ jobs:
             || format('claude-pr-review-{0}', github.event.pull_request.number || github.event.issue.number) }}
       cancel-in-progress: true
     runs-on: ubuntu-latest
+    env:
+      REVIEW_ARGS: >-
+        --model claude-haiku-5-5 --effort low
+        --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git show:*),Read,Grep,Glob"
+        --disallowedTools "Read(.git/**)"
+      REVIEW_PROMPT: |
+        Review pull request #${{ github.event.pull_request.number || github.event.issue.number }}
+        of this repository (HEAD is detached, so use this number with
+        `gh pr view`/`gh pr diff`; run commands from the repo root with
+        relative paths, no `git -C`). Review it using the bug-hunter agent defined in
+        .claude/agents/bug-hunter.md and the severity definitions in
+        .claude/skills/release-policy/SKILL.md. Then run the documenter
+        agent defined in .claude/agents/documenter.md to check whether
+        docs need updating for this change.
+        In this run you can only read the code: you cannot write files,
+        run tests (CI already runs them), or post to GitHub. The documenter reports only, and the
+        bug-hunter reviews the diff without running the suite.
+        Run the agents in the foreground and wait for their results: this
+        is a non-interactive run that ends when you stop, so you must not
+        end your turn while any agent is still running.
+        Your FINAL message is posted verbatim as the PR comment by a later
+        workflow step, so it must be the finished review and nothing else: no
+        preamble, no status or progress text (never "I'm waiting for..." or
+        "I posted..."). It must start with this exact first line:
+        ## Review of PR #${{ github.event.pull_request.number || github.event.issue.number }}
+        then the combined findings as Markdown (say so briefly if there are
+        none), and it must end with this exact last line, with real counts
+        (total = severe + non-severe, 0 when there are no findings):
+        Result: <total> findings (<severe> severe, <non-severe> non-severe)
+        A final message without both lines is discarded as incomplete.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -73,29 +103,42 @@ jobs:
           # Claude GitHub App token, which needs `id-token: write` and the
           # app installed on the repo.
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          claude_args: >-
-            --model claude-haiku-5-5 --effort low
-            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git show:*),Read,Grep,Glob"
-            --disallowedTools "Read(.git/**)"
-          prompt: |
-            Review pull request #${{ github.event.pull_request.number || github.event.issue.number }}
-            of this repository (HEAD is detached, so use this number with
-            `gh pr view`/`gh pr diff`; run commands from the repo root with
-            relative paths, no `git -C`). Review it using the bug-hunter agent defined in
-            .claude/agents/bug-hunter.md and the severity definitions in
-            .claude/skills/release-policy/SKILL.md. Then run the documenter
-            agent defined in .claude/agents/documenter.md to check whether
-            docs need updating for this change. Post the combined findings
-            as Markdown in your FINAL message, and make that message the review
-            itself (no preamble such as "I posted..."): a later workflow step
-            posts it as the PR comment. If there are no findings, say so
-            briefly instead of leaving it empty.
-            In this run you can only read the code: you cannot write files,
-            run tests (CI already runs them), or post to GitHub. The documenter reports only, and the
-            bug-hunter reviews the diff without running the suite.
-            Run the agents in the foreground and wait for their results: this
-            is a non-interactive run that ends when you stop, so do not end
-            your turn until you have written the final review message.
+          claude_args: ${{ env.REVIEW_ARGS }}
+          prompt: ${{ env.REVIEW_PROMPT }}
+
+      # An agent turn can end early with a progress message ("I'm waiting for
+      # the agents...") and still exit green, so the result is checked before
+      # it counts as a review (.github/scripts/check_review.py). One retry on
+      # an incomplete result; if that is incomplete too, the next step fails
+      # the job rather than posting it.
+      - name: Check the review is complete
+        id: check
+        if: ${{ !cancelled() && steps.review.outcome == 'success' }}
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
+        run: |
+          if [ -z "$PR_NUMBER" ]; then
+            echo "valid=true" >> "$GITHUB_OUTPUT"   # workflow_dispatch: nothing to post
+          elif python3 .github/scripts/check_review.py "$EXECUTION_FILE" "$PR_NUMBER" "$RUNNER_TEMP/review.md"; then
+            echo "valid=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::first review run was incomplete; retrying once"
+          fi
+
+      - name: Retry the review once (first result was incomplete)
+        id: retry
+        if: ${{ !cancelled() && steps.check.outputs.valid == 'false' }}
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Use the workflow's own token instead of the OIDC exchange for the
+          # Claude GitHub App token, which needs `id-token: write` and the
+          # app installed on the repo.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          claude_args: ${{ env.REVIEW_ARGS }}
+          prompt: ${{ env.REVIEW_PROMPT }}
 
       # The agent has no write tools and no `gh pr comment`: its final message
       # is the review and this step posts it. That removes the "run gh with
@@ -104,24 +147,23 @@ jobs:
       # `@claude review` comment path also runs on fork PRs when a trusted user
       # asks for it. Treat the review as advisory. A workflow_dispatch run has
       # no PR number, so there is nothing to post to and it is skipped.
+      # A review that is still incomplete here is not posted: the job fails so
+      # the gap shows as a red check, and the only comment this workflow ever
+      # posts is a finished review whose last line states the outcome.
       - name: Post the review
-        if: ${{ !cancelled() && (github.event.pull_request.number || github.event.issue.number) }}
+        if: ${{ !cancelled() && steps.review.outcome == 'success' && (github.event.pull_request.number || github.event.issue.number) }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
-          EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
+          FIRST_FILE: ${{ steps.review.outputs.execution_file }}
+          RETRY_FILE: ${{ steps.retry.outputs.execution_file }}
         run: |
-          if [ -f "$EXECUTION_FILE" ]; then
-            jq -r '
-              [.[]? | select(.type == "result" and .subtype == "success" and (.is_error | not))]
-              | last | .result // empty
-            ' "$EXECUTION_FILE" > "$RUNNER_TEMP/review.md"
+          EXECUTION_FILE="${RETRY_FILE:-$FIRST_FILE}"
+          if ! python3 .github/scripts/check_review.py "$EXECUTION_FILE" "$PR_NUMBER" "$RUNNER_TEMP/review.md"; then
+            echo "::error::the review run ended without a finished review; nothing posted"
+            exit 1
           fi
-          if [ -s "$RUNNER_TEMP/review.md" ]; then
-            gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/review.md"
-          else
-            echo "no final review message found; nothing to post"
-          fi
+          gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/review.md"
 
 # Checked 2026-10-25 against the action's action.yml and the CLI reference: the
 # inputs `claude_code_oauth_token`, `github_token`,
