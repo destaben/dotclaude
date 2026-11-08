@@ -3,11 +3,12 @@
 
 Usage: check_review.py EXECUTION_FILE PR_NUMBER OUTPUT_FILE
 
-Exit 0 and write the review to OUTPUT_FILE only when the agent's last
-successful `result` message is a finished review:
+Exit 0 and write the review to OUTPUT_FILE only when the run's final `result`
+message succeeded and is a finished review (an errored final result is never
+replaced by an earlier success):
 
 * its first non-blank line is `## Review of PR #<n>` (optionally followed by
-  more text on that line, e.g. a commit sha), and
+  a space or punctuation and more text, e.g. a commit sha), and
 * its last non-blank line is
   `Result: <total> findings (<severe> severe, <non-severe> non-severe)` with
   total == severe + non-severe (markdown bold/backticks and a trailing period
@@ -72,7 +73,7 @@ def validate(text, pr_number):
         if not any(ln.startswith("#") and agent in ln.lower() for ln in lines[1:]):
             return f"review has no heading for {agent}"
     first = lines[0].replace("*", "").replace("`", "").strip()
-    if first != heading and not first.startswith(heading + " "):
+    if not re.match(re.escape(heading) + r"(?!\d)", first):
         return f"first line is not '{heading}'"
     last = lines[-1].replace("*", "").replace("`", "").rstrip(".").strip()
     match = RESULT_RE.match(last)

@@ -36,6 +36,9 @@ class ValidateTests(unittest.TestCase):
         self.assertIsNotNone(check_review.validate("", "9"))
         self.assertIsNotNone(check_review.validate(None, "9"))
 
+    def test_heading_may_have_a_colon_suffix(self):
+        self.assertIsNone(check_review.validate(GOOD.replace("#9", "#9: summary"), "9"))
+
     def test_wrong_pr_number_is_rejected(self):
         self.assertIsNotNone(check_review.validate(GOOD, "90"))
         self.assertIsNotNone(check_review.validate(GOOD.replace("#9", "#90"), "9"))

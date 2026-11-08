@@ -162,12 +162,13 @@ jobs:
       # the gap shows as a red check, and the only comment this step ever
       # posts is a finished review whose last line states the outcome. (The
       # action itself could add its own comments; none were seen on this
-      # repo's runs.) The gate script runs from the checkout: on a same-repo PR
-      # the author can edit it, but they can already edit this workflow, so it
-      # grants nothing new; fork PRs are skipped, and the `@claude review`
-      # path checks out the default branch.
+      # repo's runs.)
+      # The gate script runs from the checkout. On a same-repo PR the author
+      # can edit it, but they can already edit this workflow, so it grants
+      # nothing new; fork PRs are skipped and the `@claude review` path checks
+      # out the default branch.
       - name: Post the review
-        if: ${{ !cancelled() && steps.review.outcome == 'success' && (github.event.pull_request.number || github.event.issue.number) }}
+        if: ${{ !cancelled() && steps.review.outcome == 'success' && steps.check.outcome != 'failure' && (github.event.pull_request.number || github.event.issue.number) }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}

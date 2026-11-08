@@ -53,12 +53,16 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   `## Review of PR #<n>` and end with a `Result: ... findings (...)` line whose
   counts add up. The check lives in `.github/scripts/check_review.py` and is
   unit-tested; the prompt alone was already ignored once.
-- **Completeness is a heuristic.** The check also requires the text to mention
-  both `bug-hunter` and `documenter`, which catches a message written before
-  the documenter reported. It cannot prove both agents ran; the prompt asks for
-  one section per agent and the review stays advisory. Format slips on the
-  `Result:` line (bold, backticks, trailing period) are tolerated so a good
-  review is not discarded over cosmetics.
+- **Completeness is a heuristic.** The check also requires a markdown heading
+  naming each of `bug-hunter` and `documenter`, which catches a message
+  written before the documenter reported; a sentence that only mentions an
+  agent does not count. It cannot prove both ran; the prompt asks for one
+  section per agent and the review stays advisory. Format slips on the first
+  or `Result:` line (bold, backticks, a trailing period) are tolerated so a
+  good review is not discarded over cosmetics. Anything stricter-looking than
+  that is deliberate: the contract is a fixed first and last line, and a
+  drifting agent fails visibly (red job, nothing posted) instead of posting
+  something unverifiable.
 - **Fail closed on the action's outcome.** The post step now needs the action
   step to have succeeded. Before, a finished review was posted even if the
   action exited non-zero; now it is not, and the retry covers incomplete
@@ -66,10 +70,14 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   missing) fails the job at once; a missing or unreadable execution file is an
   incomplete review (exit 1) and is retried. A failed retry run is never
   posted.
-- **Verified on real runs:** PR #16's own review runs expanded `env` inside the
-  action's `with:` inputs and populated the `execution_file` output, and the
-  review was posted through this gate. An uncaught script error (for example
-  an unwritable output path) exits 2, so it fails the job instead of retrying.
+- **Depends on** the action expanding `env` inside its `with:` inputs and
+  populating the `execution_file` output (checked on real runs, 2026-11-08;
+  re-check with the action version, see the note at the end of the workflow).
+  An uncaught script error (for example an unwritable output path) exits 2, so
+  it fails the job instead of retrying. An empty `execution_file` output counts
+  as an incomplete review and costs the one retry; that is intended, since
+  nothing was produced to post. A setup error in the check step also skips the
+  post step, so the real cause stays visible.
 - **Not unit-tested:** the workflow gating and the retry-file fallback need a
   real action run; the validation logic they depend on is tested.
 - **Retry once, then fail.** One extra run only when the first result is
