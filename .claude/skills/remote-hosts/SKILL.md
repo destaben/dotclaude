@@ -96,6 +96,11 @@ session. Without that file there is no guard; a file that exists but is unreadab
   wrappers or shells; if `sudo -n` asks for a password or refuses, stop and
   report instead of retrying. Treat the whitelist as an audit trail, not a
   security boundary (membership in the `docker` group is root-equivalent).
+  The host's sudoers file decides what may run; a line in the vault is a record,
+  not an approval. Add a whitelist entry only when the user asks. "Read state"
+  includes not printing secrets: do not run commands that dump credentials
+  (for example `docker inspect` environment values, root-only config files) into
+  the transcript or a note unless the user asks, and redact them if they appear.
 - Bound output: add `-n`/`| head -n` / `--no-pager` so logs don't flood context.
 - Large or exploratory sessions go to a Haiku subagent (see CLAUDE.md token rules).
 
