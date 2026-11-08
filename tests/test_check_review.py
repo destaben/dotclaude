@@ -266,6 +266,24 @@ class CliTests(unittest.TestCase):
             "GITHUB_TOKEN",
         )
 
+    def test_incomplete_review_logs_an_excerpt_but_never_a_secret(self):
+        for text, secret, expect in (
+            (PROVISIONAL, "unused-secret-value", True),
+            ("waiting tok-12345678 here", "tok-12345678", False),
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                f = Path(tmp) / "exec.json"
+                f.write_text(json.dumps([self.result(text)]))
+                proc = subprocess.run(
+                    [sys.executable, str(SCRIPT), str(f), "9", str(Path(tmp) / "o.md")],
+                    capture_output=True,
+                    text=True,
+                    env={"PATH": "/usr/bin:/bin", "GH_TOKEN": secret},
+                )
+                self.assertEqual(proc.returncode, 3)
+                self.assertEqual("result excerpt:" in proc.stderr, expect)
+                self.assertNotIn("tok-12345678", proc.stderr)
+
     def test_unwritable_output_exits_2_not_1(self):
         with tempfile.TemporaryDirectory() as tmp:
             f = Path(tmp) / "exec.json"

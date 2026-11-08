@@ -150,6 +150,11 @@ def main(argv):
     reason = validate(text, pr_number)
     if reason:
         print(f"incomplete review, not posting: {reason}", file=sys.stderr)
+        # Diagnostic: a short excerpt of what the agent wrote, so a red run can
+        # be understood from the log. Never printed if it holds a secret.
+        if text and not leaked_secret(text):
+            excerpt = " ".join(text.split())[:300]
+            print(f"result excerpt: {excerpt}", file=sys.stderr)
         return 3
     leaked = leaked_secret(text)
     if leaked:
