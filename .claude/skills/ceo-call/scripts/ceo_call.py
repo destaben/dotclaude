@@ -485,11 +485,18 @@ class DockerAsterisk:
         """Remove prompt folders left behind by a killed run (older than a day). Best effort."""
         self._exec(["find", SPOOL + "/ceo", "-mindepth", "1", "-maxdepth", "1", "-mmin", "+1440", "-exec", "rm", "-rf", "{}", "+"], check=False)
 
-    def originate(self, name: str, call_file: str) -> None:
-        """Write the call file outside the watched folder, then move it in atomically."""
+    def originate(self, name: str, call_file: str, before_commit: Optional[Callable[[], None]] = None) -> None:
+        """Write the call file outside the watched folder, then move it in atomically. `before_commit`
+        runs between the two steps and may raise to stop the call: the staged file is then removed."""
         staging = "%s/tmp/%s.call" % (SPOOL, name)
         target = "%s/outgoing/%s.call" % (SPOOL, name)
         self.write_file(staging, call_file.encode("utf-8"))
+        if before_commit is not None:
+            try:
+                before_commit()
+            except BaseException:
+                self.remove(staging)  # best effort: nothing watches the staging folder
+                raise
         self._exec(["mv", staging, target])
 
     def endpoint_available(self, endpoint: str) -> bool:
@@ -544,16 +551,28 @@ SYNTH_BUDGET_S = 300  # all prompts of one request; each single synthesis also h
 GRACE_POLLS = 10  # polls to wait for a call that is still live at call_timeout_s
 
 
+class DialAbandoned(Exception):
+    """Raised by the check made just before the call file is moved into place: do not dial."""
+
+
 def run_attempt(asterisk, config: Dict, call_id: str, option_count: int, sleep=time.sleep, clock=time.monotonic,
-                on_dial: Callable[[], None] = lambda: None) -> Dict:
+                on_dial: Callable[[], None] = lambda: None, abandon_if: Callable[[], bool] = lambda: False) -> Dict:
     """Place one call and wait for its outcome. Never trusts the result file beyond a digit check.
-    `on_dial` is called as soon as a call may exist, and not when the call file definitely never got in."""
+    `on_dial` is called as soon as a call may exist, and not when the call file definitely never got in.
+    `abandon_if` is asked once the call file is staged, right before it is moved into place."""
     base = "%s/ceo/%s" % (SPOOL, call_id)
+    def before_commit():
+        if abandon_if():
+            raise DialAbandoned()
+
     try:
         asterisk.originate(
             "ceo-%s" % call_id,
             build_call_file(config["endpoint"], call_id, option_count, config["ring_timeout_s"]),
+            before_commit=before_commit,
         )
+    except DialAbandoned:
+        return {"status": "deferred"}
     except (DockerTimeout, Interrupted):
         on_dial()
         raise  # the move may have completed before the timeout or the stop: the phone may be ringing
@@ -578,16 +597,7 @@ def run_attempt(asterisk, config: Dict, call_id: str, option_count: int, sleep=t
             if not answered and clock() > answer_deadline:
                 return {"status": "unanswered"}
         sleep(config["poll_interval_s"])
-    if result is not None:
-        # Let the thank-you message finish before the audio files are removed.
-        for _ in range(8):
-            try:
-                if asterisk.read_file(base + "/done") is not None:
-                    break
-            except DockerError:
-                break  # the digit is already read: do not lose the decision over the thank-you wait
-            sleep(config["poll_interval_s"])
-    else:
+    if result is None:
         # `done` is read before `result` and its snapshot is kept: a confirmation is written before `done`,
         # so if `done` was already there, the result read that follows cannot miss it.
         finished = asterisk.read_file(base + "/done") is not None
@@ -601,6 +611,16 @@ def run_attempt(asterisk, config: Dict, call_id: str, option_count: int, sleep=t
                 result = asterisk.read_file(base + "/result") or None
                 if result is not None or finished:
                     break
+    if result is not None:
+        # Let the thank-you message finish before the audio files are removed, whichever read found the
+        # confirmation (the loop above, the final reads or the grace loop).
+        for _ in range(8):
+            try:
+                if asterisk.read_file(base + "/done") is not None:
+                    break
+            except DockerError:
+                break  # the digit is already read: do not lose the decision over the thank-you wait
+            sleep(config["poll_interval_s"])
     if result is None:
         if not answered and asterisk.read_file(base + "/answered") is None:
             return {"status": "unanswered"}
@@ -768,14 +788,15 @@ def ask(
             # A stale marker from an earlier attempt must not survive into this one, so a failure here is an
             # error. It happens before any call exists, so it is not treated as a possibly live call.
             asterisk.remove(*["%s/%s" % (base, m) for m in ("answered", "result", "done")], strict=True)
-            if quiet():
-                # The heads-up wait and the preparation above can take minutes: look at the clock again as
-                # close to the dial as the call file allows (only staging and moving it remain).
-                outcome = {"status": "deferred", "attempt": attempt - 1}
-                break
             maybe_live = True
+            # The heads-up wait and the preparation above can take minutes, so the window is looked at once
+            # more after the call file is staged, right before it is moved into place.
             outcome = run_attempt(asterisk, config, call_id, len(options), sleep=sleep, clock=clock,
-                                  on_dial=lambda: dial.update(placed=True))
+                                  on_dial=lambda: dial.update(placed=True), abandon_if=quiet)
+            if outcome["status"] == "deferred":
+                maybe_live = False
+                outcome["attempt"] = attempt - 1
+                break
             outcome["attempt"] = attempt
             maybe_live = outcome["status"] == "timeout"  # every other outcome means that call is over
             # A hangup is the owner's choice: they picked up and put the phone down, so no re-ring.
@@ -800,7 +821,8 @@ def ask(
             except CallError:
                 digit = None
             if digit and re.fullmatch(r"[1-8]", digit) and int(digit) <= len(options):
-                keep_folder = False
+                # The folder stays: the dialplan writes the digit before it plays the thank-you and hangs
+                # up, so the call may still need its prompt files and the folder for its end marker.
                 return {"status": "decided", "choice": int(digit), "option": options[int(digit) - 1],
                         "attempt": max(1, attempt), "notified": False}
         # The decision is still pending: tell the owner by chat, then let the error reach the caller.
@@ -823,14 +845,19 @@ def ask(
         # keeps or releases) still refuses a second ask within `min_gap_s`, so two runs cannot overlap.
         if not completed:
             settle()  # an error is propagating; its chat message (if any) was sent above
-        if not keep_folder:
-            try:
-                asterisk.remove(base)
-            except Interrupted:
-                raise  # a stop request is never swallowed
-            except CallError:
-                pass  # best effort: the daily sweep removes it, and the real error must not be replaced
-        run_lock.close()
+        try:
+            if not keep_folder:
+                try:
+                    asterisk.remove(base)
+                except Interrupted:
+                    # A stop request is never swallowed, except to keep a confirmed decision: that outcome
+                    # is complete, and the left-over folder is removed by the daily sweep.
+                    if not (completed and outcome["status"] == "decided"):
+                        raise
+                except CallError:
+                    pass  # best effort: the daily sweep removes it, and the real error must not be replaced
+        finally:
+            run_lock.close()
     if outcome["status"] == "decided":
         outcome["option"] = options[outcome["choice"] - 1]
         outcome["notified"] = False  # same keys on every outcome; a decision needs no chat message

@@ -83,7 +83,9 @@ class FakeAsterisk:
                 del self.files[key]
             self.dirs.discard(path)
 
-    def originate(self, name, call_file):
+    def originate(self, name, call_file, before_commit=None):
+        if before_commit is not None:
+            before_commit()
         self.originated += 1
         base = next(iter(self.dirs))
         outcome = self.script.pop(0)
@@ -548,9 +550,9 @@ class AskFlowTests(unittest.TestCase):
         seen = []
         original = FakeAsterisk.originate
 
-        def spy(self, name, call_file):
+        def spy(self, name, call_file, before_commit=None):
             seen.extend(sorted(k.rsplit("/", 1)[1] for k in self.files))
-            original(self, name, call_file)
+            original(self, name, call_file, before_commit)
 
         FakeAsterisk.originate = spy
         try:
@@ -571,7 +573,7 @@ class AskFlowTests(unittest.TestCase):
 
     def test_an_infrastructure_error_after_the_start_still_messages_the_owner_then_raises(self):
         class Flaky(FakeAsterisk):
-            def originate(self, name, call_file):
+            def originate(self, name, call_file, before_commit=None):
                 raise ceo.CallError("cannot run docker")
 
         sent = []
@@ -824,13 +826,13 @@ class AskFlowTests(unittest.TestCase):
         seen = []
         original = FakeAsterisk.originate
 
-        def spy(self_, name, call_file):
+        def spy(self_, name, call_file, before_commit=None):
             try:
                 ceo.acquire_run_lock(dict(ceo.DEFAULT_CONFIG, **cfg)).close()
                 seen.append("free")
             except ceo.CallError:
                 seen.append("held")
-            original(self_, name, call_file)
+            original(self_, name, call_file, before_commit)
 
         FakeAsterisk.originate = spy
         try:
@@ -1070,7 +1072,7 @@ class AskFlowTests(unittest.TestCase):
 
     def test_a_failed_originate_is_not_reported_as_a_live_call(self):
         class OriginateFails(FakeAsterisk):
-            def originate(self, name, call_file):
+            def originate(self, name, call_file, before_commit=None):
                 raise ceo.DockerError("a command inside the Asterisk container failed")
 
         asterisk = OriginateFails([])
@@ -1097,6 +1099,7 @@ class AskFlowTests(unittest.TestCase):
         result = ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, retry_delay_s=0, attempts=3), {}, asterisk,
                          synth=fake_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
         self.assertEqual((result["status"], result["choice"], result["attempt"]), ("decided", 1, 2))
+        self.assertTrue(asterisk.dirs)  # the call may still be playing its thank-you: the folder is left for the sweep
 
     def test_a_stop_request_after_a_confirmed_key_press_still_returns_the_choice(self):
         class StopAfterResult(FakeAsterisk):
@@ -1140,7 +1143,7 @@ class AskFlowTests(unittest.TestCase):
         for error in (ceo.DockerTimeout("cannot run docker"), ceo.Interrupted("interrupted")):
             with self.subTest(error=type(error).__name__):
                 class Slow(FakeAsterisk):
-                    def originate(self, name, call_file):
+                    def originate(self, name, call_file, before_commit=None):
                         raise error
 
                 sent = []
@@ -1361,7 +1364,7 @@ class AskFlowTests(unittest.TestCase):
             """The call ends (result, then done) right after the last result read at the deadline."""
             finished = False
 
-            def originate(self, name, call_file):
+            def originate(self, name, call_file, before_commit=None):
                 self.files[base + "/answered"] = "1"
 
             def read_file(self, path):
@@ -1376,14 +1379,14 @@ class AskFlowTests(unittest.TestCase):
         outcome = ceo.run_attempt(Racy([]), cfg, call_id, 3, sleep=clock.sleep, clock=clock)
         self.assertEqual(outcome, {"status": "decided", "choice": 2})
 
-    def test_quiet_hours_are_checked_again_after_the_preparation_before_the_call_file(self):
+    def test_quiet_hours_are_checked_again_after_the_call_file_is_staged(self):
         clock = FakeClock()
         hour = [12]
 
         class SlowDocker(FakeAsterisk):
-            def endpoint_in_call(self, endpoint):
-                hour[0] = 23  # the quiet window opens while the checks run
-                return False
+            def originate(self, name, call_file, before_commit=None):
+                hour[0] = 23  # the quiet window opens while the call file is being staged
+                super().originate(name, call_file, before_commit)
 
         asterisk = SlowDocker(["1"])
         result = ceo.ask({"question": "q", "options": ["a", "b"]},
@@ -1391,6 +1394,41 @@ class AskFlowTests(unittest.TestCase):
                          synth=fake_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, hour[0], 30))
         self.assertEqual(result["status"], "deferred")
         self.assertEqual(asterisk.originated, 0)
+
+    def test_a_late_confirmation_still_gets_the_thank_you_wait(self):
+        clock = FakeClock()
+        call_id = "ab" * 8
+        base = "%s/ceo/%s" % (ceo.SPOOL, call_id)
+
+        class Late(FakeAsterisk):
+            def originate(self, name, call_file, before_commit=None):
+                self.files[base + "/answered"] = "1"
+
+            def read_file(self, path):
+                if path.endswith("/result") and clock.now >= 334:
+                    return "2"  # found by the final reads or the grace loop, not by the main loop
+                if path.endswith("/done") and clock.now >= 344:
+                    return "1"
+                return self.files.get(path)
+
+        cfg = dict(ceo.DEFAULT_CONFIG, poll_interval_s=2, ring_timeout_s=30, call_timeout_s=300)
+        outcome = ceo.run_attempt(Late([]), cfg, call_id, 3, sleep=clock.sleep, clock=clock)
+        self.assertEqual(outcome, {"status": "decided", "choice": 2})
+        self.assertGreaterEqual(clock.now, 344)  # waited for the dialplan to finish before the folder can go
+
+    def test_a_stop_request_during_the_final_cleanup_keeps_a_confirmed_decision(self):
+        class StopsOnFolderRemoval(FakeAsterisk):
+            def remove(self, *paths, strict=False):
+                if len(paths) == 1 and not strict:
+                    raise ceo.Interrupted("stopped")
+                super().remove(*paths, strict=strict)
+
+        asterisk = StopsOnFolderRemoval(["2"])
+        clock = FakeClock()
+        result = ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG), {}, asterisk,
+                         synth=fake_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual((result["status"], result["choice"]), ("decided", 2))
+        ceo.acquire_run_lock(dict(ceo.DEFAULT_CONFIG)).close()  # the run lock was released too
 
     def test_a_phone_that_is_already_in_a_call_is_not_dialled(self):
         asterisk = FakeAsterisk(["1"])
@@ -1411,7 +1449,7 @@ class AskFlowTests(unittest.TestCase):
         self.addCleanup(lambda: state.exists() and state.unlink())
 
         class OriginateFails(FakeAsterisk):
-            def originate(self, name, call_file):
+            def originate(self, name, call_file, before_commit=None):
                 raise ceo.DockerError("a command inside the Asterisk container failed")
 
         asterisk = OriginateFails([])
@@ -1426,7 +1464,7 @@ class AskFlowTests(unittest.TestCase):
         self.addCleanup(lambda: state.exists() and state.unlink())
 
         class OriginateTimesOut(FakeAsterisk):
-            def originate(self, name, call_file):
+            def originate(self, name, call_file, before_commit=None):
                 raise ceo.DockerTimeout("cannot run docker (timed out)")
 
         asterisk = OriginateTimesOut([])
@@ -1747,9 +1785,9 @@ class HeadsUpTests(unittest.TestCase):
 
         original_originate, original_init = FakeAsterisk.originate, FakeAsterisk.__init__
 
-        def originate(self_, name, call_file):
+        def originate(self_, name, call_file, before_commit=None):
             events.append("call")
-            original_originate(self_, name, call_file)
+            original_originate(self_, name, call_file, before_commit)
 
         def init(self_, script):
             original_init(self_, script)
@@ -1868,6 +1906,24 @@ class DockerStateTests(unittest.TestCase):
                 with self.assertRaises(OSError):
                     ceo._state_lock(Path("/tmp/x"))
         self.assertEqual(closed, [True])
+
+    def test_a_call_file_is_staged_then_abandoned_without_being_moved_in(self):
+        seen = []
+
+        class Result:
+            returncode, stdout, stderr = 0, b"", b""
+
+        def stop():
+            raise ceo.DialAbandoned()
+
+        docker = ceo.DockerAsterisk("asterisk", run=lambda command, **kwargs: seen.append(command) or Result())
+        with self.assertRaises(ceo.DialAbandoned):
+            docker.originate("ceo-x", "Channel: PJSIP/phone\n", before_commit=stop)
+        self.assertFalse(any("mv" in command for command in seen))
+        self.assertTrue(any("rm" in command for command in seen))  # staged file removed
+        seen.clear()
+        docker.originate("ceo-x", "Channel: PJSIP/phone\n", before_commit=lambda: None)
+        self.assertTrue(any("mv" in command for command in seen))
 
     def test_stale_folders_older_than_a_day_are_swept(self):
         seen = []

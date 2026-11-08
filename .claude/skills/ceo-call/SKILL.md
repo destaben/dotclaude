@@ -61,7 +61,9 @@ alias as `remote-hosts` describes, and run the script there.
   owner gets the chat message.
 - **Failures mid-call:** if docker or Asterisk fails while a call may be live, the script reports the
   error and messages the owner, and leaves the call folder for the dialplan to finish writing to
-  (a daily sweep removes it) instead of deleting it under a confirmation.
+  (a daily sweep removes it) instead of deleting it under a confirmation. A digit recovered after such a
+  failure is still returned as the decision, and the folder is still left, because the call may be playing
+  its thank-you. A stop request during the final cleanup of a confirmed decision does not lose it either.
 - **Env file** (default `~/.config/ceo-call/env`, mode `0600`, refused otherwise): `CEO_TELEGRAM_TOKEN`
   and `CEO_TELEGRAM_CHAT_ID`. A missing file only turns the chat messages off, but a missing
   `env_file` path set in the config prints a `WARNING:` line on stderr, so a typo is visible. Create the bot with the chat service's bot manager yourself; never
@@ -135,7 +137,7 @@ telephony host, an alias is listed in `~/.config/ceo-call/hosts`) and `check` su
 a decision to `claudio`: ask the user in the terminal.
 
 ## Quiet hours and a call already running
-The window is checked before the heads-up and before every dial (after the busy-phone check and the marker cleanup, so only staging and moving the call file remain), and chat notices sent after it opened
+The window is checked before the heads-up and before every dial (the last time after the call file is staged, so only the move into place remains), and chat notices sent after it opened
 are silent. A call dialled just before the window starts is allowed to finish (at most ring plus call
 time, about 6 minutes by default): cutting it off would drop a decision the owner is in the middle of
 confirming, and nothing new starts inside the window.
