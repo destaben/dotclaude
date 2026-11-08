@@ -3,6 +3,15 @@
 All notable changes to this repo are recorded here. Entries explain why a
 change was made, not just what changed — the diff already shows what.
 
+## 2026-11-08 — remote-hosts: allow the user's sudoers whitelist
+
+The `remote-hosts` skill said to never run `sudo`, which left Claude unable to read root-only
+state (firewall rules, root's crontab, `dmesg`) on the user's hosts. It now allows one
+exception: a whitelist the user sets up on their own hosts, run non-interactively with exactly
+the listed arguments, and stopping if sudo asks for a password. The skill states that this is an
+audit trail, not a security boundary, because `docker` group membership is root-equivalent. The
+whitelist itself and the host facts stay in the user's private vault.
+
 ## 2026-11-07 — Administer LAN devices over SSH
 
 Added a `remote-hosts` skill so Claude can act as sysadmin for the user's own
