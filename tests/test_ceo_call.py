@@ -1377,7 +1377,7 @@ class AskFlowTests(unittest.TestCase):
 
         cfg = dict(ceo.DEFAULT_CONFIG, poll_interval_s=2, ring_timeout_s=30, call_timeout_s=300)
         outcome = ceo.run_attempt(Racy([]), cfg, call_id, 3, sleep=clock.sleep, clock=clock)
-        self.assertEqual(outcome, {"status": "decided", "choice": 2})
+        self.assertEqual(outcome, {"status": "decided", "choice": 2, "call_open": False})
 
     def test_quiet_hours_are_checked_again_after_the_call_file_is_staged(self):
         clock = FakeClock()
@@ -1413,7 +1413,7 @@ class AskFlowTests(unittest.TestCase):
 
         cfg = dict(ceo.DEFAULT_CONFIG, poll_interval_s=2, ring_timeout_s=30, call_timeout_s=300)
         outcome = ceo.run_attempt(Late([]), cfg, call_id, 3, sleep=clock.sleep, clock=clock)
-        self.assertEqual(outcome, {"status": "decided", "choice": 2})
+        self.assertEqual(outcome, {"status": "decided", "choice": 2, "call_open": False})
         self.assertGreaterEqual(clock.now, 344)  # waited for the dialplan to finish before the folder can go
 
     def test_a_stop_request_during_the_final_cleanup_keeps_a_confirmed_decision(self):
@@ -1429,6 +1429,36 @@ class AskFlowTests(unittest.TestCase):
                          synth=fake_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
         self.assertEqual((result["status"], result["choice"]), ("decided", 2))
         ceo.acquire_run_lock(dict(ceo.DEFAULT_CONFIG)).close()  # the run lock was released too
+
+    def test_a_decision_without_an_end_marker_keeps_the_folder_but_is_still_returned(self):
+        clock = FakeClock()
+        asterisk = FakeAsterisk([{1: {"answered": "1", "result": "2"}}])  # `done` never appears
+        result = ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG), {}, asterisk,
+                         synth=fake_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual((result["status"], result["choice"]), ("decided", 2))
+        self.assertNotIn("call_open", result)
+        self.assertTrue(asterisk.dirs)  # the call may still need its prompts; the daily sweep removes the folder
+
+    def test_a_heads_up_sent_after_the_quiet_window_opened_is_silent(self):
+        clock = FakeClock()
+        hour = [12]
+        sent = []
+
+        class Asleep(FakeAsterisk):
+            asked = 0
+
+            def endpoint_available(self, endpoint):
+                self.asked += 1
+                hour[0] = 23  # the contact query crosses into the quiet window
+                return self.asked > 1
+
+        result = ceo.ask({"question": "q", "options": ["a", "b"]},
+                         dict(ceo.DEFAULT_CONFIG, quiet_start="22:00", quiet_end="07:00", heads_up_s=10),
+                         {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"}, Asleep(["1"]),
+                         synth=fake_synth, notifier=lambda t, c, text, silent=False: sent.append((text, silent)) or True,
+                         sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, hour[0], 30))
+        self.assertEqual(result["status"], "deferred")
+        self.assertTrue(all(silent for _, silent in sent) and sent)
 
     def test_a_phone_that_is_already_in_a_call_is_not_dialled(self):
         asterisk = FakeAsterisk(["1"])

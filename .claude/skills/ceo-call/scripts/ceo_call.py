@@ -614,13 +614,16 @@ def run_attempt(asterisk, config: Dict, call_id: str, option_count: int, sleep=t
     if result is not None:
         # Let the thank-you message finish before the audio files are removed, whichever read found the
         # confirmation (the loop above, the final reads or the grace loop).
+        ended = False
         for _ in range(8):
             try:
                 if asterisk.read_file(base + "/done") is not None:
+                    ended = True
                     break
             except DockerError:
                 break  # the digit is already read: do not lose the decision over the thank-you wait
             sleep(config["poll_interval_s"])
+        call_open = not ended  # no end marker seen: the call may still need its prompts, so `ask` keeps the folder
     if result is None:
         if not answered and asterisk.read_file(base + "/answered") is None:
             return {"status": "unanswered"}
@@ -633,9 +636,9 @@ def run_attempt(asterisk, config: Dict, call_id: str, option_count: int, sleep=t
             return {"status": "timeout"}
         return {"status": "hangup"}
     if result == "undecided":
-        return {"status": "undecided"}
+        return {"status": "undecided", "call_open": call_open}
     if re.fullmatch(r"[1-8]", result) and int(result) <= option_count:
-        return {"status": "decided", "choice": int(result)}
+        return {"status": "decided", "choice": int(result), "call_open": call_open}
     if asterisk.read_file(base + "/done") is None:
         # Not finished yet (for example a partial write): the call may still be live.
         raise MayBeLive("unexpected value in the call result")
@@ -776,7 +779,11 @@ def ask(
             if quiet():
                 outcome = {"status": "deferred", "attempt": attempt - 1}
                 break
-            if not wait_for_phone(asterisk, config, env, notifier, sleep, clock, heads_up_state):
+            def heads_up(token, chat_id, text, silent=False):
+                # The contact query can cross into the quiet window: the message is then silent.
+                return notifier(token, chat_id, text, silent=silent or quiet_now())
+
+            if not wait_for_phone(asterisk, config, env, heads_up, sleep, clock, heads_up_state):
                 # An unregistered endpoint can only ring out, so dialling is pointless; the heads-up
                 # message (if configured) was already sent. Stop and tell the owner.
                 outcome = {"status": "unanswered", "reason": "phone_not_registered", "attempt": attempt}
@@ -793,6 +800,8 @@ def ask(
             # more after the call file is staged, right before it is moved into place.
             outcome = run_attempt(asterisk, config, call_id, len(options), sleep=sleep, clock=clock,
                                   on_dial=lambda: dial.update(placed=True), abandon_if=quiet)
+            if outcome.pop("call_open", False):
+                keep_folder = True  # the decision stands, but the call may still be playing its last prompt
             if outcome["status"] == "deferred":
                 maybe_live = False
                 outcome["attempt"] = attempt - 1
