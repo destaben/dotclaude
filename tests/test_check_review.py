@@ -164,13 +164,17 @@ class WorkflowContractTests(unittest.TestCase):
 
     def test_agent_cannot_read_process_or_system_paths(self):
         for path in ("//proc/**", "//etc/**", "//run/**"):
-            for tool in ("Read", "Grep", "Glob"):
-                self.assertIn(f"{tool}({path})", self.text)
+            self.assertIn(f"Read({path})", self.text)
 
     def test_text_guard_secrets_reach_the_leak_check(self):
         self.assertEqual(self.text.count("          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets."), 2)
         self.assertGreaterEqual(self.text.count("          GITHUB_TOKEN: ${{ secrets."), 1)
         self.assertGreaterEqual(self.text.count("          GH_TOKEN: ${{ secrets."), 1)
+
+    def test_agent_has_no_grep_or_glob_outside_read_scoping(self):
+        allowed = self.text.split("--allowedTools", 1)[1].split("\n", 1)[0]
+        self.assertNotIn("Grep", allowed)
+        self.assertNotIn("Glob", allowed)
 
     def test_read_is_scoped_to_the_workspace(self):
         self.assertIn("Read(/${{ github.workspace }}/**)", self.text)
@@ -247,6 +251,16 @@ class CliTests(unittest.TestCase):
         code, body = self.run_cli([self.result(GOOD), self.result(GOOD, is_error=True)])
         self.assertEqual(code, 3)
         self.assertIsNone(body)
+
+    def test_non_utf8_execution_file_is_incomplete_not_a_crash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "exec.json"
+            f.write_bytes(b"\xff\xfe not utf8")
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), str(f), "9", str(Path(tmp) / "o.md")],
+                capture_output=True,
+            )
+            self.assertEqual(proc.returncode, 3)
 
     def test_json_lines_execution_file_is_accepted(self):
         with tempfile.TemporaryDirectory() as tmp:

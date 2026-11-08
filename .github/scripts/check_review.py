@@ -43,7 +43,7 @@ RESULT_RE = re.compile(
 def last_result(execution_file: Path):
     try:
         raw = execution_file.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
     try:
         data = json.loads(raw)

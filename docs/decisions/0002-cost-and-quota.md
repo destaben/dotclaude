@@ -1,6 +1,7 @@
 # 0002 — Cost, quota, and automatic PR review
 
-- Date: 2026-10-25 (consolidates the former 0007 and 0011)
+- Date: 2026-10-25 (consolidates the former 0007 and 0011); amended
+  2026-11-08 (finished-review gate, secret-leak defence)
 - Status: accepted; review again if usage patterns change
 
 ## Context
@@ -60,7 +61,7 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   section per agent and the review stays advisory. Format slips on the first
   or `Result:` line (bold, backticks, a trailing period) are tolerated so a
   good review is not discarded over cosmetics; the `## Review of PR #<n>`
-  marker itself stays exact, as the issue's contract and the prompt specify.
+  marker itself stays exact apart from an allowed suffix after the number, as the issue's contract and the prompt specify.
   Anything stricter-looking than that is deliberate: the contract is a fixed
   first and last line, and a drifting agent fails visibly (red job, nothing
   posted) instead of posting something unverifiable.
@@ -107,27 +108,25 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
     this configuration (none were seen on this repo's runs). If it ever mirrors
     an incomplete message into a comment, that text is outside this gate:
     re-check the action's behaviour when updating its version.
-- **Secret-leak defence.** The agent has `Read`, `Grep` and `Glob`, and its
-  final message is posted verbatim, so a prompt-injected diff could try to make
-  it read a secret (for example the process environment under `/proc`) and
-  echo it into a public comment. Two layers: `Read`, `Grep` and `Glob` of
-  `/proc`, `/etc` and `/run` are denied (not `/home`: the runner checks the
-  repo out under the runner user's home directory), and the gate refuses to
-  post, with exit 2 and no retry, any review that contains the value of
-  `CLAUDE_CODE_OAUTH_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN`, or any
+- **Secret-leak defence.** The agent can read files and its final message is
+  posted verbatim, so a prompt-injected diff could try to make it read a
+  secret (for example the process environment under `/proc`) and echo it into
+  a public comment. Layers: the agent gets only `Read`, allowed solely inside
+  the checked-out workspace (`github.workspace`), plus `gh pr diff` and
+  `gh pr view`; it has no `Grep`, `Glob` (their path scoping is not
+  guaranteed to follow `Read` rules) or `git show` (`--output=<path>` can write
+  files), and `/proc`, `/etc` and `/run` are also denied. Finally the gate
+  refuses to post, with exit 2 and no retry, any review that contains the
+  value of `CLAUDE_CODE_OAUTH_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN`, or any
   16-character piece of a token longer than 16 characters (shorter secrets
-  are matched whole). The agent is also not given `git show`, since
-  `git show --output=<path>` can write files. Neither layer
-  catches a transformed secret (for example base64), so the review stays
-  advisory and fork PRs stay skipped on the automatic trigger. `Read` is allowed
-  only inside the checked-out workspace (`github.workspace`), so the runner's
-  temp and home directories are out of reach for it. Open risks: it is not
-  verified that `Grep` and `Glob` honour the same scoping, or that
-  `claude-code-action` never writes the token inside the workspace; if it
-  does, a transformed secret could still leak, which is why the review stays
-  advisory. Also open:
-  the `Read(//...)`-style absolute-path deny syntax follows the Claude Code
-  permissions reference but was not confirmed on a real run for each tool.
+  are matched whole). `/home` is not denied outright: the runner checks the
+  repo out under the runner user's home directory. The gate cannot catch a
+  transformed secret (for example base64), so the review stays advisory and
+  fork PRs stay skipped on the automatic trigger. Open risks: the
+  `Read(//...)` path syntax follows the Claude Code permissions reference but
+  was confirmed only by a run that still reviewed the repo, not by a probe
+  that tries to read outside it; and it is not verified that
+  `claude-code-action` never writes the token inside the workspace.
 - **Gating coverage:** the workflow gates are covered only by text-level
   `WorkflowContractTests`; real behaviour (the retry-file selection, the
   outcome combinations) needs a real action run. The validation logic they

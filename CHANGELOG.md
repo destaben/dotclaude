@@ -15,10 +15,11 @@ format explicitly. One-comment-per-PR editing and a higher effort level were
 considered and left out; reasons are in `docs/decisions/0002-cost-and-quota.md`.
 A separate check step validates the message and the posting step re-checks it.
 The gate also refuses to post a review that contains a secret's value, and the
-agent is denied `Read`, `Grep` and `Glob` of `/proc`, `/etc` and `/run` (added,
-not yet confirmed on a real run; `Read(.git/**)` was already denied), to close a path by which an injected diff
-could have leaked a token into a comment. A first attempt that also denied
-`/home` blinded the agent, because the runner checks the repo out there.
+agent may now only `Read` inside the checked-out workspace (no `Grep`, `Glob` or
+`git show`, which can write files), and `/proc`, `/etc` and `/run` are denied,
+to close a path by which an injected diff could have leaked a token into a
+comment. A first attempt that denied `/home` blinded the agent, because the
+runner checks the repo out there.
 Only an incomplete result (exit 3 of the script) is retried; a crash or setup
 error fails the job at once, and a run where the action itself failed is never
 posted.
