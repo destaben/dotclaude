@@ -31,8 +31,7 @@ python3 scripts/install.py --uninstall      # remove what a prior run installed
   work in afterward.
 - **Project scope**: installs `CLAUDE.md` and `.claude/{agents,commands,skills}`
   into one specific project. Use this for a project where you want a GitHub
-  Actions workflow (like `claude-pr-review.yml`, plus the
-  `.github/scripts/check_review.py` it calls) to see these agents — a CI
+  Actions workflow (like `claude-pr-review.yml`) to see these agents — a CI
   runner only checks out that project, not your `~/.claude/`.
 - Everything is symlinked (or copied with `--copy`) whole, **except
   `settings.json`, which is merged** — every run, not just the first. Your
@@ -84,7 +83,8 @@ It runs automatically on every non-draft, same-repo PR (`opened`/`synchronize`/`
 `docs/decisions/0002-cost-and-quota.md` for why. Waiting on that review from a session
 is described in `docs/pipeline.md`. The workflow posts only a finished review (it
 validates the agent's message with `.github/scripts/check_review.py`, retries
-once, then fails the run), so copy that script along with the workflow.
+once, then fails the run). `install.py` does not copy it: put that script in the
+project together with the workflow file.
 
 The PR/issue templates are different: they're personal defaults, installed
 to `~/.claude/templates/` and used by `commit-and-pr`/`github-ops` in *any*

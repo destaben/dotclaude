@@ -84,14 +84,19 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
     stays advisory, and humans read it.
   - `WorkflowContractTests` are text-level guards against accidental edits to
     the gates, not behavioural tests; behaviour needs a real action run.
-  - The retry step repeats the first step's `uses:` and three inputs. The
+  - The retry step repeats the first step's `uses:` and its four inputs. The
     prompt and arguments live once in job-level `env`, so only the action
-    reference and token inputs can drift; GitHub Actions has no anchors or
-    reusable step.
-  - Before this PR merges, the `@claude review` comment path checks out the
-    default branch, which lacks the script, so it fails loudly (exit 2) until
-    the merge. The `pull_request` path, which runs on the PR head, is the one
-    that matters meanwhile.
+    reference and the two token inputs can drift; GitHub Actions has no
+    anchors or reusable step.
+  - A branch that predates the script (and a `@claude review` comment run,
+    which checks out the default branch) fails loudly with exit 2 instead of
+    posting; the `pull_request` run on the PR head is the one that matters.
+  - A `workflow_dispatch` run has no PR to post to, so its result is not
+    validated or retried; nothing is posted and nothing waits on it.
+  - The gate assumes `claude-code-action` posts no PR comment of its own with
+    this configuration (none were seen on this repo's runs). If it ever mirrors
+    an incomplete message into a comment, that text is outside this gate:
+    re-check the action's behaviour when updating its version.
 - **Not unit-tested:** the workflow gating and the retry-file fallback need a
   real action run; the validation logic they depend on is tested.
 - **Retry once, then fail.** One extra run only when the first result is

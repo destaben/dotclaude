@@ -15,6 +15,7 @@ GOOD = (
     "## Review of PR #9\n\n### bug-hunter\nNothing.\n\n### documenter\nNothing.\n\n"
     "Result: 0 findings (0 severe, 0 non-severe)\n"
 )
+# Paraphrase of the interim message posted on PR #9 (see issue #10).
 PROVISIONAL = (
     "I'm waiting for the bug-hunter and documenter agents to finish. "
     "I'll write the combined review once both have reported."
