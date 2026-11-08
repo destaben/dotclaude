@@ -78,6 +78,20 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   as an incomplete review and costs the one retry; that is intended, since
   nothing was produced to post. A setup error in the check step also skips the
   post step, so the real cause stays visible.
+- **Known limits, accepted** (so reviews need not raise them again):
+  - The check does not judge section bodies or compare the `Result:` counts
+    with the findings listed; that would need a second model pass. The review
+    stays advisory, and humans read it.
+  - `WorkflowContractTests` are text-level guards against accidental edits to
+    the gates, not behavioural tests; behaviour needs a real action run.
+  - The retry step repeats the first step's `uses:` and three inputs. The
+    prompt and arguments live once in job-level `env`, so only the action
+    reference and token inputs can drift; GitHub Actions has no anchors or
+    reusable step.
+  - Before this PR merges, the `@claude review` comment path checks out the
+    default branch, which lacks the script, so it fails loudly (exit 2) until
+    the merge. The `pull_request` path, which runs on the PR head, is the one
+    that matters meanwhile.
 - **Not unit-tested:** the workflow gating and the retry-file fallback need a
   real action run; the validation logic they depend on is tested.
 - **Retry once, then fail.** One extra run only when the first result is

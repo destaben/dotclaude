@@ -92,7 +92,11 @@ class ValidateTests(unittest.TestCase):
 
 
 class WorkflowContractTests(unittest.TestCase):
-    """Cheap guards on the workflow text the validation depends on."""
+    """Cheap text-level guards on the workflow the validation depends on.
+
+    They catch accidental edits to the gates, not inverted logic; behaviour
+    needs a real action run (see docs/decisions/0002-cost-and-quota.md).
+    """
 
     @classmethod
     def setUpClass(cls):
