@@ -188,11 +188,39 @@ class WorkflowContractTests(unittest.TestCase):
             ["Bash(gh pr diff:*)", "Bash(gh pr view:*)", "Read(/${{ github.workspace }}/**)"],
         )
 
-    def test_agent_cannot_read_git_or_system_paths(self):
-        expected = ["Read(.git/**)"]
-        for path in ("//proc/**", "//etc/**", "//run/**"):
-            expected += [f"{tool}({path})" for tool in ("Read", "Grep", "Glob")]
-        self.assertCountEqual(self.tool_lists()["--disallowedTools"], expected)
+    def test_agent_cannot_search_write_or_run_git(self):
+        self.assertCountEqual(
+            self.tool_lists()["--disallowedTools"],
+            [
+                "Read(.git/**)", "Read(//proc/**)", "Read(//etc/**)", "Read(//run/**)",
+                "Grep", "Glob", "Edit", "Write", "MultiEdit", "NotebookEdit", "Bash(git:*)",
+            ],
+        )
+
+    def test_project_settings_are_removed_before_the_agent_runs(self):
+        # The action loads .claude/settings.json, whose allow list is broader
+        # than --allowedTools (the Copilot review of PR #16). Check that the
+        # step deleting it exists, runs before the review step, and that the
+        # settings it neutralises really contain the broad grants.
+        step = self.text.index("rm -f .claude/settings.json .claude/settings.local.json")
+        self.assertLess(self.text.index("uses: actions/checkout"), step)
+        self.assertLess(step, self.text.index("uses: anthropics/claude-code-action"))
+        settings = json.loads((REPO_ROOT / ".claude" / "settings.json").read_text())
+        allowed = set(settings["permissions"]["allow"])
+        self.assertTrue({"Read", "Grep", "Glob", "Edit", "Write"} <= allowed)
+
+    def test_every_broad_project_grant_is_also_denied_for_the_agent(self):
+        # Defence in depth should the settings step ever stop working: the
+        # deny list wins over any allow, so each write/search/git grant in the
+        # project settings must have a matching deny.
+        settings = json.loads((REPO_ROOT / ".claude" / "settings.json").read_text())
+        denied = set(self.tool_lists()["--disallowedTools"])
+        for grant in settings["permissions"]["allow"]:
+            if grant.startswith("Bash(git "):
+                grant = "Bash(git:*)"
+            if grant in ("Read",) or grant.startswith("mcp__"):
+                continue  # Read is scoped by deny paths; the MCP server is not configured in CI
+            self.assertIn(grant, denied, f"project grant {grant} is not denied in CI")
 
     def test_no_tool_list_denies_the_workspace(self):
         # The runner checks the repo out under /home/runner/work.

@@ -17,7 +17,9 @@ A separate check step validates the message and the posting step re-checks it.
 The gate also refuses to post a review that contains a secret's value, and the
 agent's file access is narrowed to `Read` inside the checked-out workspace, to
 close a path by which an injected diff could have leaked a token into a
-comment. The allow and deny lists and their limits are in the "Secret-leak
+comment. The review job also drops the repo's own `.claude/settings.json`
+before the agent runs, since its broad grants would otherwise add to the
+workflow's tool list. The allow and deny lists and their limits are in the "Secret-leak
 defence" section of `docs/decisions/0002-cost-and-quota.md`.
 Only an incomplete result (exit 3 of the script) is retried; a crash or setup
 error fails the job at once, and a run where the action itself failed is never

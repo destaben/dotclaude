@@ -62,7 +62,7 @@ jobs:
       REVIEW_ARGS: >-
         --model claude-haiku-5-5 --effort low
         --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Read(/${{ github.workspace }}/**)"
-        --disallowedTools "Read(.git/**),Read(//proc/**),Grep(//proc/**),Glob(//proc/**),Read(//etc/**),Grep(//etc/**),Glob(//etc/**),Read(//run/**),Grep(//run/**),Glob(//run/**)"
+        --disallowedTools "Read(.git/**),Read(//proc/**),Read(//etc/**),Read(//run/**),Grep,Glob,Edit,Write,MultiEdit,NotebookEdit,Bash(git:*)"
       REVIEW_PROMPT: |
         Review pull request #${{ github.event.pull_request.number || github.event.issue.number }}
         of this repository (HEAD is detached, so use this number with
@@ -99,6 +99,15 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      # --allowedTools only adds approvals: the action also loads the repo's
+      # own .claude/settings.json, which allows unscoped Read/Grep/Glob, Edit,
+      # Write and git commands (`git diff --output=` can write files). Those
+      # settings are for interactive use, so the CI agent runs without them
+      # (this deletes only the runner's checkout copy). The deny list above
+      # also names the write and search tools, as defence in depth.
+      - name: Drop project permission settings for the review agent
+        run: rm -f .claude/settings.json .claude/settings.local.json
 
       - name: Run bug-hunter and documenter review
         id: review
