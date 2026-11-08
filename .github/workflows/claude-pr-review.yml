@@ -62,7 +62,7 @@ jobs:
       REVIEW_ARGS: >-
         --model claude-haiku-5-5 --effort low
         --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git show:*),Read,Grep,Glob"
-        --disallowedTools "Read(.git/**),Read(//proc/**),Read(//etc/**),Read(//home/**),Read(//run/**)"
+        --disallowedTools "Read(.git/**),Read(//proc/**),Read(//etc/**),Read(//run/**)"
       REVIEW_PROMPT: |
         Review pull request #${{ github.event.pull_request.number || github.event.issue.number }}
         of this repository (HEAD is detached, so use this number with
@@ -90,6 +90,9 @@ jobs:
         (write "1 finding" instead of "1 findings" when the total is exactly 1)
         Between them, give one section per agent, titled "### bug-hunter" and
         "### documenter", and write the message only after both have reported.
+        If you could not read the files you need, do not write a review: start
+        your message with the line "REVIEW INCOMPLETE" and explain what was
+        blocked. Never report "0 findings" for code you did not check.
         A final message without these parts is discarded as incomplete.
     steps:
       - uses: actions/checkout@v4

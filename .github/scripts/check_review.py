@@ -86,6 +86,12 @@ def validate(text, pr_number):
     if not lines:
         return "empty result"
     heading = f"## Review of PR #{pr_number}"
+    # An agent that was blocked may still format a "0 findings" review around
+    # an admission that it checked nothing; that is not a review.
+    admitted = "\n".join(lines).lower()
+    for phrase in ("review is incomplete", "could not complete", "review incomplete"):
+        if phrase in admitted:
+            return "the review says it is incomplete"
     # One markdown heading per agent, so a sentence that merely names an agent
     # ("still waiting for the documenter") does not count as its section.
     # A heading is a `#` line or a line that is only a bold label; "Bug Hunter"

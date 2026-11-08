@@ -14,7 +14,7 @@ incomplete, and fails the job rather than posting it. The prompt states the
 format explicitly. One-comment-per-PR editing and a higher effort level were
 considered and left out; reasons are in `docs/decisions/0002-cost-and-quota.md`.
 The gate also refuses to post a review that contains a secret's value, and the
-agent can no longer read `/proc`, `/etc`, `/home` or `/run`, closing a path by
+agent can no longer read `/proc`, `/etc` or `/run`, closing a path by
 which an injected diff could have leaked a token into a comment.
 Only an incomplete result (exit 3 of the script) is retried; a crash or setup
 error fails the job at once, and a run where the action itself failed is never

@@ -110,6 +110,11 @@ class ValidateTests(unittest.TestCase):
         )
         self.assertIsNotNone(check_review.validate(text, "9"))
 
+    def test_review_that_says_it_could_not_complete_is_rejected(self):
+        for phrase in ("This review is incomplete. It is not a pass.", "Could not complete."):
+            text = GOOD.replace("Nothing.", phrase, 1)
+            self.assertIsNotNone(check_review.validate(text, "9"), phrase)
+
     def test_counts_must_add_up(self):
         text = GOOD.replace("0 findings (0 severe", "3 findings (1 severe")
         self.assertIsNotNone(check_review.validate(text, "9"))
@@ -145,11 +150,16 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn('[ "$RETRY_OUTCOME" = "failure" ]', self.text)
 
     def test_agent_cannot_read_process_or_system_paths(self):
-        for path in ("//proc/**", "//etc/**", "//home/**", "//run/**"):
+        for path in ("//proc/**", "//etc/**", "//run/**"):
             self.assertIn(f"Read({path})", self.text)
 
     def test_post_and_check_steps_pass_secrets_to_the_leak_check(self):
         self.assertEqual(self.text.count("          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets."), 2)
+
+    def test_workspace_is_not_denied(self):
+        # The runner checks the repo out under /home/runner/work.
+        self.assertNotIn("Read(//home", self.text)
+        self.assertNotIn("Read(//github", self.text)
 
     def test_prompt_names_both_required_marker_lines(self):
         self.assertIn("## Review of PR #", self.text)

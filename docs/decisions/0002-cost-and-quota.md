@@ -110,7 +110,9 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   diff could try to make it read a secret (for example the process
   environment under `/proc`) and echo it into a public comment. This pre-dates
   the PR but this step is the publishing path, so two layers were added:
-  `Read` of `/proc`, `/etc`, `/home` and `/run` is denied, and the gate
+  `Read` of `/proc`, `/etc` and `/run` is denied (not `/home`: the runner
+  checks the repo out under the runner user's home directory, and denying it blinded the
+  agent on the first try), and the gate
   refuses to post, with exit 2 and no retry, any review that contains the
   value of `CLAUDE_CODE_OAUTH_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN`. Neither
   layer catches a transformed secret (for example base64), so the review stays
