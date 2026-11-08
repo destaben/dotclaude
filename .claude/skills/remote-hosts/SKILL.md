@@ -86,13 +86,16 @@ session. Without that file there is no guard; a file that exists but is unreadab
   `rm`, package installs, restarts, reboots, firmware or config edits, and on
   a printer anything that moves axes, heats, starts/cancels a job, or flashes.
 - Never run `sudo` unless the user asked and the command is stated up front.
-  The one exception: the user's own **sudoers whitelist** for the agent. If the
-  user has set one up on a host (kept in their private vault), run only the
-  listed commands, non-interactively (`sudo -n <exact command>`), with exactly
-  the listed arguments. Never extend it with other flags, wrappers or shells;
-  if `sudo -n` asks for a password or refuses, stop and report instead of
-  retrying. Treat the whitelist as an audit trail, not a security boundary
-  (membership in the `docker` group is root-equivalent).
+  The one exception: a **read-only sudoers whitelist** the user set up for the
+  agent on their own host (kept in their private vault). Whitelisted commands
+  may be run without asking, but only if they only read state, non-interactively
+  (`sudo -n <exact command>`), with exactly the listed arguments. They still
+  follow every other rule here, including the print-state guard. A whitelist
+  entry that changes state (restart, write, install) is not covered: ask first,
+  as for any other change. Never extend a listed command with other flags,
+  wrappers or shells; if `sudo -n` asks for a password or refuses, stop and
+  report instead of retrying. Treat the whitelist as an audit trail, not a
+  security boundary (membership in the `docker` group is root-equivalent).
 - Bound output: add `-n`/`| head -n` / `--no-pager` so logs don't flood context.
 - Large or exploratory sessions go to a Haiku subagent (see CLAUDE.md token rules).
 

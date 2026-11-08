@@ -7,8 +7,10 @@ change was made, not just what changed — the diff already shows what.
 
 The `remote-hosts` skill said to never run `sudo`, which left Claude unable to read root-only
 state (firewall rules, root's crontab, `dmesg`) on the user's hosts. It now allows one
-exception: a whitelist the user sets up on their own hosts, run non-interactively with exactly
-the listed arguments, and stopping if sudo asks for a password. The skill states that this is an
+exception: a read-only whitelist the user sets up on their own hosts, run non-interactively with
+exactly the listed arguments, subject to the same print-state and ask-before-change rules as
+anything else (a whitelisted command that changes state still needs a yes), and stopping if sudo
+asks for a password. The skill states that this is an
 audit trail, not a security boundary, because `docker` group membership is root-equivalent. The
 whitelist itself and the host facts stay in the user's private vault.
 
