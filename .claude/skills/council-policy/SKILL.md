@@ -40,7 +40,8 @@ already near a `token-budget` warning, say so before convening one.
 ## What the verdict binds
 The chair's verdict settles the choice; carry it out without reopening it.
 It does not authorize edits: implementation still follows the user's approval
-of the plan. Low confidence is still a decision — record what would change it.
+of the plan. Low confidence is still a decision — record what would change it. The one exception is
+in "When the council cannot resolve it" below.
 
 ## What it never overrides
 - The user's approval of a plan, and every confirmation the global rules
@@ -49,10 +50,12 @@ of the plan. Low confidence is still a decision — record what would change it.
 - An unanswered security or data-loss flaw: it goes back to the user.
 
 ## When the council cannot resolve it
-The `claudio` agent (the CEO) sits above the chair, with the user as its only superior. When the chair's verdict is
-low-confidence on something costly to reverse, or a fatal flaw went unanswered, the decision goes back
-to the user; if the `ceo-call` skill is set up, hand it to the `claudio` agent, which phones the user. The
-user's answer is final. If it cannot reach them, the decision stays pending.
+The chair's verdict binds in every case but two, and in those the decision goes back to the user: a
+low-confidence verdict on something costly to reverse, or an unanswered security or data-loss flaw (the
+same flaw that "What it never overrides" already sends back). Nothing else escalates. If the `ceo-call`
+skill is set up, hand the decision to the `claudio` agent (the CEO, above the chair, with the user as its
+only superior), which phones the user. The user's answer is final. If it cannot reach them, the decision
+stays pending.
 
 ## Model and effort
 The contrarian, first principles, and the chair run on Sonnet at medium

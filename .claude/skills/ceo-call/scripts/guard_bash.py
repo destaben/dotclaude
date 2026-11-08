@@ -11,7 +11,7 @@ stdin; exits 0 to allow and 2 to block (the message on stderr goes back to the a
 Allowed (optionally prefixed by `ssh <alias>`, with no ssh options), only with the script at exactly
 `~/.claude/skills/ceo-call/scripts/ceo_call.py` (over ssh, only this `~` form, single-quoted so the remote
 shell expands it; locally, also this machine's own absolute home path), no quotes, no shell operators, no `..`:
-    python3 <script> [--config ~/.config/ceo-call/<name>.json] check
+    python3 <script> [--config ~/.config/ceo-call/config.json] check
     python3 <script> [--config ...] ask --request - <<'CEO_REQUEST'   (JSON lines follow, the last line
         is CEO_REQUEST; the quoted delimiter means the body is never expanded). A request file path
         is not accepted: the agent has no way to write a file, and an existing one must not be spoken.
@@ -22,7 +22,8 @@ import re
 import sys
 
 HOME_SCRIPT = "~/.claude/skills/ceo-call/scripts/ceo_call.py"
-HOME_CONFIG = r"~/\.config/ceo-call/[A-Za-z0-9_.-]+\.json"
+# Exactly one config file: a second one could switch the throttle off (state_file: null).
+HOME_CONFIG = r"~/\.config/ceo-call/config\.json"
 # The ssh prefix below takes no ssh options: -o ProxyCommand would run anything.
 DELIMITER = "CEO_REQUEST"
 
@@ -37,7 +38,7 @@ def build_patterns(home: str):
     # Over ssh the local shell must not expand the ~, so the remote paths are single-quoted: the local
     # shell strips the quotes and the remote shell expands the ~ in its own home.
     script_remote = r"(?:python3\s+)?'%s'" % re.escape(HOME_SCRIPT)
-    config_local = r"(?:--config\s+(?:%s|%s[A-Za-z0-9_.-]+\.json)\s+)?" % (HOME_CONFIG, re.escape(local_config))
+    config_local = r"(?:--config\s+(?:%s|%sconfig\.json)\s+)?" % (HOME_CONFIG, re.escape(local_config))
     config_remote = r"(?:--config\s+'%s'\s+)?" % HOME_CONFIG
     action = r"check"
     heredoc = r"ask\s+--request\s+-\s+<<'CEO_REQUEST'"

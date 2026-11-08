@@ -53,16 +53,16 @@
 8. **`claudio` phones the user; keypad answers, quiet hours, a chat fallback
    (2026-11-07).** An unresolved decision goes to the user by phone instead of
    waiting in a terminal. Answers are keypad digits confirmed by a second press,
-   not speech recognition: telephone audio is least reliable on exactly the short
-   words (yes, no, numbers) that binding decisions rest on. Quiet hours are
-   checked before every attempt, so a retry never rings inside the window. A
-   phone that is not registered is not dialled until it registers: the owner gets
-   a heads-up chat message and the call waits briefly; if the phone still has not
-   registered, the result is `unanswered` with `reason: phone_not_registered`. A repeat key (9)
-   or a wrong key uses up a round on purpose: the round limit bounds how long a
-   call can occupy the phone, and the skill's "Rounds" section documents it. Telephony instance data
-   stays in the user's private notes.
-   The agent's shell is restricted to the call script by a hook, because it reads
-   council briefs that can quote untrusted text and the env file holds the chat
-   token; the details (guard location, user-level install, what is allowed) live
-   in the skill's "Agent safety" section.
+   not speech recognition: telephone audio is least reliable on exactly the
+   short words (yes, no, numbers) that binding decisions rest on. Quiet hours
+   are checked before every attempt, so a retry never rings inside the window. A
+   phone that is not registered is not dialled until it registers: the owner
+   gets a heads-up chat message and the call waits briefly; if the phone still
+   has not registered, the result is `unanswered` with `reason:
+   phone_not_registered`. A repeat key (9) or a wrong key uses up a round on
+   purpose: the round limit bounds how long a call can occupy the phone, and the
+   skill's "Rounds" section documents it. Telephony instance data stays in the
+   user's private notes. The agent's shell is restricted to the call script by a
+   hook, because it reads council briefs that can quote untrusted text and the
+   env file holds the chat token; the details (guard location, user-level
+   install, what is allowed) live in the skill's "Agent safety" section.

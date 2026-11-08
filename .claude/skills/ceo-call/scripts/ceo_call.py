@@ -233,7 +233,10 @@ def load_env_file(path: str) -> Dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
-        values[key.strip()] = value.strip().strip("'\"")
+        key = key.strip()
+        if key.startswith("export") and key[6:7].isspace():
+            key = key[6:].strip()  # shell style: "export NAME=value"
+        values[key] = value.strip().strip("'\"")
     return values
 
 
@@ -323,6 +326,9 @@ def synthesize(host: str, port: int, text: str, timeout: int = 120) -> Tuple[int
                     fmt = (int(data["rate"]), int(data["width"]), int(data["channels"]))
                     if min(fmt) <= 0:
                         raise CallError("speech server sent an invalid audio format")
+                    # Bounded so a bogus format cannot make the conversion build absurd buffers.
+                    if not 8000 <= fmt[0] <= 192000 or fmt[2] > 8:
+                        raise CallError("speech server sent an unsupported audio format")
                 elif kind == "audio-chunk":
                     pcm += payload
                     if len(pcm) > MAX_PCM_BYTES:
@@ -377,7 +383,10 @@ def to_wav(rate: int, width: int, channels: int, pcm: bytes) -> bytes:
     if channels > 1:
         frames = len(samples) // channels
         samples = array.array("h", [sum(samples[i * channels:(i + 1) * channels]) // channels for i in range(frames)])
-    samples = resample(samples, rate, SAMPLE_RATE)
+    try:
+        samples = resample(samples, rate, SAMPLE_RATE)
+    except MemoryError:
+        raise CallError("speech audio is too large to convert")
     tail = array.array("h", [0] * (SAMPLE_RATE // 4))  # a quarter second of silence after each prompt
     samples.extend(tail)
     if sys.byteorder == "big":
@@ -638,6 +647,8 @@ def ask(
             if attempt > 1 and in_quiet_hours(now().strftime("%H:%M"), config.get("quiet_start"), config.get("quiet_end")):
                 outcome = {"status": "deferred", "attempt": attempt - 1}
                 break
+            # From here on the owner may be messaged (heads-up), so this ask keeps its throttle slot.
+            dialled = True
             if not wait_for_phone(asterisk, config, env, notifier, sleep, clock, heads_up_state):
                 # An unregistered endpoint can only ring out, so dialling is pointless; the heads-up
                 # message (if configured) was already sent. Stop and tell the owner.
@@ -647,7 +658,6 @@ def ask(
                 # The heads-up wait can take minutes: look at the clock again right before dialling.
                 outcome = {"status": "deferred", "attempt": attempt - 1}
                 break
-            dialled = True
             outcome = run_attempt(asterisk, config, call_id, len(options), sleep=sleep, clock=clock)
             outcome["attempt"] = attempt
             # A hangup is the owner's choice: they picked up and put the phone down, so no re-ring.

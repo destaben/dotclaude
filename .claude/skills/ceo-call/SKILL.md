@@ -67,7 +67,7 @@ the local shell must not expand it: `ssh <alias> python3 '~/.claude/skills/ceo-c
 The single quotes protect the `~` only from the *local* shell: `ssh` joins its arguments with spaces and
 hands the string to the remote shell, which sees no quotes and expands the `~` in its own home). Any other file
 named `ceo_call.py`, in a repository, `/tmp` or elsewhere, is refused. `--config` must be
-`~/.config/ceo-call/<name>.json` (quoted the same way over ssh). Optionally behind `ssh <alias>` (no ssh options); no shell operators
+`~/.config/ceo-call/config.json` (the only config the agent may name, so it cannot pick one that turns the throttle off) (quoted the same way over ssh). Optionally behind `ssh <alias>` (no ssh options); no shell operators
 or `..` or control characters other than newline (a carriage return could change where bash ends a
 heredoc); the request JSON only through a quoted heredoc (`ask --request -`): a request file path is
 refused, because the agent cannot write files and an existing file must not be spoken.

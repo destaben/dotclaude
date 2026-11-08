@@ -311,6 +311,21 @@ class SynthesizeTests(unittest.TestCase):
         with self.assertRaises(ceo.CallError):
             ceo.synthesize("127.0.0.1", server.port, "hola", timeout=5)
 
+    def test_an_absurd_sample_rate_or_channel_count_is_refused(self):
+        for data in ({"rate": 1, "width": 2, "channels": 1}, {"rate": 10**9, "width": 2, "channels": 1},
+                     {"rate": 22050, "width": 2, "channels": 64}):
+            with self.subTest(data=data):
+                server = WyomingServer([({"type": "audio-start", "data": data}, b""), ({"type": "audio-chunk", "data": {}}, b"\x01\x00"),
+                                        ({"type": "audio-stop"}, b"")])
+                with self.assertRaises(ceo.CallError):
+                    ceo.synthesize("127.0.0.1", server.port, "hola", timeout=5)
+
+    def test_a_memory_error_while_converting_is_a_clean_error(self):
+        import unittest.mock as mock
+        with mock.patch.object(ceo, "resample", side_effect=MemoryError):
+            with self.assertRaises(ceo.CallError):
+                ceo.to_wav(22050, 2, 1, b"\x01\x00" * 100)
+
     def test_resample_rejects_a_zero_source_rate(self):
         with self.assertRaises(ceo.CallError):
             ceo.resample([1, 2, 3], 0, 8000)
@@ -370,6 +385,14 @@ class EnvFileTests(unittest.TestCase):
 
     def test_private_file_is_read(self):
         self.assertEqual(ceo.load_env_file(self.make(0o600)), {"CEO_TELEGRAM_TOKEN": "abc", "CEO_TELEGRAM_CHAT_ID": "42"})
+
+    def test_shell_style_export_lines_are_understood(self):
+        handle = tempfile.NamedTemporaryFile("w", delete=False)
+        handle.write("export CEO_TELEGRAM_TOKEN=abc\nexport   CEO_TELEGRAM_CHAT_ID=\"42\"\n")
+        handle.close()
+        os.chmod(handle.name, 0o600)
+        self.addCleanup(os.unlink, handle.name)
+        self.assertEqual(ceo.load_env_file(handle.name), {"CEO_TELEGRAM_TOKEN": "abc", "CEO_TELEGRAM_CHAT_ID": "42"})
 
     def test_group_or_world_readable_file_is_refused(self):
         for mode in (0o640, 0o644, 0o604):
@@ -655,6 +678,25 @@ class AskFlowTests(unittest.TestCase):
         self.assertIn("speech took too long", str(caught.exception))
         self.assertLessEqual(len(calls), 5)
         self.assertEqual(asterisk.originated, 0)
+
+    def test_an_unregistered_phone_still_uses_up_the_throttle_slot(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        original = FakeAsterisk.__init__
+
+        def init(self_, script):
+            original(self_, script)
+            self_.registered = False
+
+        FakeAsterisk.__init__ = init
+        try:
+            result, asterisk, _ = run_ask([], env={"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                                          config={"state_file": str(state), "min_gap_s": 120, "heads_up_s": 4})
+            self.assertEqual(result["reason"], "phone_not_registered")
+            with self.assertRaises(ceo.CallError):  # a loop of "call again" briefs cannot spam heads-up messages
+                run_ask([], config={"state_file": str(state), "min_gap_s": 120, "heads_up_s": 4})
+        finally:
+            FakeAsterisk.__init__ = original
 
     def test_a_second_ask_too_soon_is_refused_before_any_call(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
@@ -1390,7 +1432,7 @@ class GuardTests(unittest.TestCase):
             "python3 /home/u/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json check",
             "python3 /home/u/.claude/skills/ceo-call/scripts/ceo_call.py --config /home/u/.config/ceo-call/config.json check",
             "ssh myhost python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' check",
-            "ssh myhost python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' --config '~/.config/ceo-call/c.json' ask --request - <<'CEO_REQUEST'\n{}\nCEO_REQUEST",
+            "ssh myhost python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' --config '~/.config/ceo-call/config.json' ask --request - <<'CEO_REQUEST'\n{}\nCEO_REQUEST",
             "/home/u/.claude/skills/ceo-call/scripts/ceo_call.py ask --request - <<'CEO_REQUEST'\n{}\nCEO_REQUEST",
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py ask --request - <<'CEO_REQUEST'\n{\"question\": \"Ship it?\", \"options\": [\"a\", \"b\"]}\nCEO_REQUEST",
         ):
@@ -1418,6 +1460,7 @@ class GuardTests(unittest.TestCase):
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config /tmp/evil.json check",
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/../../x.json check",
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/env check",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/other.json check",  # only the one config
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py ask --request ../../etc/x",
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py ask --request /tmp/planted.json",  # only a quoted heredoc may carry the request
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py ask --request -",  # bare stdin without the heredoc is not allowed either
