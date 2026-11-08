@@ -38,10 +38,10 @@ alias as `remote-hosts` describes, and run the script there.
   running` instead of ringing the owner on top of the first.
 - **Throttle:** a new `ask` that starts less than `min_gap_s` after the previous one is refused with an
   error (`asked again too soon`), and so is any `ask` beyond `max_per_hour` in an hour (`too many asks`).
-  An `ask` that fails before anything reaches the owner (speech failed, or the phone was asleep and no
-  heads-up could be sent) gives its slot back; one that
-  already sent a heads-up message or dialled keeps it, so an asleep phone cannot be used to spam
-  messages. This spaces out and caps the calls a confused or manipulated agent can cause; it does not make a
+  An `ask` gives its slot back only when nothing reached the owner: no call and no chat message
+  of any kind (heads-up, "not connected" notice, error notice). So a broken speech server or an asleep
+  phone cannot be used to spam the chat. A refused `ask` (too soon, too many, another running) sends no
+  chat message either, for the same reason; the calling workflow reports the decision as still pending. This spaces out and caps the calls a confused or manipulated agent can cause; it does not make a
   loop impossible (up to `max_per_hour` asks, each with up to `attempts` calls, can still ring). The
   limits are per host (each machine keeps its own `state_file`), so calling through two listed hosts
   doubles them; that is the owner's choice when they list a second host. The

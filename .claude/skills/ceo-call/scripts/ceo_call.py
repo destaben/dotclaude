@@ -568,6 +568,8 @@ def send_telegram(token: str, chat_id: str, text: str, opener: Callable = urllib
     try:
         with opener(urllib.request.Request(url, data=body), timeout=15) as response:
             return bool(json.loads(response.read().decode("utf-8")).get("ok"))
+    except Interrupted:
+        raise  # a stop request must not be swallowed by a failed send
     except Exception:  # noqa: BLE001 - any failure means "not sent"; details could contain the token
         return False
 
@@ -591,8 +593,8 @@ def wait_for_phone(asterisk, config: Dict, env: Dict[str, str], notifier: Callab
         return False
     state = state if state is not None else {}
     if not state.get("messaged"):  # one heads-up per run, even if the phone drops again on a retry
-        notifier(token, chat_id, HEADS_UP)
-        state["messaged"] = True
+        if notifier(token, chat_id, HEADS_UP):
+            state["messaged"] = True  # only a heads-up that really went out counts
     deadline = clock() + config["heads_up_s"]
     while clock() < deadline:
         sleep(config["poll_interval_s"])
@@ -623,8 +625,16 @@ def ask(
         now = lambda: datetime.now(zone)  # noqa: E731
     clean = validate_request(request)
     options = clean["options"]
-    if in_quiet_hours(now().strftime("%H:%M"), config.get("quiet_start"), config.get("quiet_end")):
+    quiet = lambda: in_quiet_hours(now().strftime("%H:%M"), config.get("quiet_start"), config.get("quiet_end"))  # noqa: E731
+    if quiet():
         return notify_outcome({"status": "deferred", "attempt": 0}, clean, env, notifier, silent=True)
+    reached = {"owner": False}
+    send = notifier
+
+    def notifier(*args, **kwargs):  # noqa: F811 - remembers whether anything reached the owner
+        sent = send(*args, **kwargs)
+        reached["owner"] = reached["owner"] or bool(sent)
+        return sent
     run_lock = acquire_run_lock(config)  # one ask at a time: two runs must never ring together
     try:
         stamp = check_throttle(config, wall)
@@ -633,6 +643,13 @@ def ask(
         raise
     dialled = False
     keep_folder = False
+    completed = False
+
+    def settle():
+        """Give the throttle slot back only if nothing reached the owner: no call, no chat message."""
+        if not (dialled or reached["owner"]):
+            release_throttle(config, stamp)
+
     call_id = secrets.token_hex(8)
     base = "%s/ceo/%s" % (SPOOL, call_id)
     try:
@@ -649,16 +666,15 @@ def ask(
         for attempt in range(1, config["attempts"] + 1):
             # Quiet hours are checked before every attempt, not only the first: a retry that lands
             # after the window opens must not ring.
-            if attempt > 1 and in_quiet_hours(now().strftime("%H:%M"), config.get("quiet_start"), config.get("quiet_end")):
+            if attempt > 1 and quiet():
                 outcome = {"status": "deferred", "attempt": attempt - 1}
                 break
             if not wait_for_phone(asterisk, config, env, notifier, sleep, clock, heads_up_state):
-                dialled = bool(heads_up_state.get("messaged"))  # a heads-up reached the owner: the slot stays used
                 # An unregistered endpoint can only ring out, so dialling is pointless; the heads-up
                 # message (if configured) was already sent. Stop and tell the owner.
                 outcome = {"status": "unanswered", "reason": "phone_not_registered", "attempt": attempt}
                 break
-            if in_quiet_hours(now().strftime("%H:%M"), config.get("quiet_start"), config.get("quiet_end")):
+            if quiet():
                 # The heads-up wait can take minutes: look at the clock again right before dialling.
                 outcome = {"status": "deferred", "attempt": attempt - 1}
                 break
@@ -672,6 +688,7 @@ def ask(
                 break
             if attempt < config["attempts"]:
                 sleep(config["retry_delay_s"])
+        completed = True  # the final chat message (if any) is sent below, and settle() runs after it
     except CallError as error:
         # With docker failing mid-call the owner may still be confirming: leave the folder for the
         # dialplan to write into (the daily sweep removes it) instead of deleting it underneath.
@@ -689,8 +706,8 @@ def ask(
             pass
         raise
     finally:
-        if not dialled:
-            release_throttle(config, stamp)
+        if not completed:
+            settle()  # an error is propagating; its chat message (if any) was sent above
         if not keep_folder:
             try:
                 asterisk.remove(base)
@@ -701,7 +718,10 @@ def ask(
         outcome["option"] = options[outcome["choice"] - 1]
         outcome["notified"] = False  # same keys on every outcome; a decision needs no chat message
         return outcome
-    return notify_outcome(outcome, clean, env, notifier, silent=outcome["status"] == "deferred")
+    try:
+        return notify_outcome(outcome, clean, env, notifier, silent=outcome["status"] == "deferred")
+    finally:
+        settle()
 
 
 class _NoLock:
@@ -900,6 +920,8 @@ def telegram_api(token: str, method: str):
     try:
         with urllib.request.urlopen("https://api.telegram.org/bot%s/%s" % (token, method), timeout=15) as response:
             body = json.loads(response.read().decode("utf-8"))
+    except Interrupted:
+        raise
     except Exception:  # noqa: BLE001 - the URL holds the token, so report nothing specific
         raise CallError("cannot reach the chat service, or the token was refused (%s)" % method)
     if not isinstance(body, dict) or not body.get("ok"):
@@ -934,7 +956,7 @@ def cmd_telegram_setup(args) -> int:
         for key in ("message", "edited_message", "channel_post", "my_chat_member"):
             part = update.get(key)
             chat = part.get("chat") if isinstance(part, dict) else None
-            if isinstance(chat, dict) and "id" in chat:
+            if isinstance(chat, dict) and isinstance(chat.get("id"), (int, str)):
                 seen.pop(chat["id"], None)  # move to the end: the dict then runs oldest to newest
                 seen[chat["id"]] = chat.get("type", "?")
     if not seen:

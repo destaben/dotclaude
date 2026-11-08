@@ -42,7 +42,9 @@ reverse, `/plan` convenes the council first. A quick council (default) runs
 the contrarian and outsider advisors in parallel; `/council full` adds first
 principles, visionary, and executor. Then `council-chair` issues the verdict.
 Quick is 3 model calls, full is 6, so it is kept for real decisions. See
-`docs/decisions/0001-pipeline-and-agents.md` and the `council-policy` skill.
+`docs/decisions/0001-pipeline-and-agents.md` and the `council-policy` skill. A
+decision the council cannot resolve goes back to the user: see "When the council
+cannot resolve it" there, and the `ceo-call` entry below.
 
 ## On demand, outside the pipeline
 - `token-auditor` (Haiku, low effort): reports context bloat. Not run

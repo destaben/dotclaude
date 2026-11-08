@@ -809,6 +809,82 @@ class AskFlowTests(unittest.TestCase):
                 run_ask(["1"], config=cfg)
         ceo.acquire_run_lock(dict(ceo.DEFAULT_CONFIG, **cfg)).close()
 
+    def throttle_state(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        return state
+
+    def test_a_phone_that_drops_after_a_call_still_keeps_the_slot(self):
+        state = self.throttle_state()
+        reads = iter([True, False])  # registered for attempt 1, gone for attempt 2
+        original = FakeAsterisk.__init__
+
+        def init(self_, script):
+            original(self_, script)
+            self_.registered = lambda: next(reads, False)
+
+        FakeAsterisk.__init__ = init
+        try:
+            result, asterisk, _ = run_ask(["unanswered"], config={"state_file": str(state), "min_gap_s": 120, "heads_up_s": 0})
+        finally:
+            FakeAsterisk.__init__ = original
+        self.assertEqual(asterisk.originated, 1)
+        self.assertEqual(result["reason"], "phone_not_registered")
+        self.assertNotEqual(state.read_text().strip(), "")  # a call rang, so the slot stays used
+
+    def test_an_error_message_to_the_owner_keeps_the_throttle_slot(self):
+        state = self.throttle_state()
+
+        def failing_synth(host, port, text):
+            raise ceo.CallError("cannot get speech from the speech server")
+
+        sent = []
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=120)
+        with self.assertRaises(ceo.CallError):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, cfg, {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"}, FakeAsterisk([]),
+                    synth=failing_synth, notifier=lambda t, c, text, silent=False: sent.append(text) or True,
+                    sleep=FakeClock().sleep, clock=FakeClock(), now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual(len(sent), 1)
+        self.assertNotEqual(state.read_text().strip(), "")  # looping on a broken speech server cannot spam the chat
+        with self.assertRaises(ceo.CallError) as caught:
+            ceo.ask({"question": "q", "options": ["a", "b"]}, cfg, {}, FakeAsterisk([]), synth=failing_synth,
+                    sleep=FakeClock().sleep, clock=FakeClock(), now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertIn("too soon", str(caught.exception))
+
+    def test_a_deferred_or_unregistered_notice_keeps_the_slot_too(self):
+        state = self.throttle_state()
+        original = FakeAsterisk.__init__
+
+        def init(self_, script):
+            original(self_, script)
+            self_.registered = False
+
+        FakeAsterisk.__init__ = init
+        try:
+            result, _, sent = run_ask([], env={"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                                      config={"state_file": str(state), "min_gap_s": 120, "heads_up_s": 0})
+        finally:
+            FakeAsterisk.__init__ = original
+        self.assertEqual(len(sent), 1)  # the "phone was not connected" notice
+        self.assertNotEqual(state.read_text().strip(), "")
+
+    def test_a_failed_heads_up_does_not_count_as_sent(self):
+        asterisk = FakeAsterisk([])
+        asterisk.registered = False
+        clock = FakeClock()
+        state = {}
+        config = dict(ceo.DEFAULT_CONFIG, heads_up_s=2, poll_interval_s=2)
+        ceo.wait_for_phone(asterisk, config, {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                           lambda *a, **k: False, clock.sleep, clock, state)
+        self.assertFalse(state.get("messaged"))
+
+    def test_a_stop_request_during_a_chat_send_is_not_swallowed(self):
+        def opener(request, timeout):
+            raise ceo.Interrupted("interrupted")
+
+        with self.assertRaises(ceo.Interrupted):
+            ceo.send_telegram("t", "9", "hi", opener=opener)
+
     def test_a_second_ask_too_soon_is_refused_before_any_call(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
         self.addCleanup(lambda: state.exists() and state.unlink())
@@ -1138,7 +1214,7 @@ class HeadsUpTests(unittest.TestCase):
         state = {}
         for _ in range(3):
             asterisk.registered = False
-            ceo.wait_for_phone(asterisk, config, self.ENV, lambda token, chat, text, silent=False: sent.append(text), clock.sleep, clock, state)
+            ceo.wait_for_phone(asterisk, config, self.ENV, lambda token, chat, text, silent=False: sent.append(text) or True, clock.sleep, clock, state)
         self.assertEqual(sent, [ceo.HEADS_UP])
 
 
@@ -1420,6 +1496,12 @@ class CliTests(unittest.TestCase):
             ceo.main(["--config", str(self.config), "check"])
         self.assertIn("NOT registered", out.getvalue())
         self.assertIn("heads-up", out.getvalue())
+
+    def test_telegram_setup_ignores_unhashable_chat_ids(self):
+        updates = [{"message": {"chat": {"id": [1, 2], "type": "private"}}}, {"message": {"chat": {"id": 5, "type": "private"}}}]
+        code, out = self.run_telegram_setup(self.answers(updates))
+        self.assertEqual(code, 0)
+        self.assertIn("CEO_TELEGRAM_CHAT_ID=5", out)
 
     def run_telegram_setup(self, answers):
         """answers maps a bot API method to the JSON the service returns."""

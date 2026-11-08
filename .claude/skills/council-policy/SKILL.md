@@ -16,7 +16,7 @@ for routine work.
 - **Full, 6 calls:** adds first principles, visionary (opportunity), and
   executor (next action). Use only when the decision is costly to reverse or
   spans several areas. If a quick verdict comes back low-confidence, ask the
-  user whether to spend a full one; don't escalate on your own.
+  user whether to spend a full one; don't spend a full council on your own.
 
 ## Convene it for
 - A design or technical choice between real alternatives.
@@ -40,7 +40,7 @@ already near a `token-budget` warning, say so before convening one.
 ## What the verdict binds
 The chair's verdict settles the choice; carry it out without reopening it.
 It does not authorize edits: implementation still follows the user's approval
-of the plan. Low confidence is still a decision — record what would change it. The one exception is
+of the plan. Low confidence is still a decision — record what would change it. The exceptions are
 in "When the council cannot resolve it" below.
 
 ## What it never overrides
