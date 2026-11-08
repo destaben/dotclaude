@@ -122,7 +122,8 @@ The diagram's boxes map to the `planner`, `implementer`, `bug-hunter`, and
 `documenter` agents (in that order), invoked by `/plan` and `/release`.
 `/council` is the decision step: a quick council (contrarian, outsider, chair)
 by default, or a full one (adding first principles, visionary, executor),
-whose chair's verdict settles the choice (see the `council-policy` skill). Two
+whose chair's verdict settles the choice (see the `council-policy` skill). The dotted edge to `claudio` is an escalation, not a step of `/release`: it
+is taken only when the council cannot resolve a decision. Two
 more entry points sit outside the diagram: `/pr` runs the `commit-and-pr`
 skill directly, for a change you've already verified yourself and don't want
 the full `/release` pipeline for. The `token-auditor` agent runs on demand

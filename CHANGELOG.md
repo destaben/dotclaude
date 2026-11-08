@@ -5,16 +5,18 @@ change was made, not just what changed — the diff already shows what.
 
 ## 2026-11-07 — Claudio, a CEO agent that phones the user
 
-Added `claudio`, a CEO agent above the council and a `ceo-call` skill, so a decision the council cannot
-resolve reaches the user by phone instead of waiting in a terminal. The first version asks with
-text-to-speech and takes a keypad answer, not spoken words: a decision-council review of the
-design (recorded on the tracking issue) found that speech recognition on telephone audio is least reliable on exactly the short words (yes, no, numbers) that
-binding decisions depend on. Every choice is read back and recorded only after a second key press
-confirms it. If the user does not pick up it retries, then sends a chat message. Quiet hours stop
-night calls, including retries that would land inside the window. A phone that is not registered is
-never dialled; the owner gets a heads-up message instead. The agent's shell is limited by a hook to
-the call script, since its briefs can quote untrusted text and the env file holds the chat token. Understanding free speech is deferred until it passes an accuracy test on real
-recordings. No instance data enters this repo; the telephony setup lives in the user's private notes.
+Added `claudio`, a CEO agent above the council and a `ceo-call` skill, so a decision the council
+cannot resolve reaches the user by phone instead of waiting in a terminal. The first version asks
+with text-to-speech and takes a keypad answer, not spoken words: a decision-council review of the
+design (recorded on the tracking issue) found that speech recognition on telephone audio is least
+reliable on exactly the short words (yes, no, numbers) that binding decisions depend on. Every
+choice is read back and recorded only after a second key press confirms it. If the user does not
+pick up it retries, then sends a chat message. Quiet hours stop night calls, including retries that
+would land inside the window. A phone that is not registered is never dialled; the owner gets a
+heads-up message instead. The agent's shell is limited by a hook to the call script, since its
+briefs can quote untrusted text and the env file holds the chat token. Understanding free speech is
+deferred until it passes an accuracy test on real recordings. No instance data enters this repo;
+the telephony setup lives in the user's private notes.
 
 ## 2026-11-07 — Administer LAN devices over SSH
 

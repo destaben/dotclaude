@@ -5,12 +5,13 @@ The agent reads council positions that can quote untrusted text, so its shell mu
 do anything else (for example print the env file that holds the chat token). Reads the hook JSON on
 stdin; exits 0 to allow and 2 to block (the message on stderr goes back to the agent). Fails closed.
 
-`test-call --ignore-quiet-hours` is deliberately not allowed: only the owner may bypass quiet hours.
+`test-call` (it phones the owner with no decision pending), `test-call --ignore-quiet-hours` and
+`telegram-setup` are deliberately not allowed: they are for the owner to run.
 
-Allowed (optionally prefixed by `ssh <alias>`), made only of plain path/word characters, no quotes,
-no shell operators:
+Allowed, with <path> = `~/.claude/skills/ceo-call/scripts` or an absolute path ending in
+`/.claude/skills/ceo-call/scripts` (optionally prefixed by `ssh <alias>`), made only of plain
+path/word characters, no quotes, no shell operators:
     python3 <path>/ceo_call.py [--config <path>] check
-    python3 <path>/ceo_call.py [--config <path>] test-call
     python3 <path>/ceo_call.py [--config <path>] ask --request <path>
     python3 <path>/ceo_call.py [--config <path>] ask --request - <<'CEO_REQUEST'   (JSON lines follow,
         the last line is CEO_REQUEST; the quoted delimiter means the body is never expanded)
@@ -20,10 +21,12 @@ import re
 import sys
 
 WORD = r"[A-Za-z0-9_./@:=~+-]+"
-SCRIPT = r"(?:python3\s+)?(?:[A-Za-z0-9_./~+-]*/)?ceo_call\.py"
+# Pinned to the installed skill: a ceo_call.py planted elsewhere (a cloned repo, /tmp) must not pass.
+# Absolute or ~ paths only (a relative one depends on the working directory), and no ".." segment.
+SCRIPT = r"(?:python3\s+)?(?:~/|/)(?:(?!\.{1,2}/)[A-Za-z0-9_.+-]+/)*\.claude/skills/ceo-call/scripts/ceo_call\.py"
 CONFIG = r"(?:--config\s+%s\s+)?" % WORD
 SSH = r"(?:ssh\s+[A-Za-z0-9_.@][A-Za-z0-9_.@-]*\s+)?"  # no ssh options: -o ProxyCommand would run anything
-ACTION = r"(?:check|test-call|ask\s+--request\s+(?:-|%s))" % WORD
+ACTION = r"(?:check|ask\s+--request\s+(?:-|%s))" % WORD
 PLAIN = re.compile(r"^%s%s\s*%s\s*%s$" % (SSH, SCRIPT, CONFIG, ACTION))
 HEREDOC_HEAD = re.compile(r"^%s%s\s*%s\s*ask\s+--request\s+-\s+<<'CEO_REQUEST'$" % (SSH, SCRIPT, CONFIG))
 DELIMITER = "CEO_REQUEST"

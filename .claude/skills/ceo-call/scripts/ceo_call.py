@@ -80,6 +80,7 @@ NOTIFY = {
     "hangup": "Colgaste antes de confirmar una decisión.",
     "undecided": "Contestaste, pero no llegaste a confirmar una opción.",
     "deferred": "Estamos en horas de silencio, así que no llamé.",
+    "error": "No pude llamar por un fallo técnico.",
 }
 
 
@@ -153,9 +154,13 @@ def load_config(path: Optional[str]) -> Dict:
     quiet = (config["quiet_start"], config["quiet_end"])
     if any(quiet) and not all(isinstance(v, str) and TIME_RE.match(v) for v in quiet):
         raise CallError("quiet_start and quiet_end must both be HH:MM")
-    for key in ("piper_port", "attempts", "retry_delay_s", "ring_timeout_s", "call_timeout_s", "poll_interval_s"):
+    for key in ("piper_port", "attempts", "retry_delay_s", "ring_timeout_s", "call_timeout_s", "poll_interval_s", "heads_up_s"):
         if not isinstance(config[key], int) or isinstance(config[key], bool) or config[key] < 0:
             raise CallError("%s must be a non-negative integer" % key)
+    # The whole run must stay far below the one-day age at which another run sweeps its folder.
+    worst_case = config["attempts"] * (config["ring_timeout_s"] + config["call_timeout_s"] + config["retry_delay_s"] + config["heads_up_s"])
+    if worst_case > 20 * 3600:
+        raise CallError("attempts, delays and timeouts add up to more than 20 hours")
     if config["poll_interval_s"] < 1:
         # 0 would make the polling loops run `docker exec` back to back for the whole call window.
         raise CallError("poll_interval_s must be at least 1")
@@ -368,7 +373,7 @@ class DockerAsterisk:
 
     def endpoint_available(self, endpoint: str) -> bool:
         name = endpoint.split("/", 1)[1]
-        result = self._exec(["asterisk", "-rx", "pjsip show contacts"], check=False)
+        result = self._exec(["asterisk", "-rx", "pjsip show contacts"])  # a failure is an error, not "no contacts"
         text = result.stdout.decode("utf-8", "replace")
         pattern = re.compile(r"^\s*Contact:\s+%s/" % re.escape(name))
         # Asterisk shows "Avail" for a qualified contact and "NonQual" for a registered contact whose
@@ -424,7 +429,8 @@ def run_attempt(asterisk, config: Dict, call_id: str, option_count: int, sleep=t
     answered = False
     result = None
     while clock() < total_deadline:
-        result = asterisk.read_file(base + "/result")
+        # Asterisk's FILE() truncates before it writes, so an empty result means "being written".
+        result = asterisk.read_file(base + "/result") or None
         if result is not None:
             break
         if asterisk.read_file(base + "/done") is not None:
@@ -441,14 +447,14 @@ def run_attempt(asterisk, config: Dict, call_id: str, option_count: int, sleep=t
                 break
             sleep(config["poll_interval_s"])
     else:
-        result = asterisk.read_file(base + "/result")
+        result = asterisk.read_file(base + "/result") or None
         if result is None and answered:
             # The call is still live at the deadline: the owner may be confirming right now. Give the
             # dialplan a short grace to finish before the folder is removed, so a confirmation is not lost.
             for _ in range(GRACE_POLLS):
                 sleep(config["poll_interval_s"])
                 done = asterisk.read_file(base + "/done") is not None
-                result = asterisk.read_file(base + "/result")
+                result = asterisk.read_file(base + "/result") or None
                 if result is not None or done:
                     break
     if result is None:
@@ -558,6 +564,10 @@ def ask(
                 break
             if attempt < config["attempts"]:
                 sleep(config["retry_delay_s"])
+    except CallError:
+        # The decision is still pending: tell the owner by chat, then let the error reach the caller.
+        notify_outcome({"status": "error"}, clean, env, notifier)
+        raise
     finally:
         asterisk.remove(base)
     if outcome["status"] == "decided":

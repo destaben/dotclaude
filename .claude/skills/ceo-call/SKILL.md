@@ -47,11 +47,17 @@ alias as `remote-hosts` describes, and run the script there.
 
 ## Agent safety
 The `claudio` agent reads council briefs that may quote untrusted text, so its shell is limited by a
-`PreToolUse` hook (`scripts/guard_bash.py`): only `ceo_call.py` invocations pass (optionally behind
-`ssh <alias>`, no ssh options, no shell operators, request JSON only through a quoted heredoc). The guard is looked up
-in the user's `~/.claude` first, so a repository cannot swap in a permissive one; the wrapper blocks (exit
-2) if python3 or the guard is missing or crashes. `test-call --ignore-quiet-hours` and `telegram-setup`
-are not allowed to the agent: only the owner bypasses quiet hours or sets up the chat.
+`PreToolUse` hook (`scripts/guard_bash.py`). Only `check` and `ask` of **this skill's own script** pass:
+the path must be `~/.claude/skills/ceo-call/scripts/ceo_call.py` or an absolute path ending in
+`/.claude/skills/ceo-call/scripts/ceo_call.py`, so a `ceo_call.py` planted in a repository or `/tmp` is
+refused. Optionally behind `ssh <alias>` (no ssh options); no shell operators; request JSON only
+through a quoted heredoc.
+
+- **User-level install required.** The hook runs `~/.claude/skills/ceo-call/scripts/guard_bash.py` and
+  never one from the project, so a repository cannot swap in a permissive guard. Without the user-level
+  skill the agent's shell is blocked (fail closed).
+- The wrapper blocks (exit 2) when python3 or the guard is missing or crashes.
+- `test-call`, `test-call --ignore-quiet-hours` and `telegram-setup` are for the owner, not the agent.
 
 ## Use
 ```
