@@ -997,6 +997,33 @@ class AskFlowTests(unittest.TestCase):
                          synth=fake_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
         self.assertEqual((result["status"], result["choice"], result["attempt"]), ("decided", 1, 2))
 
+    def test_a_stop_request_after_a_confirmed_key_press_still_returns_the_choice(self):
+        class StopAfterResult(FakeAsterisk):
+            def sleep_hook(self):
+                pass
+
+        class Killed(FakeAsterisk):
+            killed = False
+
+            def read_file(self, path):
+                value = super().read_file(path)
+                if path.endswith("/result") and value and not self.killed:
+                    self.killed = True
+                    raise ceo.Interrupted("interrupted")  # the stop request lands right after the digit was written
+                return value
+
+        asterisk = Killed([{1: {"answered": "1", "result": "2"}}])
+        clock = FakeClock()
+        result = ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, attempts=1), {}, asterisk, synth=fake_synth,
+                         sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual((result["status"], result["choice"]), ("decided", 2))
+
+    def test_starts_far_in_the_future_after_a_clock_correction_are_ignored(self):
+        state = self.throttle_state()
+        state.write_text("".join("%d\n" % (100000 + 7200 + i) for i in range(6)))  # two hours ahead of "now"
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=120, max_per_hour=6)
+        ceo.check_throttle(cfg, wall=lambda: 100000.0)
+
     def test_a_second_ask_too_soon_is_refused_before_any_call(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
         self.addCleanup(lambda: state.exists() and state.unlink())
@@ -1212,6 +1239,14 @@ class QuietHoursTests(unittest.TestCase):
     def test_an_empty_state_file_path_is_refused_not_a_silent_off_switch(self):
         handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
         handle.write('{"state_file": ""}')
+        handle.close()
+        self.addCleanup(os.unlink, handle.name)
+        with self.assertRaises(ceo.CallError):
+            ceo.load_config(handle.name)
+
+    def test_deeply_nested_config_json_is_a_clean_error(self):
+        handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        handle.write("[" * 5000)
         handle.close()
         self.addCleanup(os.unlink, handle.name)
         with self.assertRaises(ceo.CallError):

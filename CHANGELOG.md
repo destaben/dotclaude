@@ -11,8 +11,9 @@ speech and takes a keypad answer, not spoken words, because speech recognition o
 least reliable on exactly the short words (yes, no, numbers) that binding decisions depend on; a
 choice counts only after a second key press confirms it. Night calls, a sleeping phone, retries and
 abuse by a manipulated agent are handled by the skill's rules, and the agent's shell is limited by a
-hook to the call script, since its briefs can quote untrusted text. Why:
-`docs/decisions/0004-tooling-choices.md`, item 8. No instance data enters this repo.
+hook to the call script, since its briefs can quote untrusted text.
+`council-policy` and `/council` now hand two named cases back to the user, by phone when this is
+set up. Why: `docs/decisions/0004-tooling-choices.md`, item 8. No instance data enters this repo.
 
 ## 2026-11-07 — Administer LAN devices over SSH
 

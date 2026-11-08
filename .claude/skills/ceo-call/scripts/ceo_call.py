@@ -166,7 +166,7 @@ def load_config(path: Optional[str]) -> Dict:
         try:
             with open(os.path.expanduser(path), "r", encoding="utf-8") as handle:
                 loaded = json.load(handle)
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):
             raise CallError("cannot read the config file")
         if not isinstance(loaded, dict):
             raise CallError("the config file must hold a JSON object")
@@ -709,8 +709,9 @@ def ask(
         # With docker failing mid-call the owner may still be confirming: leave the folder for the
         # dialplan to write into (the daily sweep removes it) instead of deleting it underneath.
         keep_folder = dialled and isinstance(error, MayBeLive)
-        if keep_folder and isinstance(error, DockerError):
-            # One failed read must not lose a confirmation that is already on disk: try once more.
+        if keep_folder:
+            # A failed read or a stop request must not lose a confirmation that is already on disk:
+            # look once more.
             try:
                 digit = asterisk.read_file("%s/result" % base)
             except CallError:
@@ -789,7 +790,9 @@ def _read_starts(path: Path, now_s: float) -> List[float]:
             value = float(line.strip())
         except ValueError:
             continue
-        if abs(now_s - value) < 86400:  # a start slightly in the future (clock stepped back) still counts
+        # A start slightly ahead (clock stepped back) still counts; one more than an hour ahead is a
+        # clock error and is ignored, so a wrong clock cannot lock the owner out for a day.
+        if -3600 < now_s - value < 86400:
             starts.append(value)
     return starts
 
