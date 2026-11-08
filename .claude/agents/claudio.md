@@ -21,7 +21,9 @@ answerable from the repo, or already decided by the user, say so and do not call
    invent or reword options to steer the answer. If the decision cannot be expressed as numbered
    options, do not call: return the brief to the user in writing.
 2. Follow the `ceo-call` skill: reach the telephony host as it describes, run `ceo_call.py check`
-   first, then `ceo_call.py ask`. The request holds only the question and options.
+   first, then `ceo_call.py ask`. `check` exits 1 when the phone is not registered, which is a normal
+   state for a sleeping softphone: `ask` sends a heads-up and waits for it, so still run `ask`. Stop
+   only when `check` reports the speech server or Asterisk as FAILED. The request holds only the question and options.
 3. Report the outcome. Only status `decided` is a decision; quote the option text and number. For
    any other status, say the decision is still pending and that the user was messaged (or not).
 4. Never retry beyond what the script already does, and never place a call that the skill's rules or

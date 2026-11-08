@@ -26,14 +26,18 @@ alias as `remote-hosts` describes, and run the script there.
 - **Config file** (`--config`, JSON, optional). Keys: `container`, `piper_host`, `piper_port`,
   `endpoint` (`PJSIP/<name>`), `attempts` (1-10), `retry_delay_s`, `ring_timeout_s`,
   `call_timeout_s`, `poll_interval_s`, `env_file`, and `quiet_start` / `quiet_end` (`HH:MM`; both or
-  neither), `timezone` (IANA name such as `Europe/Madrid`; default is the host's local time) and
+  neither; checked before the first attempt and again before every retry), `timezone` (IANA name such as `Europe/Madrid`; default is the host's local time) and
   `heads_up_s` (default 90). Unknown keys are rejected, and `ring_timeout_s` must be at least 5 and `call_timeout_s` at
   least 60 so a retry can never overlap a call that is still live.
 - **Quiet hours:** inside the window no call is placed; a silent chat message is sent instead and the
-  status is `deferred`.
+  status is `deferred`. The window is re-checked before every retry, so a retry that would land inside
+  it is dropped (also `deferred`).
 - **Heads-up:** if the phone is not registered when a call is due (typical for an iPhone softphone that
   the OS suspended while the screen was locked), the owner gets a chat message asking to open the app,
-  and the call waits up to `heads_up_s` for the registration. A registered phone is called at once.
+  and the call waits up to `heads_up_s` for the registration. A registered phone is called at once. If the phone is still not registered after
+  the wait (or no chat is configured, or `heads_up_s` is 0), no call is placed, because an unregistered
+  endpoint can only ring out: the status is `unanswered` with `reason: phone_not_registered`, and the
+  owner gets the chat message.
 - **Env file** (default `~/.config/ceo-call/env`, mode `0600`, refused otherwise): `CEO_TELEGRAM_TOKEN`
   and `CEO_TELEGRAM_CHAT_ID`. Create the bot with the chat service's bot manager yourself; never
   paste the token into a chat or a tracked file. After messaging the bot once, `ceo_call.py
@@ -53,7 +57,7 @@ it is spoken aloud. Result (one JSON line on stdout):
 | `unanswered` | no pickup after all attempts; the chat message was sent (`notified`) | 3 |
 | `hangup` | picked up but hung up before confirming | 3 |
 | `undecided` | three rounds without a confirmed choice | 3 |
-| `deferred` | quiet hours; no call placed | 3 |
+| `deferred` | quiet hours; no (further) call placed | 3 |
 
 Exit 1 means an infrastructure or input problem (message on stderr). Only `decided` is a decision;
 every other status leaves the decision pending.

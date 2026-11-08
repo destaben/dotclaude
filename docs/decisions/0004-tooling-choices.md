@@ -1,6 +1,6 @@
 # 0004 — Tooling choices
 
-- Date: 2026-10-25 (consolidates the former 0003, 0004, and 0006); items 5, 6 and 7 added 2026-11-01, 2026-11-07 and 2026-11-07 respectively
+- Date: 2026-10-25 (consolidates the former 0003, 0004, and 0006); items 5, 6, 7 and 8 added 2026-11-01, 2026-11-07, 2026-11-07 and 2026-11-07 respectively
 - Status: accepted; the license awaits your final confirmation
 
 1. **GitHub MCP connector by default, not `gh`.** Per your instruction, as
@@ -50,3 +50,15 @@
    configured `HostName`), and the guard is inactive when no printer list exists.
    Device output is treated as
    untrusted data (the skill's own section says how).
+8. **`claudio` phones the user; keypad answers, quiet hours, a chat fallback
+   (2026-11-07).** An unresolved decision goes to the user by phone instead of
+   waiting in a terminal. Answers are keypad digits confirmed by a second press,
+   not speech recognition: telephone audio is least reliable on exactly the short
+   words (yes, no, numbers) that binding decisions rest on. Quiet hours are
+   checked before every attempt, so a retry never rings inside the window. A
+   phone that is not registered is never dialled: the owner gets a heads-up chat
+   message and the call waits briefly; if the phone still has not registered, the
+   result is `unanswered` with `reason: phone_not_registered`. A repeat key (9)
+   or a wrong key uses up a round on purpose: the round limit bounds how long a
+   call can occupy the phone, and the skill documents it. Telephony instance data
+   stays in the user's private notes.

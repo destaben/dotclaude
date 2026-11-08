@@ -241,7 +241,9 @@ def synthesize(host: str, port: int, text: str, timeout: int = 120) -> Tuple[int
                     break
                 elif kind == "error":
                     raise CallError("speech server reported an error")
-    except (OSError, ValueError, KeyError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        # TypeError/AttributeError: a malformed message (non-object data, null rate) must end as a
+        # clean "ERROR:" line, never a traceback.
         raise CallError("cannot get speech from the speech server")
     if fmt is None or not pcm:
         raise CallError("speech server returned no audio")
@@ -504,7 +506,16 @@ def ask(
             asterisk.write_file("%s/%s.wav" % (base, name), wav)
         outcome = {"status": "unanswered"}
         for attempt in range(1, config["attempts"] + 1):
-            wait_for_phone(asterisk, config, env, notifier, sleep, clock)
+            # Quiet hours are checked before every attempt, not only the first: a retry that lands
+            # after the window opens must not ring.
+            if attempt > 1 and in_quiet_hours(now().strftime("%H:%M"), config.get("quiet_start"), config.get("quiet_end")):
+                outcome = {"status": "deferred", "attempt": attempt - 1}
+                break
+            if not wait_for_phone(asterisk, config, env, notifier, sleep, clock):
+                # An unregistered endpoint can only ring out, so dialling is pointless; the heads-up
+                # message (if configured) was already sent. Stop and tell the owner.
+                outcome = {"status": "unanswered", "reason": "phone_not_registered", "attempt": attempt}
+                break
             outcome = run_attempt(asterisk, config, call_id, len(options), sleep=sleep, clock=clock)
             outcome["attempt"] = attempt
             if outcome["status"] in ("decided", "undecided"):
@@ -515,8 +526,9 @@ def ask(
         asterisk.remove(base)
     if outcome["status"] == "decided":
         outcome["option"] = options[outcome["choice"] - 1]
+        outcome["notified"] = False  # same keys on every outcome; a decision needs no chat message
         return outcome
-    return notify_outcome(outcome, clean, env, notifier)
+    return notify_outcome(outcome, clean, env, notifier, silent=outcome["status"] == "deferred")
 
 
 def notify_outcome(outcome: Dict, clean: Dict, env: Dict[str, str], notifier: Callable, silent: bool = False) -> Dict:

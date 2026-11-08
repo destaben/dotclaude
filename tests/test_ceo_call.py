@@ -224,6 +224,19 @@ class SynthesizeTests(unittest.TestCase):
         with self.assertRaises(ceo.CallError):
             ceo.synthesize("127.0.0.1", server.port, "hola", timeout=5)
 
+    def test_malformed_messages_fail_cleanly_instead_of_raising(self):
+        bad_starts = [
+            {"type": "audio-start", "data": {"rate": None, "width": 2, "channels": 1}},
+            {"type": "audio-start", "data": [1, 2]},
+            {"type": "audio-start", "data": "text"},
+            {"type": "audio-start", "data": {"rate": [1], "width": 2, "channels": 1}},
+        ]
+        for header in bad_starts:
+            with self.subTest(header=header):
+                server = WyomingServer([(header, b""), ({"type": "audio-stop"}, b"")])
+                with self.assertRaises(ceo.CallError):
+                    ceo.synthesize("127.0.0.1", server.port, "hola", timeout=5)
+
     def test_unreachable_server_fails_cleanly(self):
         with self.assertRaises(ceo.CallError):
             ceo.synthesize("127.0.0.1", 1, "hola", timeout=1)
@@ -329,6 +342,7 @@ class AskFlowTests(unittest.TestCase):
         result, asterisk, sent = run_ask(["2"])
         self.assertEqual(result["status"], "decided")
         self.assertEqual((result["choice"], result["option"], result["attempt"]), (2, "No", 1))
+        self.assertIs(result["notified"], False)
         self.assertEqual(sent, [])
 
     def test_everything_is_removed_after_the_call_and_old_folders_are_swept_first(self):
@@ -457,6 +471,26 @@ class QuietHoursTests(unittest.TestCase):
         self.assertEqual(len(sent), 1)
         self.assertTrue(sent[0][3])
 
+    def test_quiet_hours_are_checked_again_before_every_retry(self):
+        times = iter([(21, 55), (22, 5), (22, 10)])
+        original = ceo.ask
+
+        def clocked(*args, **kwargs):
+            kwargs["now"] = lambda: datetime(2026, 1, 1, *next(times))
+            return original(*args, **kwargs)
+
+        cfg = dict(ceo.DEFAULT_CONFIG, retry_delay_s=0, poll_interval_s=2, ring_timeout_s=30,
+                   call_timeout_s=300, attempts=3, quiet_start="22:00", quiet_end="08:00")
+        asterisk = FakeAsterisk(["unanswered", "unanswered", "unanswered"])
+        sent = []
+        clock = FakeClock()
+        result = clocked({"question": "q", "options": ["a", "b"]}, cfg, self.ENV, asterisk, synth=fake_synth,
+                         notifier=lambda t, c, text, silent=False: sent.append(silent) or True,
+                         sleep=clock.sleep, clock=clock)
+        self.assertEqual(asterisk.originated, 1)
+        self.assertEqual(result["status"], "deferred")
+        self.assertEqual(sent, [True])  # silent message, no night call
+
     def test_outside_quiet_hours_the_call_is_placed(self):
         result, asterisk, sent = run_ask(["1"], env=self.ENV, config={"quiet_start": "23:00", "quiet_end": "08:00"}, clock_time=(12, 0))
         self.assertEqual(result["status"], "decided")
@@ -562,6 +596,25 @@ class HeadsUpTests(unittest.TestCase):
             FakeAsterisk.originate, FakeAsterisk.__init__ = original_originate, original_init
         self.assertEqual(result["status"], "decided")
         self.assertEqual(events, ["message: " + ceo.HEADS_UP, "call"])
+
+    def test_a_phone_that_never_registers_is_not_dialled_and_the_owner_is_told(self):
+        original_init = FakeAsterisk.__init__
+
+        def init(self_, script):
+            original_init(self_, script)
+            self_.registered = False
+
+        FakeAsterisk.__init__ = init
+        try:
+            result, asterisk, sent = run_ask([], env=self.ENV, config={"heads_up_s": 10})
+        finally:
+            FakeAsterisk.__init__ = original_init
+        self.assertEqual(asterisk.originated, 0)
+        self.assertEqual((result["status"], result["reason"], result["attempt"]), ("unanswered", "phone_not_registered", 1))
+        self.assertTrue(result["notified"])
+        self.assertEqual(len(sent), 2)  # one heads-up, one final notification
+        self.assertEqual(asterisk.files, {})
+
 
     def test_a_registered_phone_is_called_without_any_message(self):
         result, _, sent = run_ask(["1"], env=self.ENV)

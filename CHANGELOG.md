@@ -11,7 +11,8 @@ text-to-speech and takes a keypad answer, not spoken words: a decision-council r
 design (recorded on the tracking issue) found that speech recognition on telephone audio is least reliable on exactly the short words (yes, no, numbers) that
 binding decisions depend on. Every choice is read back and recorded only after a second key press
 confirms it. If the user does not pick up it retries, then sends a chat message. Quiet hours stop
-night calls. Understanding free speech is deferred until it passes an accuracy test on real
+night calls, including retries that would land inside the window. A phone that is not registered is
+never dialled; the owner gets a heads-up message instead. Understanding free speech is deferred until it passes an accuracy test on real
 recordings. No instance data enters this repo; the telephony setup lives in the user's private notes.
 
 ## 2026-11-07 — Administer LAN devices over SSH
