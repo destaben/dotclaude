@@ -158,22 +158,23 @@ def main(argv):
         return 2
     execution_file, pr_number, output_file = argv[1], argv[2], Path(argv[3])
     text = last_result(Path(execution_file))
-    reason = validate(text, pr_number)
-    if reason:
-        print(f"incomplete review, not posting: {reason}", file=sys.stderr)
-        # Diagnostic: a short excerpt of what the agent wrote, so a red run can
-        # be understood from the log. Never printed if it holds a secret.
-        if text and not leaked_secret(text):
-            excerpt = " ".join(text.split())[:300]
-            print(f"result excerpt: {excerpt}", file=sys.stderr)
-        return 3
-    leaked = leaked_secret(text)
+    # The leak check comes first, so a message that quotes a token is a
+    # security stop (exit 2, no retry) whether or not it is a finished review.
+    leaked = leaked_secret(text or "")
     if leaked:
         # A prompt-injected diff may have made the agent read and echo a
         # secret. Never print the value; fail as a setup/security error (no
         # retry, nothing posted).
         print(f"review contains the value of {leaked}; not posting", file=sys.stderr)
         return 2
+    reason = validate(text, pr_number)
+    if reason:
+        print(f"incomplete review, not posting: {reason}", file=sys.stderr)
+        # Diagnostic: a short excerpt of what the agent wrote, so a red run can
+        # be understood from the log (GitHub also masks registered secrets).
+        if text:
+            print(f"result excerpt: {' '.join(text.split())[:200]}", file=sys.stderr)
+        return 3
     output_file.write_text(unfence(text).strip() + "\n", encoding="utf-8")
     return 0
 

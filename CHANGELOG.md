@@ -7,15 +7,16 @@ change was made, not just what changed — the diff already shows what.
 
 The `claude-pr-review` workflow could post an interim message ("waiting for the
 agents...") as the review and still pass, which a wait-for-zero-findings loop
-reads as an empty review. The posting step now validates the message (a
+reads as an empty review. The workflow now validates the message (a
 `## Review of PR #<n>` first line and a `Result: ... findings (...)` last line
 with consistent counts) in a tested script, retries the review once when it is
 incomplete, and fails the job rather than posting it. The prompt states the
 format explicitly. One-comment-per-PR editing and a higher effort level were
 considered and left out; reasons are in `docs/decisions/0002-cost-and-quota.md`.
+A separate check step validates the message and the posting step re-checks it.
 The gate also refuses to post a review that contains a secret's value, and the
-agent is denied `Read`, `Grep` and `Glob` of `/proc`, `/etc` and `/run`, besides
-`.git` (added, not yet confirmed on a real run), to close a path by which an injected diff
+agent is denied `Read`, `Grep` and `Glob` of `/proc`, `/etc` and `/run` (added,
+not yet confirmed on a real run; `Read(.git/**)` was already denied), to close a path by which an injected diff
 could have leaked a token into a comment. A first attempt that also denied
 `/home` blinded the agent, because the runner checks the repo out there.
 Only an incomplete result (exit 3 of the script) is retried; a crash or setup

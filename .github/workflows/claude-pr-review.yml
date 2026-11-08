@@ -139,7 +139,7 @@ jobs:
             else
               # any other code (2, a crash, a missing script) is a setup error, not a bad review:
               # a retry would not help, so fail without spending another run.
-              echo "::error::check_review.py failed (exit $rc); is .github/scripts/check_review.py copied into the repo?"
+              echo "::error::check_review.py failed (exit $rc): see its message above. Exit 2 is a setup or secret-leak stop; if the script is missing, copy .github/scripts/check_review.py into the repo."
               exit 1
             fi
           fi
@@ -208,7 +208,9 @@ jobs:
 # inputs `claude_code_oauth_token`, `github_token`,
 # `prompt`, `claude_args` and the `execution_file` output exist, `--effort` is
 # a valid flag, and `claude-haiku-5-5` is a valid model id. Re-check them
-# before relying on this workflow later; the action may have moved on.
+# before relying on this workflow later; the action may have moved on. On
+# 2026-11-08 the `env` expansion in `with:` and the `execution_file` output
+# were also seen working on this repo's runs (docs/decisions/0002).
 #
 # To reuse this in a DIFFERENT repo: this file itself (project-specific CI)
 # and .claude/agents/{bug-hunter,documenter}.md + .claude/skills/release-policy/

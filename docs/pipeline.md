@@ -54,7 +54,7 @@ by `install.py`; to use it in another repo, project-scope install the agents
 there too (see the README's Install section) and copy this workflow file in,
 together with `.github/scripts/check_review.py` (without it no review is posted).
 It runs the same `bug-hunter` agent against a GitHub pull request, instead of
-a local diff — no second agent, see
+a local diff, followed by the `documenter` — no new agent, see
 `docs/decisions/0001-pipeline-and-agents.md`. Triggered on every
 same-repo PR (opened/synchronize/reopened/ready_for_review; fork PRs are skipped) on Haiku at
 low effort, by commenting
@@ -71,11 +71,11 @@ with `## Review of PR #<n>` and end with
 message, such as a "waiting for the agents" status, is retried once and then
 fails the job instead of being posted as if it were a review. A review that
 contains the value of one of the job's tokens is never posted either (exit 2,
-no retry). It also needs
-the action step itself to have succeeded. The review is advisory: a
+no retry). The post also requires the action step to have succeeded; if it
+failed, the job fails and nothing is posted or retried. The review is advisory: a
 prompt-injected diff can still influence what it says. Inactive until you
 add a `CLAUDE_CODE_OAUTH_TOKEN` repository secret. There is no API-key
-fallback: when the subscription quota runs out, the review simply doesn't run.
+fallback: when the subscription quota runs out, the run fails and posts nothing.
 
 To wait for a run's review after a push, `github-ops` uses `gh run watch` (see
 `docs/decisions/0004-tooling-choices.md`, item 6); that wait does not change the

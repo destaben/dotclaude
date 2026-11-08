@@ -289,9 +289,9 @@ class CliTests(unittest.TestCase):
         )
 
     def test_incomplete_review_logs_an_excerpt_but_never_a_secret(self):
-        for text, secret, expect in (
-            (PROVISIONAL, "unused-secret-value", True),
-            ("waiting tok-12345678 here", "tok-12345678", False),
+        for text, secret, expect, code in (
+            (PROVISIONAL, "unused-secret-value", True, 3),
+            ("waiting tok-12345678 here", "tok-12345678", False, 2),
         ):
             with tempfile.TemporaryDirectory() as tmp:
                 f = Path(tmp) / "exec.json"
@@ -302,7 +302,7 @@ class CliTests(unittest.TestCase):
                     text=True,
                     env={"PATH": "/usr/bin:/bin", "GH_TOKEN": secret},
                 )
-                self.assertEqual(proc.returncode, 3)
+                self.assertEqual(proc.returncode, code)
                 self.assertEqual("result excerpt:" in proc.stderr, expect)
                 self.assertNotIn("tok-12345678", proc.stderr)
 

@@ -118,19 +118,22 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   16-character piece of one. The agent is also not given `git show`, since
   `git show --output=<path>` can write files. Neither layer
   catches a transformed secret (for example base64), so the review stays
-  advisory and fork PRs stay skipped on the automatic trigger. Open question:
+  advisory and fork PRs stay skipped on the automatic trigger. Open risks:
+  `$RUNNER_TEMP` and the runner home stay readable, and it is not verified
+  that `claude-code-action` never writes the token somewhere readable; if it
+  does, a longer or transformed secret could still leak, which is why the
+  review stays advisory. Also open:
   the `Read(//...)`-style absolute-path deny syntax follows the Claude Code
   permissions reference but was not confirmed on a real run for each tool.
 - **Gating coverage:** the workflow gates are covered only by text-level
   `WorkflowContractTests`; real behaviour (the retry-file selection, the
   outcome combinations) needs a real action run. The validation logic they
   depend on is unit-tested.
-- **An errored final result is retried once**, like an incomplete one, when
-  the action step still exits green; if the action step itself exits non-zero
-  the job fails and nothing is retried or posted. Errors
-  such as max-turns or an early stop are the intermittent failure this work
-  targets, so one retry is worth its cost; a persistent error (quota) fails
-  the retry too and the job goes red with nothing posted.
+- **An errored final result is retried once**, like an incomplete one, only
+  when the action step still exits green; if the action step itself exits
+  non-zero (for example on max-turns or quota) the job fails and nothing is
+  retried or posted. A result that errors while the step exits green is the
+  intermittent early stop this work targets, so one retry is worth its cost.
 - **Retry once, then fail.** One extra run only when the first result is
   incomplete (so the normal cost is unchanged); if it is still incomplete the
   job goes red and nothing is posted.
