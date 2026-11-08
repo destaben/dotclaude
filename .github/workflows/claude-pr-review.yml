@@ -64,25 +64,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # Avoid setup-bun's GitHub Releases download, which can return 504.
-      - name: Install Bun
-        id: bun
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm install --prefix "$RUNNER_TEMP/claude-review-bun" --no-save --no-package-lock bun@1.4.4
-          bun="$RUNNER_TEMP/claude-review-bun/node_modules/.bin/bun"
-          version="$("$bun" --version)"
-          echo "Bun version: $version"
-          test "$version" = "1.4.4"
-          printf 'path=%s\n' "$bun" >> "$GITHUB_OUTPUT"
-
       - name: Run bug-hunter and documenter review
         id: review
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          path_to_bun_executable: ${{ steps.bun.outputs.path }}
           # Use the workflow's own token instead of the OIDC exchange for the
           # Claude GitHub App token, which needs `id-token: write` and the
           # app installed on the repo.
