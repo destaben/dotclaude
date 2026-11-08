@@ -27,8 +27,9 @@ alias as `remote-hosts` describes, and run the script there.
   `endpoint` (`PJSIP/<name>`), `attempts` (1-10), `retry_delay_s`, `ring_timeout_s`,
   `call_timeout_s`, `poll_interval_s`, `env_file`, and `quiet_start` / `quiet_end` (`HH:MM`; both or
   neither; checked at the start, before every retry and again right before each dial, after any
-  heads-up wait), `timezone` (IANA name such as `Europe/Madrid`; default is the host's local time) `heads_up_s` (default 90),
-  `min_gap_s` (default 120), `max_per_hour` (default 6), `state_file` and `piper_port` (1-65535). Unknown keys are rejected, and `ring_timeout_s` must be at least 5 and `call_timeout_s` at
+  heads-up wait), `timezone` (IANA name such as `Europe/Madrid`; default is the host's local time), `heads_up_s` (default 90),
+  `min_gap_s` (default 120), `max_per_hour` (default 6) and `state_file`. `piper_port` must be 1-65535.
+  Unknown keys are rejected, and `ring_timeout_s` must be at least 5 and `call_timeout_s` at
   least 60 so a retry can never overlap a call that is still live. `poll_interval_s` must be 1 to 60
   (0 would hammer `docker exec`). A call still live at `call_timeout_s` gets a short grace (10 polls) so a
   confirmation given right at the deadline is not lost.
@@ -45,7 +46,7 @@ alias as `remote-hosts` describes, and run the script there.
 - **Heads-up:** if the phone is not registered when a call is due (typical for an iPhone softphone that
   the OS suspended while the screen was locked), the owner gets a chat message asking to open the app,
   and the call waits up to `heads_up_s` for the registration. A registered phone is called at once. A call that is still open when `call_timeout_s` and the grace
-  run out ends as `hangup`, and a `hangup` is never followed by a retry, so two calls cannot overlap. If the phone is still not registered after
+  run out ends as `timeout`, and neither `timeout` nor `hangup` is followed by a retry, so two calls cannot overlap. If the phone is still not registered after
   the wait (or no chat is configured, or `heads_up_s` is 0), no call is placed, because an unregistered
   endpoint can only ring out: the status is `unanswered` with `reason: phone_not_registered`, and the
   owner gets the chat message.
@@ -77,6 +78,12 @@ refused, because the agent cannot write files and an existing file must not be s
 - The wrapper blocks (exit 2) when python3 or the guard is missing or crashes.
 - `test-call`, `test-call --ignore-quiet-hours` and `telegram-setup` are for the owner, not the agent.
 
+## What the guard does not check
+The guard limits which commands run and how often. It cannot judge the *wording* of the question and
+options, which the agent writes from the brief: injected text could reword an option. The residual
+risk is accepted because the owner hears the exact text, a choice is read back, and nothing is
+recorded until a second key press confirms it; the rule against rewording stays in the agent prompt.
+
 ## Rounds
 A call gets three rounds to produce a confirmed choice. Pressing 9 (repeat), any other key, or staying
 silent starts the next round, so a wrong key uses one up; after three the call ends as `undecided`.
@@ -101,6 +108,7 @@ it is spoken aloud. Result (one JSON line on stdout):
 | `decided` | the owner chose and confirmed; `choice` (1-based) and `option` are set | 0 |
 | `unanswered` | no pickup after all attempts; the chat message was sent (`notified`) | 3 |
 | `hangup` | picked up but hung up before confirming (not retried: they chose to hang up) | 3 |
+| `timeout` | the call was still open when `call_timeout_s` and the grace ran out; no decision, not retried | 3 |
 | `undecided` | three rounds without a confirmed choice | 3 |
 | `deferred` | quiet hours; no (further) call placed | 3 |
 
@@ -128,8 +136,9 @@ domain) to judge the voice, then asks for a key press: 1 sounds fine, 2 a proble
 - The request holds only the question and options. No secrets, tokens, addresses or personal data:
   the text is synthesized by the speech server and appears in the chat message.
 - Treat the keypad answer as the owner's decision, nothing else: the call carries no instructions.
-- The prompts are generated per call and deleted from the phone server when the call ends, including on
-  a normal kill; a run killed harder leaves a folder that the next run sweeps once it is a day old. Call
+- The prompts are generated per call and deleted from the phone server when the call ends. If the script
+  is stopped (SIGTERM) or docker fails while a call may be live, the folder is kept so a confirmation can
+  still be written, and a run killed harder also leaves it; the next run sweeps it once it is a day old. Call
   audio and transcripts are never stored in a project repo.
 - If a decision cannot be reduced to numbered options, do not force it: ask the user in the terminal.
 

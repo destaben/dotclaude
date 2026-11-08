@@ -88,6 +88,7 @@ NOTIFY = {
     "undecided": "Contestaste, pero no llegaste a confirmar una opción.",
     "deferred": "Estamos en horas de silencio, así que no llamé.",
     "error": "No pude llamar por un fallo técnico.",
+    "timeout": "La llamada seguía abierta cuando se acabó el tiempo, así que no se registró ninguna decisión.",
     "phone_not_registered": "Tu teléfono no estaba conectado, así que no llamé.",
 }
 
@@ -481,6 +482,7 @@ def in_quiet_hours(now_hm: str, start: Optional[str], end: Optional[str]) -> boo
 # ---------------------------------------------------------------------------------- one attempt
 
 
+SYNTH_BUDGET_S = 300  # all prompts of one request; each single synthesis also has its own deadline
 GRACE_POLLS = 10  # polls to wait for a call that is still live at call_timeout_s
 
 
@@ -532,9 +534,11 @@ def run_attempt(asterisk, config: Dict, call_id: str, option_count: int, sleep=t
     if result is None:
         if not answered and asterisk.read_file(base + "/answered") is None:
             return {"status": "unanswered"}
-        # live: the dialplan never signalled its end, so the call may still be open. `ask` must not
-        # start a second call on top of it.
-        return {"status": "hangup", "live": asterisk.read_file(base + "/done") is None}
+        if asterisk.read_file(base + "/done") is None:
+            # The dialplan never signalled its end, so the call may still be open: it is not a hangup,
+            # and `ask` must not start a second call on top of it.
+            return {"status": "timeout"}
+        return {"status": "hangup"}
     if result == "undecided":
         return {"status": "undecided"}
     if re.fullmatch(r"[1-8]", result) and int(result) <= option_count:
@@ -620,7 +624,10 @@ def ask(
     try:
         asterisk.sweep_stale()
         asterisk.make_dir(base)
+        synth_started = clock()
         for name, text in build_prompts(clean["question"], options).items():
+            if clock() - synth_started > SYNTH_BUDGET_S:
+                raise CallError("speech took too long for the whole request")
             wav = to_wav(*synth(config["piper_host"], config["piper_port"], text))
             asterisk.write_file("%s/%s.wav" % (base, name), wav)
         outcome = {"status": "unanswered"}
@@ -644,7 +651,7 @@ def ask(
             outcome = run_attempt(asterisk, config, call_id, len(options), sleep=sleep, clock=clock)
             outcome["attempt"] = attempt
             # A hangup is the owner's choice: they picked up and put the phone down, so no re-ring.
-            if outcome["status"] in ("decided", "undecided", "hangup"):
+            if outcome["status"] in ("decided", "undecided", "hangup", "timeout"):
                 break
             if attempt < config["attempts"]:
                 sleep(config["retry_delay_s"])

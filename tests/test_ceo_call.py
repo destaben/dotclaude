@@ -450,9 +450,9 @@ class AskFlowTests(unittest.TestCase):
         self.assertEqual((result["status"], result["choice"]), ("decided", 2))
         self.assertEqual(asterisk.originated, 1)
 
-    def test_a_call_still_live_long_after_the_deadline_is_a_hangup_not_a_redial_during_the_call(self):
+    def test_a_call_still_live_long_after_the_deadline_is_a_timeout_not_a_redial_during_the_call(self):
         result, asterisk, _ = run_ask([{1: {"answered": "1"}, 100000: {"done": "1"}}] * 3, config={"call_timeout_s": 60, "attempts": 1})
-        self.assertEqual(result["status"], "hangup")
+        self.assertEqual(result["status"], "timeout")
 
     def test_an_infrastructure_error_after_the_start_still_messages_the_owner_then_raises(self):
         class Flaky(FakeAsterisk):
@@ -486,7 +486,7 @@ class AskFlowTests(unittest.TestCase):
 
     def test_a_call_still_live_after_the_grace_is_not_followed_by_a_second_call(self):
         result, asterisk, _ = run_ask([{1: {"answered": "1"}}, "1", "1"], config={"call_timeout_s": 60})
-        self.assertEqual(result["status"], "hangup")
+        self.assertEqual(result["status"], "timeout")
         self.assertEqual(asterisk.originated, 1)
 
     def test_quiet_hours_are_checked_again_after_the_heads_up_wait(self):
@@ -639,6 +639,23 @@ class AskFlowTests(unittest.TestCase):
         self.assertEqual(len(sent), 1)  # the owner is told the decision is still pending
         self.assertTrue(asterisk.dirs)  # a live call keeps its folder
 
+    def test_the_prompts_share_one_speech_budget(self):
+        clock = FakeClock()
+        calls = []
+
+        def slow_synth(host, port, text):
+            calls.append(text)
+            clock.sleep(100)
+            return fake_synth(host, port, text)
+
+        asterisk = FakeAsterisk([])
+        with self.assertRaises(ceo.CallError) as caught:
+            ceo.ask({"question": "q", "options": ["a", "b", "c", "d", "e", "f", "g", "h"]}, dict(ceo.DEFAULT_CONFIG), {}, asterisk,
+                    synth=slow_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertIn("speech took too long", str(caught.exception))
+        self.assertLessEqual(len(calls), 5)
+        self.assertEqual(asterisk.originated, 0)
+
     def test_a_second_ask_too_soon_is_refused_before_any_call(self):
         state = Path(tempfile.mkdtemp()) / "last_ask"
         self.addCleanup(lambda: state.exists() and state.unlink())
@@ -726,10 +743,10 @@ class AskFlowTests(unittest.TestCase):
         self.assertEqual(result["status"], "decided")
         self.assertGreaterEqual(asterisk.reads, 6)
 
-    def test_answering_then_never_finishing_ends_at_the_call_deadline_as_hangup(self):
+    def test_answering_then_never_finishing_ends_at_the_call_deadline_as_a_timeout(self):
         stuck = {2: {"answered": "1"}}
         result, _, _ = run_ask([stuck], config={"attempts": 1})
-        self.assertEqual(result["status"], "hangup")
+        self.assertEqual(result["status"], "timeout")
         self.assertGreaterEqual(run_ask.clock.now, 330)  # ring_timeout_s + call_timeout_s
         self.assertLess(run_ask.clock.now, 330 + 2 * ceo.GRACE_POLLS + 5)  # plus the short grace for a live call
 
