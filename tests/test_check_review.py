@@ -66,6 +66,10 @@ class ValidateTests(unittest.TestCase):
             "### documenter", "**Documenter**"
         )
         self.assertIsNone(check_review.validate(bold, "9"))
+        inline = GOOD.replace("### bug-hunter", "**bug-hunter:** nothing").replace(
+            "### documenter", "**documenter:** nothing"
+        )
+        self.assertIsNone(check_review.validate(inline, "9"))
         spaced = GOOD.replace("### bug-hunter", "### Bug Hunter")
         self.assertIsNone(check_review.validate(spaced, "9"))
 

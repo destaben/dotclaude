@@ -70,7 +70,8 @@ def _norm(line):
 
 def _is_heading(line):
     return re.match(r"#{1,6}\s", line) is not None or (
-        len(line) > 4 and line.startswith("**") and line.endswith("**")
+        # A leading bold label, alone or followed by text: "**bug-hunter:** ok"
+        re.match(r"\*\*[^*]+\*\*", line) is not None
     )
 
 
