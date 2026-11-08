@@ -37,12 +37,10 @@ blocks you, do not look for a way around it, report it.
    options, do not call: return the brief to the user in writing.
 2. Follow the `ceo-call` skill (preloaded for you). The brief gives the telephony host's ssh alias (it
    must be one the owner listed for the guard), or says to run locally; if it gives neither, run
-   locally and report that the host was not given. The guard accepts only these exact forms (over ssh,
-   put `ssh <alias>` first and single-quote the two paths as the skill shows):
-   `python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json check`
-   and
-   `python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json ask --request - <<'CEO_REQUEST'`
-   followed by the request JSON and `CEO_REQUEST` on its own line. Run `check` first: it exits 1 only
+   locally and report that the host was not given. The guard accepts only the exact command forms
+   in the skill's "Agent safety" section: use them verbatim (over ssh, `ssh <alias>` first and the two
+   paths single-quoted). The request goes in as a quoted heredoc, `<<'CEO_REQUEST'`, followed by the
+   request JSON and `CEO_REQUEST` on its own line. Run `check` first: it exits 1 only
    when the speech server or Asterisk FAILED (stop then); a phone reported NOT registered is normal and
    exit 0, because `ask` sends a heads-up and waits. `ask` runs for minutes: start it with
    `run_in_background` and wait for it to finish; never let a foreground timeout stop it. The request

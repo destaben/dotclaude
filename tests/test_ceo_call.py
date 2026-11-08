@@ -1800,21 +1800,20 @@ class GuardTests(unittest.TestCase):
         out = subprocess.run(["python3", str(SCRIPT.parent / "guard_bash.py")], input=b'{"tool_input":{"command":"ls"}}', capture_output=True)
         self.assertNotIn(b"test-call", out.stderr)
 
-    def test_every_command_shown_to_the_agent_is_one_the_guard_accepts(self):
-        import re as _re
-        agent = (SCRIPT.parents[3] / "agents" / "claudio.md").read_text()
-        shown = _re.findall(r"`(python3 ~/\.claude/skills/ceo-call/scripts/ceo_call\.py[^`]*)`", agent)
-        self.assertTrue(shown)
-        for command in shown:
-            command = command.replace("<JSON>", "{}")
-            if "<<'CEO_REQUEST'" in command:
-                command += "\n{}\nCEO_REQUEST"
+    def test_every_command_form_the_skill_shows_the_agent_is_one_the_guard_accepts(self):
+        skill = (SCRIPT.parents[1] / "SKILL.md").read_text()
+        block = skill.split("The exact forms (everything else is refused):", 1)[1].split("```")[1]
+        lines = block.strip("\n").split("\n")
+        commands = [lines[0], "\n".join(lines[1:])]
+        self.assertTrue(commands[0].endswith("check") and "<<'CEO_REQUEST'" in commands[1])
+        for command in commands:
             with self.subTest(command=command):
                 self.assertTrue(self.guard.allowed(command, home="/home/u", hosts=()))
 
     def test_the_agent_is_told_the_heredoc_form_and_what_to_report_without_json(self):
         agent = (SCRIPT.parents[3] / "agents" / "claudio.md").read_text()
         self.assertIn("<<'CEO_REQUEST'", agent)
+        self.assertIn("Agent safety", agent)
         self.assertIn("no JSON", agent)
 
     def test_the_agent_is_told_to_run_ask_in_the_background(self):

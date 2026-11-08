@@ -81,6 +81,15 @@ or `..` or control characters other than newline (a carriage return could change
 heredoc); the request JSON only through a quoted heredoc (`ask --request -`): a request file path is
 refused, because the agent cannot write files and an existing file must not be spoken.
 
+The exact forms (everything else is refused):
+
+```
+python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json check
+python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json ask --request - <<'CEO_REQUEST'
+{"question": "...", "options": ["...", "..."]}
+CEO_REQUEST
+```
+
 - **User-level install required.** The hook runs `~/.claude/skills/ceo-call/scripts/guard_bash.py` and
   never one from the project, so a repository cannot swap in a permissive guard. Without the user-level
   skill the agent's shell is blocked (fail closed).
