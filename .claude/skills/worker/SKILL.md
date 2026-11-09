@@ -8,8 +8,8 @@ description: Hand a task plus handoff to a one-shot Claude Code worker container
 A one-shot Claude Code run in a container on a host the owner controls. The
 owner starts it with `scripts/worker_run.sh` (every `scripts/...` path in this file is
 relative to the skill directory, `.claude/skills/worker/`). The container clones a public repo
-anonymously, lets the worker edit files on a new `worker/...` branch, commits those
-edits itself, and writes a handoff back. The owner's machine then verifies the
+anonymously, lets the worker edit files on a new `worker/...` branch, and writes a handoff
+back; the entrypoint, not the worker, commits those edits. The owner's machine then verifies the
 branch bundle, scans it for credentials, and publishes it as a draft pull request.
 Nothing here is scheduled or started by an agent on its own.
 
@@ -118,7 +118,8 @@ owner (used to read owner-authored issues and to open the draft pull request).
   It must be new or empty; an existing non-empty directory is refused (exit 2) so
   nothing the owner keeps is overwritten. A directory the script creates gets mode
   0700. An existing empty directory is used as it is and never chmodded. Default: a
-  new 0700 directory under the owner's state directory.
+  new 0700 directory under the owner's state directory: `$DOTCLAUDE_WORKER_STATE` if set,
+  else `$XDG_STATE_HOME/dotclaude-worker`, else `~/.local/state/dotclaude-worker`.
 - `--no-publish`: run and fetch everything, but push nothing and open no pull
   request. The bundle stays in the output directory, untouched, for the owner to inspect.
 - `--accept-worker-handoff` and `--original FILE`: see *Resuming a worker's handoff*.
@@ -131,7 +132,8 @@ owner (used to read owner-authored issues and to open the draft pull request).
   that is not listed is refused before any network access. `remote_dir` is optional
   (default `worker`). `on_blocked` is optional, see *Escalation*.
 
-The last line on stdout is one summary line (the reason for a failure and any escalation are printed to stderr after it): run id, status, turns, duration,
+The last line on stdout is one summary line (the reason for a failure and any escalation
+are printed to stderr after it): run id, status, turns, duration,
 `auth=ok|failed|unknown`, branch, `publish=pr|skipped|none|failed|too-large|missing-bundle`,
 the pull request URL when one was opened, and the output directory. Progress goes to
 stderr. The duration is the container's own figure when it reports one.
@@ -155,9 +157,10 @@ Exit codes:
   Nothing is published, because a stopped run can hold half-finished edits; a question
   the worker wrote before it was stopped is still printed, but `on_blocked` does not run
   and the exit code stays 124 (also when the bundle was too large to copy: the summary
-  line says `publish=too-large`). The bundle and handoff are kept in `--out`. To publish that work, check it, then push the branch and open the
-  draft pull request by hand (the script has no command to publish a saved bundle in this
-  spike, the same as for `--no-publish`).
+  line says `publish=too-large`). The bundle and handoff are kept in `--out`. To publish
+  that work, check it, then push the branch and open the draft pull request by hand (the
+  script has no command to publish a saved bundle in this spike, the same as for
+  `--no-publish`).
 
 ## Copying files back
 The owner's machine copies three files back from the run directory: `summary.env`
@@ -232,9 +235,13 @@ The scanner matches **literal patterns only**, in the bytes the repository store
 in the path names and commit headers and messages. It detects: GitHub tokens (`gh[pousr]_` and
 `github_pat_`), Anthropic keys (`sk-ant-`), OpenAI keys (`sk-proj-`, `sk-svcacct-` and
 the generic `sk-` form), AWS access key ids (`AKIA`), Google API keys (`AIza`), Slack
-tokens (`xox`), JWT-shaped strings, `"accessToken"` and `"refreshToken"` fields, and PEM
-private-key headers. A newline inside a path name is a finding of its own, because the path
-scan reads one name per line and a token split by a newline would never match.
+tokens (`xox`), npm tokens (`npm_`), PyPI tokens (`pypi-AgEIcHlwaS5vcmc`), Stripe live keys
+(`sk_live_`, `rk_live_`), Slack webhook URLs, Google OAuth access tokens (`ya29.`),
+JWT-shaped strings, `"accessToken"` and `"refreshToken"` fields, and PEM private-key
+headers. A generic `password=` line is deliberately not matched: it would block ordinary
+code, docs and tests, and the scanner is a literal-pattern safety net, not a guarantee. A
+newline inside a path name is a finding of its own, because the path scan reads one name
+per line and a token split by a newline would never match.
 
 It does **not** detect: values that are base64-encoded, split across lines or files,
 reversed, hex-encoded, or otherwise transformed; secrets in shapes outside that list;
@@ -283,7 +290,8 @@ path of `HANDOFF-OUT.md` as the last two arguments. The hook is how the owner ro
 the question onward, for example to a call. The script does not decide anything itself.
 
 The last resort is a phone call to the owner, made from the owner's machine through
-the owner's call skill (`ceo-call`, once it is available) via `on_blocked`. The
+the owner's call skill (`ceo-call`, which is inert until the owner sets it up) via
+`on_blocked`. The
 container has no telephony access. The worker never calls anyone.
 
 A run that failed (claude exited nonzero, or the login check failed) is always
@@ -315,7 +323,8 @@ committed): key and certificate files (`*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jk
 `id_rsa*`, `id_dsa*`, `id_ecdsa*`, `id_ed25519*`), environment and package-registry
 credential files (`*.env`, `*.env.*`, `*.npmrc`, `*.netrc`, `*.pypirc`, `*.token`),
 files named like a stored secret (`credentials`, `.credentials*`, `credentials.json`,
-`*.secret`, `*.secrets`, `secrets.json|yml|yaml|toml`), and the handoff directory
+`*.secret`, `*.secrets`, `secrets.json|yml|yaml|toml`), client credential stores (`.git-credentials`,
+`.pgpass`, `.htpasswd`, `.docker/config.json`, `.kube/config`), and the handoff directory
 `.worker-out`. An excluded file is never dropped quietly: it stays unstaged, and the
 entrypoint reports it by name (at most five shown) as a save failure, so the run ends
 `blocked` and not `done`. Its edit is lost with the container, so the owner redoes it
@@ -402,7 +411,9 @@ the entrypoint collects it, and the host exits 3 and runs the hook. That test sh
 handoff path is writable under the real rules; it does not show that any given denied
 path is refused, which needs a login the suite does not have. The enforcement claims
 above come from a review against claude 2.1.319 with a mock API, not from a test in the
-test suite.
+test suite. Both tests are skipped where the binary is absent, which includes the repository's
+CI (`docs-check`), so they show something only on a machine that has `claude`; the
+2.1.319 results are from local runs.
 
 The rule syntax is Claude Code's, and both lists are for the owner to tune after the
 spike. Change the entrypoint and this section together.

@@ -1886,6 +1886,36 @@ class CommitTests(WorkerCase):
         self.assertIn("ID_ED25519", result.stderr + result.stdout)
         self.assertNotIn("status=done", result.stdout)
 
+    def test_credential_store_files_are_left_out_reported_and_never_committed(self):
+        for name in (".pgpass", ".git-credentials"):
+            with self.subTest(name=name):
+                result = self.run_publishing(STUB_CLAUDE_OUT="done", STUB_CLAUDE_COMMIT=name,
+                                             STUB_CLAUDE_COMMIT_CONTENT="host:5432:db:user:hunter2\n")
+                self.assertIn("left out of the commit", result.stderr + result.stdout)
+                self.assertIn(name, result.stderr + result.stdout)
+                self.assertFalse(self.bare_has("refs/heads/" + RUN_BRANCH))
+                shutil.rmtree(self.out, ignore_errors=True)
+
+    def test_a_temporary_directory_with_a_space_in_its_path_does_not_block_publishing(self):
+        # A guard on the property: the scan's TMPDIR is one word whatever the path holds.
+        spaced = self.tmp / "tmp dir with space"
+        spaced.mkdir()
+        result = self.run_publishing(TMPDIR=str(spaced))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.bare_has("refs/heads/" + RUN_BRANCH))
+
+    def test_a_failure_while_preparing_the_pull_request_text_stops_the_publish_before_the_push(self):
+        # awk fails only for the neutraliser's program; every other awk call is the real one.
+        real_awk = shutil.which("awk", path=ORIGINAL_PATH)
+        awk = self.bin / "awk"
+        awk.write_text('#!/bin/sh\nfor a in "$@"; do case "$a" in *\'zw = \'*) exit 1;; esac; done\nexec %s "$@"\n'
+                       % shlex.quote(real_awk))
+        awk.chmod(0o755)
+        result = self.run_publishing()
+        self.assertEqual(result.returncode, 6, result.stderr)
+        self.assertIn("could not be prepared", result.stderr)
+        self.assertFalse(self.bare_has("refs/heads/" + RUN_BRANCH), "nothing is pushed when the text was not prepared")
+
     def test_source_files_whose_names_merely_contain_secret_or_credentials_are_committed(self):
         # The exclude patterns match a file's own name, not a substring anywhere in the path.
         for name in ("secret_scan.sh", "credentials.py"):
@@ -2037,6 +2067,24 @@ class SecretScanTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("path name", result.stdout)
         self.assertNotIn("ghp_" + "A" * 36, result.stdout + result.stderr)
+
+    def test_more_credential_shapes_are_caught_each_by_its_own_kind(self):
+        # Built from pieces so that no test file holds a token-shaped string.
+        shapes = {
+            "npm token": "npm" + "_" + "a" * 36,
+            "PyPI token": "pypi-" + "AgEIcHlwaS5vcmc" + "A" * 30,
+            "Stripe live key": "sk" + "_live_" + "a" * 24,
+            "Slack webhook URL": "https://hooks.slack" + ".com/services/T" + "0" * 8 + "/B" + "0" * 8 + "/" + "a" * 24,
+            "Google OAuth access token": "ya29" + "." + "a" * 30,
+        }
+        for kind, value in shapes.items():
+            with self.subTest(kind=kind):
+                self.run_git("checkout", "-q", "-B", "feature", "main")
+                self.commit("notes.txt", "value=%s\n" % value, "add " + kind)
+                result = self.scan_repo()
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn(kind, result.stdout)
+                self.assertNotIn(value, result.stdout + result.stderr)
 
     def test_a_newline_in_a_path_name_is_reported_because_it_could_split_a_token(self):
         self.commit("ghp_" + "C" * 18 + "\n" + "C" * 18 + ".txt", "nothing in the body\n", "add file")

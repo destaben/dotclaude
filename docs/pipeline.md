@@ -59,7 +59,9 @@ back to the user: see "When the council cannot resolve it" there, and the `ceo-c
   `docs/decisions/0004-tooling-choices.md`, item 9.
 - `worker` (skill): a one-shot, owner-triggered Claude Code run in a container on
   an owner-listed SSH host. The owner's machine publishes the result as a draft
-  pull request. It is not part of the change pipeline; see
+  pull request unless the owner passes `--no-publish`, the run is stopped or blocked,
+  or the publish checks refuse it (the bundle stays in the output directory). It is not
+  part of the change pipeline; see
   `docs/decisions/0004-tooling-choices.md`, item 10.
 
 ## GitHub PR review (`.github/workflows/claude-pr-review.yml`)

@@ -20,6 +20,11 @@ KINDS=(
   "AWS access key id"
   "Google API key"
   "Slack token"
+  "npm token"
+  "PyPI token"
+  "Stripe live key"
+  "Slack webhook URL"
+  "Google OAuth access token"
   "JWT"
   "login token field"
   "private key"
@@ -33,6 +38,11 @@ PATTERNS=(
   'AKIA[0-9A-Z]{16}'
   'AIza[0-9A-Za-z_-]{35}'
   'xox[abprs]-[A-Za-z0-9-]{10,}'
+  'npm_[A-Za-z0-9]{36}'
+  'pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{20,}'
+  '[rs]k_live_[A-Za-z0-9]{20,}'
+  'hooks\.slack\.com/services/T[A-Za-z0-9]+/B[A-Za-z0-9]+/[A-Za-z0-9]{16,}'
+  'ya29\.[A-Za-z0-9_-]{20,}'
   'eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
   '"(accessToken|refreshToken)"[[:space:]]*:'
   '-----BEGIN ([A-Z0-9]+ )*PRIVATE KEY-----'

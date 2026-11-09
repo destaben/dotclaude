@@ -65,6 +65,8 @@ COMMIT_EXCLUDES=(
   ':(exclude,icase,glob)**/credentials.json' ':(exclude,icase,glob)**/*.secret' ':(exclude,icase,glob)**/*.secrets'
   ':(exclude,icase,glob)**/secrets.json' ':(exclude,icase,glob)**/secrets.yml' ':(exclude,icase,glob)**/secrets.yaml'
   ':(exclude,icase,glob)**/secrets.toml'
+  ':(exclude,icase,glob)**/.git-credentials' ':(exclude,icase,glob)**/.pgpass' ':(exclude,icase,glob)**/.htpasswd'
+  ':(exclude,icase,glob)**/.docker/config.json' ':(exclude,icase,glob)**/.kube/config'
   ":(exclude,icase)$WORKER_OUT_DIR"
 )
 # Deny rules, in Claude Code's permission syntax (verified against the binary's accepted forms):

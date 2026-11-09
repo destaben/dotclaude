@@ -275,7 +275,7 @@ run_scan_bounded() {
   # the directory its mktemp -d made would otherwise stay in the system temp directory. Here the host's own
   # cleanup removes it with the rest of the run. The single quotes hold a perl program, on purpose.
   # shellcheck disable=SC2016
-  env ${TMP_DIR:+TMPDIR="$TMP_DIR"} perl -e '
+  env "TMPDIR=${TMP_DIR:-${TMPDIR:-/tmp}}" perl -e '
     my $secs = shift;
     my $pid = fork();
     defined $pid or exit 127;
@@ -451,14 +451,19 @@ publish_branch() {
 
   # The pull request text is built and scanned before anything is pushed, so a refused text leaves nothing public.
   if [ -n "$ISSUE_TITLE" ]; then
-    title=$(printf '[worker] %s' "$(printf '%s' "$ISSUE_TITLE" | tr -d '\000-\037\177' | cut -c1-120)" | neutralise)
+    title=$(printf '[worker] %s' "$(printf '%s' "$ISSUE_TITLE" | tr -d '\000-\037\177' | cut -c1-120)" | neutralise) \
+      || { PUBLISH_MSG="the pull request title could not be prepared; nothing was pushed"; return 1; }
   else
     title="[worker] $BRANCH"
   fi
+  [ -n "$title" ] || { PUBLISH_MSG="the pull request title is empty; nothing was pushed"; return 1; }
   body_file="$TMP_DIR/pr-body.md"
   title_file="$TMP_DIR/pr-title.txt"
   printf '%s\n' "$title" > "$title_file"
-  write_pr_body | neutralise > "$body_file"
+  if ! write_pr_body | neutralise > "$body_file" || [ ! -s "$body_file" ]; then
+    PUBLISH_MSG="the pull request body could not be prepared; nothing was pushed"
+    return 1
+  fi
   if ! text_clean "$title_file"; then
     PUBLISH_MSG="the pull request title contains secret-like text ($SECRET_KINDS); nothing was pushed"
     return 1
