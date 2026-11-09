@@ -40,8 +40,8 @@ already near a `token-budget` warning, say so before convening one.
 ## What the verdict binds
 The chair's verdict settles the choice; carry it out without reopening it.
 It does not authorize edits: implementation still follows the user's approval
-of the plan. Low confidence is still a decision — record what would change it. The exceptions are
-in "When the council cannot resolve it" below.
+of the plan. Low confidence is still a decision — record what would change it.
+The exceptions are in "When the council cannot resolve it" below.
 
 ## What it never overrides
 - The user's approval of a plan, and every confirmation the global rules
