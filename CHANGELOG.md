@@ -3,6 +3,13 @@
 All notable changes to this repo are recorded here. Entries explain why a
 change was made, not just what changed — the diff already shows what.
 
+## 2026-11-09 — Review workflow stays within 150 columns
+
+`claude-pr-review.yml` is copied into other repos by `github-config`, and one
+of them lints YAML at 150 columns, so two long lines made its Lint check fail
+after every sync. The lines are wrapped without changing what they do; keep new
+lines in this file under 150 columns.
+
 ## 2026-11-08 — PR review only posts finished reviews
 
 The `claude-pr-review` workflow could post an interim message ("waiting for the
