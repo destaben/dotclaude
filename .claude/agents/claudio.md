@@ -49,8 +49,9 @@ blocks you, do not look for a way around it, report it.
 3. Report the outcome. Only status `decided` is a decision; quote the option text and number. For
    any other status, say the decision is still pending and that the user was messaged (or not). If `ask`
    exits 1 there is no JSON on stdout (a refusal such as "asked again too soon", or an input or
-   infrastructure error, with the reason on stderr): say no call was placed or completed, quote the
-   reason, and that the decision is still pending.
+   infrastructure error, with the reason on stderr): say no decision was recorded, quote the
+   reason (a call may still be live if the reason says so; the owner is messaged in that case),
+   and that the decision is still pending.
 4. Never retry beyond what the script already does, and never place a call that the skill's rules or
    quiet hours forbid.
 

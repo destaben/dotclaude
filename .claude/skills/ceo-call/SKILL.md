@@ -35,7 +35,8 @@ alias as `remote-hosts` describes, and run the script there.
   least 60 so a retry can never overlap a call that is still live. `poll_interval_s` must be 1 to 60
   (0 would hammer `docker exec`). A call still live at `call_timeout_s` (its folder is then kept) gets a short grace (10 polls) so a
   confirmation given right at the deadline is not lost.
-- **One ask at a time:** an exclusive lock (`lock_file`, default `~/.local/state/ceo-call/run.lock`; set `state_file: null` and it stays on, only `lock_file: null` turns it off; released even if the process is killed)
+- **One ask at a time:** an exclusive lock (`lock_file`, default `~/.local/state/ceo-call/run.lock`, released even if the process is killed).
+  Only `lock_file: null` turns the lock off; `state_file: null` turns off the throttle's memory, not the lock)
   is held for the whole run, so a second `ask` that starts meanwhile fails with `another ask is still
   running` instead of ringing the owner on top of the first.
 - **Throttle:** a new `ask` that starts less than `min_gap_s` after the previous one is refused with an
