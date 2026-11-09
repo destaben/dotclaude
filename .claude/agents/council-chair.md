@@ -1,6 +1,6 @@
 ---
 name: council-chair
-description: Council chair: reads the advisor reports and issues the binding verdict. Invoked by /council after the advisors have answered.
+description: Council chair: reads the advisor reports and issues the verdict (binding, except the two escalation cases in `council-policy`). Invoked by /council after the advisors have answered.
 tools: Read, Grep, Glob
 model: sonnet
 effort: medium

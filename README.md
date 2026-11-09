@@ -132,7 +132,8 @@ dotted `claudio` box is an escalation, not a step, so it is not one of those
 boxes.
 `/council` is the decision step: a quick council (contrarian, outsider, chair)
 by default, or a full one (adding first principles, visionary, executor),
-whose chair's verdict settles the choice (see the `council-policy` skill). The
+whose chair's verdict settles the choice (except the two escalation cases; see
+the `council-policy` skill). The
 dotted edge to `claudio` is an escalation, not a step of `/release` (see
 `council-policy`). Two more entry points sit outside the diagram: `/pr`
 runs the `commit-and-pr` skill directly, for a change you've already verified

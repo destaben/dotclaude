@@ -25,7 +25,8 @@ decision; otherwise use quick mode.
 3. **Chair.** Invoke `council-chair` with the brief and every advisor report,
    verbatim, and say which mode ran. Its verdict is the council's decision.
 4. **Report.** Show the verdict and a one-line summary per advisor. The
-   verdict settles the choice; it does not authorize edits. If this ran
+   verdict settles the choice (except the two escalation cases in
+   `council-policy`, which go back to the user); it does not authorize edits. If this ran
    inside `/plan`, carry it into the plan for the user to approve; if it was
    run on its own, report it and wait. If the chair's Dissent says a fatal
    flaw from the contrarian went unanswered, or its Confidence is low on

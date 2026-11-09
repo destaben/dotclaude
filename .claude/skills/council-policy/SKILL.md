@@ -16,7 +16,9 @@ for routine work.
 - **Full, 6 calls:** adds first principles, visionary (opportunity), and
   executor (next action). Use only when the decision is costly to reverse or
   spans several areas. If a quick verdict comes back low-confidence, ask the
-  user whether to spend a full one; don't escalate on your own.
+  user whether to spend a full one; don't escalate on your own. If the choice is costly to
+  reverse, that is one of the two escalation cases under "When the council cannot resolve it"
+  and goes to the user as there, not as a question about a full council.
 
 ## Convene it for
 - A design or technical choice between real alternatives.
