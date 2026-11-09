@@ -47,9 +47,10 @@ least reliable on exactly the short words (yes, no, numbers) that binding decisi
 choice counts only after a second key press confirms it. Night calls, a sleeping phone, retries and
 abuse by a manipulated agent are handled by the skill's rules, and the agent's shell is limited by a
 hook to the call script, since its briefs can quote untrusted text. `council-policy` and `/council`
-now hand two named cases back to the user, by phone when this is set up (the chair still issues its verdict;
-`council-policy` decides afterwards whether it goes back to the user); install `claudio` and `ceo-call` at
-user scope, because a project-level copy takes precedence and can change its hook. No instance data
+now hand two named cases back to the user, by phone when this is set up (the chair
+still issues its verdict; `council-policy` decides afterwards whether it goes back
+to the user); install `claudio` and `ceo-call` at user scope, because a
+project-level copy takes precedence and can change its hook. No instance data
 enters this repo. Why: `docs/decisions/0004-tooling-choices.md`, item 9.
 
 ## 2026-11-07 — Administer LAN devices over SSH
