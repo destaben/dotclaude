@@ -13,8 +13,8 @@ describes, or ask, rather than inventing structure that isn't there.
 
 ## Language
 Write everything in English: code, comments, docs, commit messages, PR text.
-The one exception is text spoken or messaged to the owner by a skill (see the
-`ceo-call` skill's design notes).
+The one exception is text a skill speaks or messages to the owner, as that
+skill's own docs specify.
 
 ## Change pipeline
 Every change goes through: `/plan` (planner, read-only) → you approve →

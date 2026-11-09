@@ -208,6 +208,11 @@ a decision taken with no one to act on it. The decision stays pending and `claud
   before its first qualify is treated as not registered for one poll and `wait_for_phone` re-checks, so the
   cost is at most an early heads-up, never a wrong call. The status names were not confirmed against every
   Asterisk build; `check` prints what it sees, and adding a status is a one-line regex change if a setup needs it.
+- **Speech synthesis is outside the call-time arithmetic:** the `ring_timeout_s` / `call_timeout_s` checks in
+  `load_config` bound the call itself. Synthesis happens before the phone rings and has its own bounds (a
+  120 s socket deadline per prompt plus conversion, and `SYNTH_BUDGET_S` = 300 s for the whole request, checked
+  after every prompt); when it overruns, no call is placed and the owner gets an error notice. Adding it to the
+  call arithmetic would not make a retry safer, since no call is live while it runs.
 
 ## Rounds
 A call gets three rounds to produce a confirmed choice. Pressing 9 (repeat), any other key, or staying
