@@ -203,6 +203,10 @@ a decision taken with no one to act on it. The decision stays pending and `claud
   process exit code 1, and the owner can ask again.
 - **A heads-up followed by a quiet-hours notice:** both messages are true when the window opens between them (the
   second is silent), and re-checking before the heads-up would not remove the case. Accepted as is.
+- **Contact status `Unknown`:** only `Avail` and `NonQual` count as registered. A contact still `Unknown`
+  before its first qualify is treated as not registered for one poll and `wait_for_phone` re-checks, so the
+  cost is at most an early heads-up, never a wrong call. The status names were not confirmed against every
+  Asterisk build; `check` prints what it sees, and adding a status is a one-line regex change if a setup needs it.
 
 ## Rounds
 A call gets three rounds to produce a confirmed choice. Pressing 9 (repeat), any other key, or staying

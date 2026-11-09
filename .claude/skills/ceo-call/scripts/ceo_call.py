@@ -143,6 +143,8 @@ def validate_request(request) -> Dict:
             raise CallError("every option must be a non-empty string")
         if len(option) > MAX_OPTION_CHARS:
             raise CallError("an option is longer than %d characters" % MAX_OPTION_CHARS)
+        if not option.strip().rstrip(".!? "):
+            raise CallError("every option needs words to read aloud, not only punctuation")
         clean.append(option.strip())
     for text in [question] + clean:
         if CONTROL_RE.search(text):
@@ -151,6 +153,8 @@ def validate_request(request) -> Dict:
             text.encode("utf-8")  # a lone surrogate would crash the final JSON output after the call
         except UnicodeEncodeError:
             raise CallError("text must be valid Unicode")
+    if not question.strip().rstrip(".!? "):
+        raise CallError("the question needs words to read aloud, not only punctuation")
     cleaned = {"question": question.strip(), "options": clean}
     if len(build_prompts(cleaned["question"], clean)["prompt"]) > MAX_SPOKEN_CHARS:
         raise CallError("the question and options are too long to read aloud (limit %d characters in all)" % MAX_SPOKEN_CHARS)

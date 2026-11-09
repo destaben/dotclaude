@@ -147,6 +147,12 @@ class ValidateRequestTests(unittest.TestCase):
                 with self.assertRaises(ceo.CallError):
                     ceo.validate_request(request)
 
+    def test_text_that_is_only_punctuation_is_refused(self):
+        for request in ({"question": "q", "options": ["?", "Sí"]}, {"question": "...", "options": ["a", "b"]}):
+            with self.subTest(request=request):
+                with self.assertRaises(ceo.CallError):
+                    ceo.validate_request(request)
+
     def test_accepts_a_normal_request(self):
         clean = ceo.validate_request({"question": " Ship? ", "options": ["a", " b "]})
         self.assertEqual(clean, {"question": "Ship?", "options": ["a", "b"]})

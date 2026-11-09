@@ -54,7 +54,8 @@ back to the user: see "When the council cannot resolve it" there, and the `ceo-c
 - `remote-hosts` (skill): administering the user's own LAN devices over ssh,
   read-only by default. It is not part of the change pipeline; see
   `docs/decisions/0004-tooling-choices.md`, item 7.
-- `ceo-call` and `claudio`: an escalation path outside the change pipeline; see `council-policy` and
+- `ceo-call` and `claudio`: reached only from `/council` (above), when a decision goes back to the user; an
+  escalation path outside the change pipeline, see `council-policy` and
   `docs/decisions/0004-tooling-choices.md`, item 9.
 
 ## GitHub PR review (`.github/workflows/claude-pr-review.yml`)
