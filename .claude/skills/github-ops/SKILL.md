@@ -51,30 +51,42 @@ don't reach for it as a general shell substitute.
      Confirm the comment belongs to the run you watched (its time is after your push, and the run
      itself succeeded): a red run may post nothing, so the newest comment can be an older push's review.
      A green run whose newest comment is a status-only message rather than a review
-     (no findings list, no stated outcome) is not "zero findings": the review never happened.
+     (no findings list, no stated outcome) is not a review with no severe findings: it never happened.
      Re-run it (e.g. `gh run rerun <id>`) instead of counting it toward the stop condition,
      at most once per push; if it is still red or status-only, stop and report that to the user.
-  4. **Precondition: the user asked, in this session, to iterate on the PR's automated review until
-     it has no findings.** Without that request, and in every other context (including `/release`),
-     justify nothing: report the non-severe findings to the user and follow `release-policy`. This
+  4. **Precondition: the user asked, in this session, to iterate on the PR's automated review.**
+     Without that request, and in every other context (including `/release`), change nothing
+     on your own: report the non-severe findings to the user and follow `release-policy`. This
      recipe never authorizes auto-fixing or dismissing non-severe findings by itself. With the
-     request in place, the goal of this wait is zero findings, severe and non-severe. Repeat push
-     → find run → watch → read until a review reports none (or the PR is merged/closed). For every
-     finding, do exactly one of:
-     - **Fix it**, with a test that fails without the fix when the change is
-       testable, and run the full suite before pushing.
-     - **Justify it** only when it is not a real defect or is a documented trade-off, and never
-       for a severe finding (fix those). That session request is what allows a justification,
-       and it is never silent: every justification is listed in your final
-       report for the user to overrule, and anything that needs a design choice is asked, not decided:
-       write the reason for the user and for future readers (a code comment at the
-       spot, plus a "Design notes" or equivalent section in the relevant doc), and state it in a
-       PR comment. It explains the decision; it is not a way to steer the reviewer. The aim is that the same finding is never
-       raised twice, so the justification must be specific (what, why, what
-       control makes it acceptable), not "by design".
-     Never merge the PR, and never skip or silently defer a finding, and never weaken a test
-     to make a review pass. Bundle the fixes for one review into a single push
-     so each push costs one review run.
+     request in place, the loop stops when a review reports **no severe findings**, not when it
+     reports none at all. Repeat push → find run → watch → read until then (or the PR is
+     merged/closed).
+     - **Severe findings: fix each one**, with a test that fails without the fix when the change
+       is testable, and run the full suite before pushing. Justify one instead only when it is
+       demonstrably wrong (show the evidence: a test, a command, the code path) or it is a risk
+       the owner has accepted in writing; say which, and never justify one just to end the loop.
+     - **Non-severe findings: one pass, no extra round.** Fix the ones you judge worth fixing
+       (cheap, clearly right, or in code you are already changing) and justify the rest in a
+       sentence each (what, why not now). If a review has only non-severe findings, answer them
+       once, push the fixes if there are any, and stop: do not request another review for them.
+       List the ones you left open in the final report, or in a follow-up issue if the owner wants
+       them tracked.
+     - **Every justification is written down, never silent.** A code comment at the spot or a
+       "Design notes" section when it will matter again, and the PR comment of that round. The
+       reason is for the owner and for future readers, not a way to steer the reviewer; it must
+       be specific (what, why, what control makes it acceptable), not "by design". Anything that
+       needs a design choice is asked, not decided.
+     - **One PR comment per round**, not one per finding and not one for the answer plus another
+       for the next review request. Put the answer and the request for the next review in the
+       same comment (for `claude-pr-review`, `@claude review` anywhere in it triggers the run), and
+       use the same comment style every round. Several comments per round multiply the runs
+       (the extra ones are skipped or cancelled) and make the thread unreadable.
+     - **Stop and report to the user after 5 review rounds with severe findings still open**:
+       a review that keeps finding new severe issues is not converging (see dotclaude #11), and
+       the owner should decide what to accept.
+     Never merge the PR, never skip or silently defer a severe finding, and never weaken a test
+     to make a review pass. Bundle the fixes for one review into a single push so each push
+     costs one review run.
 - **List issues/PRs:** request a narrow filter (author, label, state) rather
   than paging through everything.
 - **Comments:** post once, update in place on revision — don't accumulate
