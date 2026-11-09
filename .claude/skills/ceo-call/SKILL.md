@@ -183,12 +183,9 @@ a decision taken with no one to act on it. The decision stays pending and `claud
   result once more and messages the owner before it exits. Both steps are bounded (60 s and 15 s), the only cost
   is a slower shutdown when docker itself hangs, and skipping them could lose a decision that is already on
   disk.
-- **Repeated rules are on purpose:** the single-hook exception and the two escalation cases are stated in more
-  than one file (CLAUDE.md, README, `docs/pipeline.md`, the ADRs, `council-policy`, `council.md`) because each
-  file is read on its own (`CLAUDE.md` is installed alone, the README is the entry point, the ADRs must stand
-  without the skill), and a document that says "no hooks" without the exception would be false. Each copy is one
-  sentence. ADR 0004 item 9 keeps its operational detail for the same reason: a decision record must still make
-  sense after the skill changes.
+- **Repeated rules are on purpose:** the single-hook exception and the two escalation cases are stated briefly in
+  more than one place, because each file that states them is read on its own, and a statement of "no hooks" without
+  the exception would be false. Where they are repeated is recorded in the install's decision records.
 - **Credential-looking text is refused (best effort):** `validate_request` rejects a question or option that
   matches common credential shapes (GitHub, `sk-` and AWS keys, Telegram bot tokens, PEM private keys). It cannot
   recognise every secret, so the agent prompt rule stays the main control and the residual risk below stays accepted.
