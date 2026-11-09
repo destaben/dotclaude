@@ -65,10 +65,15 @@ don't reach for it as a general shell substitute.
        is testable, and run the full suite before pushing. Justify one instead only when it is
        demonstrably wrong (show the evidence: a test, a command, the code path) or it is a risk
        the owner has accepted in writing; say which, and never justify one just to end the loop.
+       Unlike `/release`, where severe findings go to the user, here the owner's request to iterate
+       lets you decide this, so every severe finding you justified is also named in your final
+       report for the owner to overrule.
      - **Non-severe findings: one pass, no extra round.** Fix the ones you judge worth fixing
        (cheap, clearly right, or in code you are already changing) and justify the rest in a
        sentence each (what, why not now). If a review has only non-severe findings, answer them
-       once, push the fixes if there are any, and stop: do not request another review for them.
+       once, push the fixes if there are any, and stop: do not request another review for them,
+       and do not wait for the one a push starts on its own. If that automatic review later
+       reports a severe finding, handle it as a severe finding.
        List the ones you left open in the final report, or in a follow-up issue if the owner wants
        them tracked.
      - **Every justification is written down, never silent.** A code comment at the spot or a
@@ -77,12 +82,16 @@ don't reach for it as a general shell substitute.
        be specific (what, why, what control makes it acceptable), not "by design". Anything that
        needs a design choice is asked, not decided.
      - **One PR comment per round**, not one per finding and not one for the answer plus another
-       for the next review request. Put the answer and the request for the next review in the
-       same comment (for `claude-pr-review`, `@claude review` anywhere in it triggers the run), and
-       use the same comment style every round. Several comments per round multiply the runs
-       (the extra ones are skipped or cancelled) and make the thread unreadable.
-     - **Stop and report to the user after 5 review rounds with severe findings still open**:
-       a review that keeps finding new severe issues is not converging (see dotclaude #11), and
+       for the next review request. When the review has to be requested by a comment (for
+       `claude-pr-review` that is a draft PR, which skips the automatic run, and `@claude review`
+       anywhere in the comment triggers it), put the answer and the request in the same comment,
+       and post it after the push. On a PR whose reviews start on every push, do not also ask by
+       comment: the push is the request. Use the same comment style every round. Several comments
+       per round multiply the runs (the extra ones are skipped or cancelled) and make the thread
+       unreadable.
+     - **Stop and report to the user after the fifth review of the PR that still reports a
+       severe finding.** Count per PR, in any order; the first review counts; re-runs of a red or
+       status-only run do not. A review that keeps finding new severe issues is not converging, and
        the owner should decide what to accept.
      Never merge the PR, never skip or silently defer a severe finding, and never weaken a test
      to make a review pass. Bundle the fixes for one review into a single push so each push
