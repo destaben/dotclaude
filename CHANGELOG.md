@@ -45,6 +45,21 @@ that a whitelist does not waive it. The whitelist is described as a convenience 
 security boundary, because `docker` group membership is root-equivalent. The whitelist and the
 host facts stay in the user's private vault.
 
+## 2026-11-07 — Claudio, a CEO agent that phones the user
+
+Added `claudio`, a CEO agent above the council, and a `ceo-call` skill, so a decision the council
+cannot resolve reaches the user by phone instead of waiting in a terminal. It asks with text-to-
+speech and takes a keypad answer, not spoken words, because speech recognition on telephone audio is
+least reliable on exactly the short words (yes, no, numbers) that binding decisions depend on; a
+choice counts only after a second key press confirms it. Night calls, a sleeping phone, retries and
+abuse by a manipulated agent are handled by the skill's rules, and the agent's shell is limited by a
+hook to the call script, since its briefs can quote untrusted text. `council-policy` and `/council`
+now hand two named cases back to the user, by phone when this is set up (the chair
+still issues its verdict; `council-policy` decides afterwards whether it goes back
+to the user); install `claudio` and `ceo-call` at user scope, because a
+project-level copy takes precedence and can change its hook. No instance data
+enters this repo. Tracks #13. Why: `docs/decisions/0004-tooling-choices.md`, item 9.
+
 ## 2026-11-07 — Administer LAN devices over SSH
 
 Added a `remote-hosts` skill so Claude can act as sysadmin for the user's own

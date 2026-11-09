@@ -1,6 +1,6 @@
 # 0004 — Tooling choices
 
-- Date: 2026-10-25 (consolidates the former 0003, 0004, and 0006); items 5, 6 and 7 added 2026-11-01, 2026-11-07 and 2026-11-07 respectively
+- Date: 2026-10-25 (consolidates the former 0003, 0004, and 0006); items 5, 6, 7 and 9 added 2026-11-01, 2026-11-07, 2026-11-07 and 2026-11-07 respectively; item 8 added 2026-11-08
 - Status: accepted; the license awaits your final confirmation
 
 1. **GitHub MCP connector by default, not `gh`.** Per your instruction, as
@@ -61,3 +61,31 @@
    host's sudoers file is the gate, not the vault text, and the skill adds a rule
    that reading state never means dumping secrets. If the whitelist ever needs write
    entries, revisit this item.
+9. **`claudio` phones the user; keypad answers, quiet hours, a chat fallback
+   (2026-11-07).** An unresolved decision goes to the user by phone instead of
+   waiting in a terminal. Answers are keypad digits confirmed by a second press,
+   not speech recognition: telephone audio is least reliable on exactly the
+   short words (yes, no, numbers) that binding decisions rest on. Quiet hours
+   are checked before every attempt, so a retry never rings inside the window. A
+   phone that is not registered is not dialled until it registers: the owner
+   gets a heads-up chat message and the call waits up to `heads_up_s` (default 90 s); if the phone still
+   has not registered, the result is `unanswered` with `reason:
+   phone_not_registered`. A repeat key (9) or a wrong key uses up a round on
+   purpose: the round limit bounds how long a call can occupy the phone, and the
+   skill's "Rounds" section documents it. Telephony instance data stays in the
+   user's private notes. The agent's shell is restricted to the call script by a
+   hook, because it reads council briefs that can quote untrusted text and the
+   env file holds the chat token; the details (guard location, user-level
+   install, what is allowed) live in the skill's "Agent safety" section. The guard cannot check the wording of
+   the question, so injected text could reword an option; that residual risk is
+   accepted because the owner hears the text, the choice is read back, and
+   nothing is recorded until a second key press. A failure before dialling
+   (speech server or Docker down) gives the throttle slot back on purpose, so a
+   transient fault does not lock the owner out, but only when no chat message
+   reached the owner (an error notice that did go out keeps the slot); a loop of
+   such failures is serialised by the run lock. The spoken prompts and the owner's chat messages
+   are in Spanish on purpose (product output for the owner's phone, not docs); the
+   rule and its limit live in the skill's design notes. The single-hook exception is
+   repeated briefly in CLAUDE.md, the README, `docs/pipeline.md` and the ADRs, and the
+   two escalation cases in the README, `docs/pipeline.md`, `council-policy` and
+   `council.md`, because each file is read on its own.

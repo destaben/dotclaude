@@ -13,17 +13,22 @@ describes, or ask, rather than inventing structure that isn't there.
 
 ## Language
 Write everything in English: code, comments, docs, commit messages, PR text.
+The one exception is text a skill speaks or messages to the owner, as that
+skill's own docs specify.
 
 ## Change pipeline
 Every change goes through: `/plan` (planner, read-only) → you approve →
 implementer makes the change → scoped tests → `/release` (full suite,
-bug-hunter, documenter, commit-and-pr). No hooks are used for this — it's a
-sequence of steps inside the commands and skills themselves, not something
-attached to the tool-call event system.
+bug-hunter, documenter, commit-and-pr). No hooks are used for this: the
+pipeline is a sequence of steps inside the commands and skills themselves, not
+something attached to the tool-call event system. The one hook in this config
+is the `claudio` agent's own shell guard, which sits outside the pipeline (see
+the `ceo-call` skill).
 
 ## Decisions
 Put real design choices to the council via `/council`; follow the
-`council-policy` skill for when to convene it and what its verdict binds.
+`council-policy` skill for when to convene it and what its verdict binds,
+and for what goes back to you when the council cannot resolve a decision.
 
 ## Testing
 Follow the `testing-mindset` skill: reproduce bugs with a failing test
@@ -52,7 +57,9 @@ bug.
   than retrying Haiku a third time — repeated Haiku loops often cost more
   than one Sonnet pass.
 - Keep this file and every skill free of duplication; link to the skill that
-  owns a topic instead of restating its rules here.
+  owns a topic instead of restating its rules here. A rule that must stand in a file
+  read on its own (a decision record, the README, this file) may be repeated briefly, and
+  the skill that owns it says so.
 
 ## Cost awareness
 Follow the `token-budget` skill for consumption warnings and
