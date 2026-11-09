@@ -408,8 +408,10 @@ report_left_out() {
     | tr '\0' '\n' | grep -v -e "^$WORKER_OUT_DIR\$" -e "^$WORKER_OUT_DIR/" || true)
   [ -n "$left" ] || return 0
   count=$(printf '%s\n' "$left" | wc -l | tr -d ' ')
+  # token_filter fails when the login values cannot be read. Under set -e that would end the script here, before the
+  # edits are committed and with the run still saying done, so the failure is handled: the names are withheld.
   shown=$(printf '%s\n' "$left" | head -n 5 | tr -d '\000-\010\013\014\016-\037\177' | cut -c1-120 | token_filter \
-    | paste -sd, - | sed 's/,/, /g')
+    | paste -sd, - | sed 's/,/, /g') || shown="names withheld, the scrubber could not run"
   [ "$count" -le 5 ] || shown="$shown and $((count - 5)) more"
   save_failed "$count file(s) were left out of the commit because their names look like credential files ($shown)"
 }
@@ -450,7 +452,7 @@ note_ignored() {
   [ -n "$ignored" ] || return 0
   count=$(printf '%s\n' "$ignored" | wc -l | tr -d ' ')
   shown=$(printf '%s\n' "$ignored" | head -n 5 | tr -cd 'A-Za-z0-9 ._/\n-' | cut -c1-120 | token_filter | cut -c1-60 \
-    | paste -sd, - | sed 's/,/, /g')
+    | paste -sd, - | sed 's/,/, /g') || shown="names withheld, the scrubber could not run"
   [ "$count" -le 5 ] || shown="$shown and $((count - 5)) more"
   IGNORED_NOTE="$count path(s) matched by the repository .gitignore were not committed ($shown)"
 }

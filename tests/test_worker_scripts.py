@@ -287,6 +287,9 @@ if knobs.get("commit"):
     os.makedirs(os.path.dirname(target_path), exist_ok=True)
     with open(target_path, "w") as work:
         work.write(knobs.get("commit_content", "work\n"))
+if knobs.get("break_jq"):
+    # From here on the login scrubber cannot read the login values: jq (a test stub) fails once this file exists.
+    open(knobs["break_jq"], "w").close()
 if knobs.get("plant"):
     # A test runner the worker started can write anywhere the container user can, the run directory included.
     with open(knobs["plant"], "w") as planted:
@@ -2119,6 +2122,22 @@ class CommitTests(WorkerCase):
         self.assertIn("left out of the commit", result.stderr + result.stdout)
         self.assertIn("ID_ED25519", result.stderr + result.stdout)
         self.assertNotIn("status=done", result.stdout)
+
+    def test_a_failing_scrubber_while_reporting_left_out_files_ends_the_run_blocked_not_done(self):
+        # token_filter fails when jq does, after claude has finished. That must not abort the entrypoint under set -e
+        # and lose the worker's edits while the run still says done.
+        flag = self.tmp / "jq-broken"
+        real_jq = shutil.which("jq", path=ORIGINAL_PATH)
+        jq = self.bin / "jq"
+        jq.write_text('#!/bin/sh\n[ -e %s ] && { echo "jq: simulated failure" >&2; exit 1; }\nexec %s "$@"\n'
+                      % (shlex.quote(str(flag)), shlex.quote(real_jq)))
+        jq.chmod(0o755)
+        result, _, run_dir = self.run_entry(run_id="20261108-000000-31", env={
+            "STUB_CLAUDE_OUT": "done", "STUB_CLAUDE_COMMIT": "ID_ED25519", "STUB_CLAUDE_COMMIT_CONTENT": "key\n",
+            "STUB_CLAUDE_BREAK_JQ": str(flag)})
+        summary = read_summary(run_dir / "summary.env")
+        self.assertEqual(summary["STATUS"], "blocked", result.stderr)
+        self.assertIn("left out of the commit", summary["REASON"])
 
     def test_a_file_named_like_the_login_is_not_echoed_when_it_is_left_out(self):
         result = self.run_publishing(STUB_CLAUDE_OUT="done", STUB_CLAUDE_COMMIT=LOGIN_SECRET + ".token")

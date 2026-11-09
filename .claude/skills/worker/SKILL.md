@@ -210,6 +210,8 @@ reclaim lock is left behind by a crash, the script reports it and the owner remo
 `run.lock.reclaim` once no run is active.
 
 ## Publishing (on the owner's machine)
+The rule that pull requests open only through `commit-and-pr`, with this publish step as
+its one exception, is repeated briefly in `CLAUDE.md` because that file is read on its own.
 Runs after the container finishes, for a run that left a bundle and ended as `done`,
 `checkpoint` or `blocked`. Steps, in order, each of which can fail to exit 6:
 1. A fresh clone of the repo from the configured remote, made with the owner's own
