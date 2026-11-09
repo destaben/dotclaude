@@ -679,11 +679,14 @@ main() {
     echo "worker: ESCALATION from run $RUN_ID, the worker needs an owner decision. Its question and options:" >&2
     printf '%s\n' "$escalation" >&2
     echo "worker: full handoff: $OUT_DIR/HANDOFF-OUT.md" >&2
-    run_on_blocked
-    # Exit 3 is for a blocked run; a timed-out run keeps 124, because it was stopped and nothing was published.
-    if [ "$status" = blocked ]; then code=3; fi
+    # The on_blocked hook and exit 3 are for a blocked run. A timed-out run only shows the question: it was
+    # stopped, nothing was published, and it keeps exit 124 (even when its bundle was too large to copy).
+    if [ "$status" = blocked ]; then
+      run_on_blocked
+      code=3
+    fi
   fi
-  if [ "$publish_failed" = 1 ]; then code=6; fi
+  if [ "$publish_failed" = 1 ] && [ "$status" != timeout ]; then code=6; fi
   exit "$code"
 }
 

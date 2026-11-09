@@ -153,8 +153,9 @@ Exit codes:
   escalation is still printed and passed to `on_blocked`.
 - 124: the wall-clock limit was reached. The run was stopped (see *Stopping a run*).
   Nothing is published, because a stopped run can hold half-finished edits; a question
-  the worker wrote before it was stopped is still printed. The bundle and handoff are
-  kept in `--out`. To publish that work, check it, then push the branch and open the
+  the worker wrote before it was stopped is still printed, but `on_blocked` does not run
+  and the exit code stays 124 (also when the bundle was too large to copy: the summary
+  line says `publish=too-large`). The bundle and handoff are kept in `--out`. To publish that work, check it, then push the branch and open the
   draft pull request by hand (the script has no command to publish a saved bundle in this
   spike, the same as for `--no-publish`).
 

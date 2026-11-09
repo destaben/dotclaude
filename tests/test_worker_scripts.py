@@ -1561,14 +1561,26 @@ class TermTests(WorkerCase):
         summary = read_summary(self.out / "summary.env")
         self.assertEqual(summary["COMMITS"], "1", "the edit written during the shutdown is committed")
 
-    def test_a_question_written_before_the_time_limit_stop_is_still_shown_and_exit_stays_124(self):
+    def test_a_question_written_before_the_time_limit_stop_is_shown_without_the_hook_and_exit_stays_124(self):
+        hook = self.tmp / "hook.py"
+        hook.write_text(hook_script("HOOK_MARKER"))
+        marker = self.tmp / "hook.json"
+        self.write_config(on_blocked=["python3", str(hook)])
         result = self.run_worker("--handoff", str(self.handoff_src), "--timeout", "3s", env={
             "STUB_CLAUDE_SLEEP": "30", "STUB_CLAUDE_TERM_DELAY": "2", "STUB_CLAUDE_TERM_ESCALATE": "1",
-            "WORKER_STOP_GRACE": "20"})
+            "WORKER_STOP_GRACE": "20", "HOOK_MARKER": str(marker)})
         self.assertEqual(result.returncode, 124, result.stderr)
         self.assertIn("Which storage backend", result.stderr)
         self.assertIn("publish=none", result.stdout)
         self.assertTrue((self.out / "branch.bundle").exists(), "the work stays in the output directory")
+        self.assertFalse(marker.exists(), "on_blocked is for blocked runs, not for a run that was stopped")
+
+    def test_a_timed_out_run_whose_bundle_is_too_large_still_exits_124(self):
+        result = self.run_worker("--handoff", str(self.handoff_src), "--timeout", "3s", env={
+            "STUB_CLAUDE_SLEEP": "30", "STUB_CLAUDE_TERM_DELAY": "2", "WORKER_STOP_GRACE": "20",
+            "WORKER_BUNDLE_MAX": "100"})
+        self.assertEqual(result.returncode, 124, result.stderr)
+        self.assertIn("publish=too-large", result.stdout)
 
     def test_a_bundle_the_worker_planted_in_the_run_directory_is_removed_not_published(self):
         run_id = "20261108-000000-7"
