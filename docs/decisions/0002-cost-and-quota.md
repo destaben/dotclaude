@@ -168,7 +168,7 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   retry, raise `--effort` for this workflow only and weigh
   the cost then; the failed runs are visible as red checks with a warning line.
 
-## The `claudio` agent (phone calls for escalated decisions) (2026-11-08)
+## The `claudio` agent (phone calls for escalated decisions; section added 2026-11-08, the feature itself 2026-11-07)
 - `claudio` runs on Sonnet at `effort: medium`, only when a council verdict escalates to the owner or the
   owner asks to be called; it is outside the change pipeline, so it adds no cost to ordinary changes.
 - Its cost is bounded by the script, not by the model: one ask places at most `attempts` calls (default 3),
