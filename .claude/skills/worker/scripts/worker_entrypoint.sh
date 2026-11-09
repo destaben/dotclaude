@@ -49,13 +49,22 @@ WORKER_OUT_DIR=".worker-out"
 # Checkpoint sections. The inbox itself stays denied (it holds other runs' handoffs). The file is removed with
 # the directory and never committed.
 HANDOFF_IN_NAME="HANDOFF-IN.md"
-# Paths the commit never includes, matched case-insensitively. Excluded files are left unstaged.
+# Files the commit never includes, matched case-insensitively on the file's own name at any depth (glob magic:
+# `*` does not cross a directory separator, so a directory called "secrets" or a source file such as
+# `src/credentials.py` is not caught by accident). Only names that mean "this file holds a secret" are here; the
+# scanner on the owner's machine still reads the content of everything that is committed. An excluded file is
+# never dropped quietly: commit_work reports every file it leaves out, and the run ends blocked.
 COMMIT_EXCLUDES=(
-  ':(exclude,icase)*.pem' ':(exclude,icase)*.key' ':(exclude,icase)*.p12' ':(exclude,icase)*.pfx'
-  ':(exclude,icase)*.jks' ':(exclude,icase)*.token' ':(exclude,icase)*.npmrc' ':(exclude,icase)*.netrc'
-  ':(exclude,icase)*.pypirc' ':(exclude,icase)*.env' ':(exclude,icase)*.env.*'
-  ':(exclude,icase)id_rsa*' ':(exclude,icase)id_dsa*' ':(exclude,icase)id_ecdsa*' ':(exclude,icase)id_ed25519*'
-  ':(exclude,icase)*credentials*' ':(exclude,icase)*secret*'
+  ':(exclude,icase,glob)**/*.pem' ':(exclude,icase,glob)**/*.key' ':(exclude,icase,glob)**/*.p12'
+  ':(exclude,icase,glob)**/*.pfx' ':(exclude,icase,glob)**/*.jks' ':(exclude,icase,glob)**/*.token'
+  ':(exclude,icase,glob)**/*.npmrc' ':(exclude,icase,glob)**/*.netrc' ':(exclude,icase,glob)**/*.pypirc'
+  ':(exclude,icase,glob)**/*.env' ':(exclude,icase,glob)**/*.env.*'
+  ':(exclude,icase,glob)**/id_rsa*' ':(exclude,icase,glob)**/id_dsa*' ':(exclude,icase,glob)**/id_ecdsa*'
+  ':(exclude,icase,glob)**/id_ed25519*'
+  ':(exclude,icase,glob)**/credentials' ':(exclude,icase,glob)**/.credentials*'
+  ':(exclude,icase,glob)**/credentials.json' ':(exclude,icase,glob)**/*.secret' ':(exclude,icase,glob)**/*.secrets'
+  ':(exclude,icase,glob)**/secrets.json' ':(exclude,icase,glob)**/secrets.yml' ':(exclude,icase,glob)**/secrets.yaml'
+  ':(exclude,icase,glob)**/secrets.toml'
   ":(exclude,icase)$WORKER_OUT_DIR"
 )
 # Deny rules, in Claude Code's permission syntax (verified against the binary's accepted forms):
@@ -377,6 +386,21 @@ save_failed() {
   echo "worker: $1" >&2
 }
 
+# report_left_out: after staging, anything the worktree still reports as modified, deleted or new was kept out of
+# the commit by COMMIT_EXCLUDES (the handoff directory aside). Those edits would be lost with the container, so
+# they are reported as a save failure naming the files: the run ends blocked and never says done without them.
+# The names are shown as plain text, control characters removed, at most five.
+report_left_out() {
+  local left count shown
+  left=$(git -C "$WORK/tree" ls-files -z --others --modified --exclude-standard 2>/dev/null \
+    | tr '\0' '\n' | grep -v -e "^$WORKER_OUT_DIR\$" -e "^$WORKER_OUT_DIR/" || true)
+  [ -n "$left" ] || return 0
+  count=$(printf '%s\n' "$left" | wc -l | tr -d ' ')
+  shown=$(printf '%s\n' "$left" | head -n 5 | tr -d '\000-\010\013\014\016-\037\177' | cut -c1-120 | paste -sd, - | sed 's/,/, /g')
+  [ "$count" -le 5 ] || shown="$shown and $((count - 5)) more"
+  save_failed "$count file(s) were left out of the commit because their names look like credential files ($shown)"
+}
+
 # commit_work: commits the worker's edits. The author, committer and message are fixed here: the message is
 # "worker: <run id>" plus, when it is clean, the title above. No file the worker chose is read for it, and
 # no -F is used. Hooks are disabled and --no-verify is passed. Nothing is committed if nothing changed.
@@ -388,6 +412,7 @@ commit_work() {
   [ -n "$changes" ] || return 0
   git -C "$WORK/tree" add -A -- . "${COMMIT_EXCLUDES[@]}" \
     || { save_failed "the changes could not be staged"; return 0; }
+  report_left_out
   # Exit 0 means nothing is staged (for example, every change was an excluded file); 1 means there is something.
   local staged=0
   git -C "$WORK/tree" diff --cached --quiet || staged=$?

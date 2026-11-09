@@ -1825,9 +1825,30 @@ class CommitTests(WorkerCase):
     def test_a_handoff_alone_makes_no_commit_and_a_key_named_in_any_case_is_never_committed(self):
         result = self.run_publishing(STUB_CLAUDE_OUT="done", STUB_CLAUDE_COMMIT="ID_ED25519",
                                      STUB_CLAUDE_COMMIT_CONTENT="key material\n")
-        self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("publish=none", result.stdout)
         self.assertFalse(self.bare_has("refs/heads/" + RUN_BRANCH))
+
+    def test_a_file_left_out_of_the_commit_is_reported_and_the_run_is_not_done(self):
+        # An excluded file would otherwise vanish with the container while the run said done.
+        result = self.run_publishing(STUB_CLAUDE_OUT="done", STUB_CLAUDE_COMMIT="ID_ED25519",
+                                     STUB_CLAUDE_COMMIT_CONTENT="key material\n")
+        self.assertIn("left out of the commit", result.stderr + result.stdout)
+        self.assertIn("ID_ED25519", result.stderr + result.stdout)
+        self.assertNotIn("status=done", result.stdout)
+
+    def test_source_files_whose_names_merely_contain_secret_or_credentials_are_committed(self):
+        # The exclude patterns match a file's own name, not a substring anywhere in the path.
+        for name in ("secret_scan.sh", "credentials.py"):
+            with self.subTest(name=name):
+                result = self.run_publishing(STUB_CLAUDE_OUT="done", STUB_CLAUDE_COMMIT=name)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn("left out of the commit", result.stderr + result.stdout)
+                files = subprocess.run(["git", "-C", str(self.bare), "show", "--name-only", "--format=",
+                                        "refs/heads/" + RUN_BRANCH], capture_output=True, text=True,
+                                       check=True).stdout.split()
+                self.assertIn(name, files)
+                self.git("-C", str(self.bare), "branch", "-D", RUN_BRANCH)
+                shutil.rmtree(self.out, ignore_errors=True)
 
     def test_the_handoff_directory_never_reaches_the_commit(self):
         result = self.run_publishing(STUB_CLAUDE_OUT="done", STUB_CLAUDE_COMMIT="feature.txt")
@@ -1966,6 +1987,12 @@ class SecretScanTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("path name", result.stdout)
         self.assertNotIn("ghp_" + "A" * 36, result.stdout + result.stderr)
+
+    def test_a_newline_in_a_path_name_is_reported_because_it_could_split_a_token(self):
+        self.commit("ghp_" + "C" * 18 + "\n" + "C" * 18 + ".txt", "nothing in the body\n", "add file")
+        result = self.scan_repo()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("newline in a path name", result.stdout)
 
     def test_a_file_copied_to_a_token_shaped_name_with_unchanged_content_is_caught(self):
         # The blob already exists on the base, so rev-list --objects names no new path for it: the tree must be read.

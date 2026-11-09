@@ -129,7 +129,7 @@ owner (used to read owner-authored issues and to open the draft pull request).
   that is not listed is refused before any network access. `remote_dir` is optional
   (default `worker`). `on_blocked` is optional, see *Escalation*.
 
-The last line of output is one summary line: run id, status, turns, duration,
+The last line on stdout is one summary line (the reason for a failure and any escalation are printed to stderr after it): run id, status, turns, duration,
 `auth=ok|failed|unknown`, branch, `publish=pr|skipped|none|failed|too-large|missing-bundle`,
 the pull request URL when one was opened, and the output directory. Progress goes to
 stderr. The duration is the container's own figure when it reports one.
@@ -213,7 +213,7 @@ Runs after the container finishes, for a run that left a bundle and ended as `do
    the whole group is killed at the limit, so a stalled child cannot hold the run open.
 8. `git -c core.hooksPath=/dev/null push --no-verify origin refs/heads/<branch>:refs/heads/<branch>`.
    Hooks are disabled, no force is used, and the refspec names only this branch.
-9. `gh pr create --draft --head <branch> --base <base>` with the scanned title and body.
+9. `gh pr create --repo <owner/name> --draft --head <branch> --base <base>` with the scanned title and body.
    The title is `[worker]` plus the issue title (or the branch name). The body states
    that the worker produced it, names the run id, quotes the worker's checkpoint as
    untrusted text, and says that mentions and closing keywords were neutralised. The
@@ -225,7 +225,8 @@ in the path names and commit headers and messages. It detects: GitHub tokens (`g
 `github_pat_`), Anthropic keys (`sk-ant-`), OpenAI keys (`sk-proj-`, `sk-svcacct-` and
 the generic `sk-` form), AWS access key ids (`AKIA`), Google API keys (`AIza`), Slack
 tokens (`xox`), JWT-shaped strings, `"accessToken"` and `"refreshToken"` fields, and PEM
-private-key headers.
+private-key headers. A newline inside a path name is a finding of its own, because the path
+scan reads one name per line and a token split by a newline would never match.
 
 It does **not** detect: values that are base64-encoded, split across lines or files,
 reversed, hex-encoded, or otherwise transformed; secrets in shapes outside that list;
@@ -300,11 +301,17 @@ with no `#` or `@`, scanned, and at most 72 characters), `--no-verify`, and
 `-F` is used. A file the worker names `commit-msg.txt` is committed like any other
 file; its text is not the message.
 
-The commit leaves out, matched case-insensitively: key and certificate files (`*.pem`,
-`*.key`, `*.p12`, `*.pfx`, `*.jks`, `id_rsa*`, `id_dsa*`, `id_ecdsa*`, `id_ed25519*`),
-environment and package-registry credential files (`*.env`, `*.env.*`, `*.npmrc`,
-`*.netrc`, `*.pypirc`, `*.token`), names containing `credentials` or `secret`, and the
-handoff directory `.worker-out`. Excluded files are left unstaged, not committed.
+The commit leaves out, matched case-insensitively on the file's own name at any depth
+(`*` never crosses a `/`, so `src/credentials.py` or `scripts/secret_scan.sh` is
+committed): key and certificate files (`*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`,
+`id_rsa*`, `id_dsa*`, `id_ecdsa*`, `id_ed25519*`), environment and package-registry
+credential files (`*.env`, `*.env.*`, `*.npmrc`, `*.netrc`, `*.pypirc`, `*.token`),
+files named like a stored secret (`credentials`, `.credentials*`, `credentials.json`,
+`*.secret`, `*.secrets`, `secrets.json|yml|yaml|toml`), and the handoff directory
+`.worker-out`. An excluded file is never dropped quietly: it stays unstaged, and the
+entrypoint reports it by name (at most five shown) as a save failure, so the run ends
+`blocked` and not `done`. Its edit is lost with the container, so the owner redoes it
+under a different name.
 
 Allowed for the model:
 - File tools: `Read`, `Edit`, `Write`, and `Task` for subagents (the council). Claude

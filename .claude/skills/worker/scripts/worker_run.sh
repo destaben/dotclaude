@@ -273,7 +273,8 @@ run_scan_bounded() {
   shift
   # TMPDIR points at the host run's directory: when the limit SIGKILLs the scanner its EXIT trap cannot run, and
   # the directory its mktemp -d made would otherwise stay in the system temp directory. Here the host's own
-  # cleanup removes it with the rest of the run.
+  # cleanup removes it with the rest of the run. The single quotes hold a perl program, on purpose.
+  # shellcheck disable=SC2016
   env ${TMP_DIR:+TMPDIR="$TMP_DIR"} perl -e '
     my $secs = shift;
     my $pid = fork();

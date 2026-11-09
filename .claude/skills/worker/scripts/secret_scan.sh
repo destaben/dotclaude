@@ -75,7 +75,7 @@ scan_text() {
 }
 
 scan_repo() {
-  local dir=$1 base=$2 ref=$3 objects shas types line sha kinds="" rc=0 blob msgs found
+  local dir=$1 base=$2 ref=$3 objects shas types line sha kinds="" rc=0 blob msgs found newline_in_path=0
   [ -d "$dir" ] || return 2
   git -C "$dir" rev-parse --verify --quiet "$base^{commit}" >/dev/null || return 2
   git -C "$dir" rev-parse --verify --quiet "$ref^{commit}" >/dev/null || return 2
@@ -95,7 +95,11 @@ scan_repo() {
     case $line in
       "tree "*)
         sha=${line#tree }
-        git -C "$dir" ls-tree --name-only -z "$sha" | tr '\0' '\n' >> "$TMP/paths" || return 2
+        git -C "$dir" ls-tree --name-only -z "$sha" > "$TMP/tree-names" || return 2
+        # The path scan reads one name per line, so a token split by a newline inside a name would never match.
+        # Names end at NUL here, which makes a newline in one detectable: it is a finding of its own.
+        if [ "$(tr -cd '\n' < "$TMP/tree-names" | wc -c | tr -d ' ')" != 0 ]; then newline_in_path=1; fi
+        tr '\0' '\n' < "$TMP/tree-names" >> "$TMP/paths" || return 2
         ;;
     esac
   done <<< "$types"
@@ -106,6 +110,7 @@ scan_repo() {
     1) kinds="$kinds${kinds:+, }$found (in a path name)" ;;
     *) return 2 ;;
   esac
+  if [ "$newline_in_path" = 1 ]; then kinds="$kinds${kinds:+, }a newline in a path name"; fi
   blob="$TMP/blob"
   while IFS= read -r line; do
     case $line in

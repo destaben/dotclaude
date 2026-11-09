@@ -3,70 +3,12 @@
 All notable changes to this repo are recorded here. Entries explain why a
 change was made, not just what changed — the diff already shows what.
 
-## 2026-11-09 — Worker review fixes: no settings files, heading whitespace, scan temp files
-
-`--allowedTools` adds to the permissions of whatever settings are loaded, so a
-repository that allows `Bash(git diff:*)` (this one does) undid the exact-command rules
-and let `git diff --no-index` print the login file. The worker now runs with
-`--setting-sources ""`, which loads no user, project or local settings; its permissions
-are exactly the entrypoint's arguments. Section headings are compared with trailing
-whitespace removed everywhere (the escalation and checkpoint readers and the commit
-title were the ones that still compared exactly), so a blocked handoff headed
-`## Escalation ` exits 3 instead of 1. The scanner makes its temp directory from an
-explicit `${TMPDIR}` template (a bare `mktemp -d` ignores `TMPDIR` on macOS) and the host
-sets `TMPDIR` to its own run directory for scans, so a scan killed at its time limit
-leaves no dump of blobs behind.
-
 ## 2026-11-09 — Review workflow stays within 150 columns
 
 `claude-pr-review.yml` is copied into other repos by `github-config`, and one
 of them lints YAML at 150 columns, so two long lines made its Lint check fail
 after every sync. The lines are wrapped without changing what they do; keep new
 lines in this file under 150 columns.
-
-## 2026-11-08 — Worker review fixes: scanner coverage, tool rules, shutdown, save failures
-
-The secret scan now reads the entry names of every tree the range adds (a file copied
-to a token-shaped name has no new blob, so no new path) and the full commit headers, not
-only the messages. `git status` and `git diff` are allowed only as exact commands: a
-prefix rule let `git diff --color=never --no-index` print protected files. The worker
-reads the Untrusted input and Checkpoint sections from a copy staged in its worktree
-(the inbox is denied, so the old path was unreadable). After TERM the entrypoint waits
-for the whole claude process group before collecting and committing, so a slow shutdown
-no longer loses the last edit. A failed stage, commit or bundle now ends the run as
-`blocked` instead of reporting the worker's `done`. The scanner runs in its own process
-group and the whole group is killed at the time limit. Resuming a checkpoint is
-documented as a new run on a new branch with `base:` set to the published checkpoint
-branch, and the refusal says so. Worker tests keep their trees out of `/tmp`, which the
-entrypoint denies, so the handoff-path test passes on Linux.
-
-Second round: a commit range that cannot be read is a save failure (blocked), not zero
-commits. The scrubber keeps the login values from the start of the run in memory, so the
-original token is removed from the handoff after a refresh or when the login file
-vanishes. A `status : done` line with spaces is forced to `blocked` like `status: done`.
-The consent preview trims trailing whitespace the way the worker prompt does, so a
-`## Task ` heading cannot be hidden. Pull request text is neutralised with a zero-width
-space after `@` and after a closing keyword (`#N`, `owner/repo#N` and issue URLs)
-instead of code spans, which backticks in the text could break.
-
-## 2026-11-08 — Harden the worker: handoff path, locks, failed runs, resumes, stops
-
-The worker now writes its handoff to `.worker-out/HANDOFF-OUT.md` inside its own
-worktree, a path no deny rule covers; the entrypoint validates it and moves it into the
-run directory. (A write to the run directory was denied by the real rules, so a blocked
-escalation was dropped.) The lock is a symbolic link holding the holder's pid, created
-atomically, with stale reclaims under a second lock. A failed run is always `blocked`,
-whatever status the worker wrote, and the worker's text is kept with a note. A handoff
-the worker wrote carries `origin: worker`, and passing it back needs
-`--accept-worker-handoff`, which shows how its instruction sections differ from the
-owner's. A timed-out run gets TERM and a grace period (`WORKER_STOP_GRACE`) before any
-`docker rm -f`, so the entrypoint still writes its handoff, summary and bundle. Bundles
-over the copy limit are reported as `publish=too-large`. The model no longer has
-`shellcheck` (it echoes source lines of any file); `/var` is no longer a denied root
-(test hosts keep temporary directories there; the read-only root filesystem covers it in
-a container). The commit excludes more credential-shaped names, matched case-insensitively,
-and the scanner adds OpenAI project keys and scans path names. The residual risk of the
-test runners is documented as the owner accepted it.
 
 ## 2026-11-08 — Background worker container on a remote Docker host
 
@@ -86,6 +28,18 @@ out of the container means a misbehaving run cannot push or open pull requests.
 data, not instructions. The container's claude process runs with a scrubbed
 environment. The residual risk is stated in the skill: an allowed test runner
 executes code the worker wrote, so tasks must come only from owner-authored input.
+Choices that came out of review, kept for their reason:
+the worker's permissions are exactly the entrypoint's arguments (`--setting-sources ""`
+loads no settings file, because `--allowedTools` adds to loaded settings and a repository
+allow rule such as `Bash(git diff:*)` would widen the exact-command rules); the worker
+writes its handoff inside its own worktree (`.worker-out/`), the one place no deny rule
+covers; any failure to stage, commit or bundle ends the run `blocked`, never the
+worker's `done`, and a file left out of the commit because its name looks like a
+credential file is reported the same way; the scan covers tree entry names and commit
+headers and fails closed (a timeout, an unreadable object, or a newline inside a path
+name that could split a token), runs in its own process group, and keeps its temporary
+files under the host's run directory; headings are compared with trailing whitespace
+removed everywhere, so a padded `## Escalation ` cannot hide a question.
 The decision is recorded in `docs/decisions/0004-tooling-choices.md`, item 10.
 
 ## 2026-11-08 — PR review only posts finished reviews
@@ -110,7 +64,6 @@ error fails the job at once, and a run where the action itself failed is never
 posted.
 `github-ops` also tells the waiting recipe not to count a green run with a
 status-only comment as zero findings.
-
 
 ## 2026-11-08 — remote-hosts: allow the user's read-only sudoers whitelist
 
