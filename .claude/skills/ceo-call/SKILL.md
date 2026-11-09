@@ -171,6 +171,11 @@ a decision taken with no one to act on it. The decision stays pending and `claud
   The one gap, the container dying in the instant after a successful rename, would make the folder be
   removed under a call that was never placed anyway, since a stopped Asterisk cannot dial. Do not report it
   again unless `originate` gets a step after the move.
+- **The answer deadline starts after the move:** `answer_deadline` is `ring_timeout_s + 15` s after the call
+  file is moved into `outgoing/`. Asterisk picks a file up within about a second (it watches the folder) and
+  its own `WaitTime` ends the ring first, so a pickup delay above 15 s means Asterisk is already unhealthy; the
+  failure is then a clean `unanswered` and the owner can ask again. Widening the margin would only delay that
+  report. Do not report it again unless the pickup delay becomes configurable.
 
 ## Rounds
 A call gets three rounds to produce a confirmed choice. Pressing 9 (repeat), any other key, or staying
