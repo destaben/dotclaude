@@ -123,6 +123,24 @@ def run_ask(script, request=None, env=None, notifier=None, config=None, clock_ti
     return result, asterisk, sent
 
 
+class QuietCheckFailureTests(unittest.TestCase):
+    def test_a_failing_quiet_hours_check_gives_the_throttle_slot_back(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        clock = FakeClock()
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), lock_file=None, min_gap_s=120, max_per_hour=6,
+                   quiet_start="22:00", quiet_end="08:00")
+
+        def broken_now():
+            raise ValueError("clock failure")
+
+        with self.assertRaises(ValueError):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, cfg, {}, FakeAsterisk(["1"]), synth=fake_synth,
+                    sleep=clock.sleep, clock=clock, now=broken_now)
+        # the failed run must not leave its slot behind: an immediate second ask is not 'too soon'
+        ceo.check_throttle(cfg, wall=lambda: ceo.time.time())
+
+
 class SweepFailureTests(unittest.TestCase):
     def test_a_hung_sweep_does_not_stop_the_ask(self):
         class HungSweep(FakeAsterisk):

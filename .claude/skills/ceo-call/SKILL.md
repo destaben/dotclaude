@@ -172,36 +172,36 @@ a decision taken with no one to act on it. The decision stays pending and `claud
 - **A failed `mv` is not a live call:** the call file moves into `outgoing/` with one `mv`, which only
   renames. A non-zero exit means the rename did not happen (a timeout is different and is treated as live).
   The one gap, the container dying in the instant after a successful rename, would make the folder be
-  removed under a call that was never placed anyway, since a stopped Asterisk cannot dial. Do not report it
-  again unless `originate` gets a step after the move.
+  removed under a call that was never placed anyway, since a stopped Asterisk cannot dial. The
+  assumption holds only while `originate` has no step after the move.
 - **The answer deadline starts after the move:** `answer_deadline` is `ring_timeout_s + 15` s after the call
   file is moved into `outgoing/`. Asterisk picks a file up within about a second (it watches the folder) and
   its own `WaitTime` ends the ring first, so a pickup delay above 15 s means Asterisk is already unhealthy; the
   failure is then a clean `unanswered` and the owner can ask again. Widening the margin would only delay that
-  report. Do not report it again unless the pickup delay becomes configurable.
+  report.
 - **A stop mid-call still looks for the answer:** on SIGTERM/SIGINT with a call possibly live, `ask` reads the
   result once more and messages the owner before it exits. Both steps are bounded (60 s and 15 s), the only cost
   is a slower shutdown when docker itself hangs, and skipping them could lose a decision that is already on
-  disk. Do not report it again unless those bounds are removed.
+  disk.
 - **Repeated rules are on purpose:** the single-hook exception and the two escalation cases are stated in more
   than one file (CLAUDE.md, README, `docs/pipeline.md`, the ADRs, `council-policy`, `council.md`) because each
   file is read on its own (`CLAUDE.md` is installed alone, the README is the entry point, the ADRs must stand
   without the skill), and a document that says "no hooks" without the exception would be false. Each copy is one
   sentence. ADR 0004 item 9 keeps its operational detail for the same reason: a decision record must still make
-  sense after the skill changes. Do not report this duplication again unless a copy disagrees with the others.
+  sense after the skill changes.
 - **Credential-looking text is refused (best effort):** `validate_request` rejects a question or option that
   matches common credential shapes (GitHub, `sk-` and AWS keys, Telegram bot tokens, PEM private keys). It cannot
   recognise every secret, so the agent prompt rule stays the main control and the residual risk below stays accepted.
 - **The question goes to the owner's chat verbatim:** the same text that is spoken is posted to the owner's own
   chat, and a spoken-only question would hide from the owner what was asked. The agent prompt already forbids
   anything but the decision's question and options (no secrets, no quoted brief text), and the guard cannot
-  judge wording (see "Agent safety"). Do not report it again unless the destination stops being the owner's chat.
+  judge wording (see "Agent safety").
 - **A kept prompt folder lives up to a day:** a folder kept because the call end was unconfirmed is removed by the
   daily sweep (`sweep_stale`, older than 1440 minutes). That is the intended bound, not a leak.
 - **Throttle refund when nothing reached the owner:** a failure before dialling that sent no message gives its
   slot back on purpose (see the `settle()` docstring): it cannot ring or message anyone, a looping agent is
   serialised by the run lock, and the work it drives is local speech synthesis. Counting those would only lock the
-  owner out after a transient speech-server fault. Do not report it again unless a failing ask can reach the owner.
+  owner out after a transient speech-server fault.
 - **A final send interrupted by a stop signal:** the call outcome is not lost when the decision was recorded (that
   path returns before the final message); for an undecided call the interruption is reported as an error with the
   process exit code 1, and the owner can ask again.
@@ -220,7 +220,7 @@ a decision taken with no one to act on it. The decision stays pending and `claud
   whoever started it, so an ask never rings on top of a live call. A channel Asterisk leaves behind is an Asterisk
   fault that only the owner can clear (`core show channels`); the refusal says so, and ageing channels out by
   guesswork could ring over a real call. Each refusal keeps its slot like any message, which caps the notices at
-  `max_per_hour`. Do not report it again unless the check can tell a stale channel from a live one.
+  `max_per_hour`.
 
 ## Rounds
 A call gets three rounds to produce a confirmed choice. Pressing 9 (repeat), any other key, or staying
@@ -231,7 +231,7 @@ Design note (type-ahead): `Read()` lets a key interrupt the playback, so an owne
 then `1` (the confirmation key) back to back confirms before the read-back is heard. This is accepted and not
 changed: nothing is recorded without that deliberate second press, a single mistyped key never records
 anything, and forcing the read-back to play to the end would only lengthen a call that is already bounded by
-three rounds. Do not report it again unless a choice can be recorded by one key press.
+three rounds.
 
 ## Use
 `ask` can take several minutes (heads-up wait, ringing, the call itself, up to `attempts` times),

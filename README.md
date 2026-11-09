@@ -132,10 +132,8 @@ dotted `claudio` box is an escalation, not a step, so it is not one of those
 boxes.
 `/council` is the decision step: a quick council (contrarian, outsider, chair)
 by default, or a full one (adding first principles, visionary, executor),
-whose chair's verdict settles the choice (except the two escalation cases; see
-the `council-policy` skill). The
-dotted edge to `claudio` is an escalation, not a step of `/release` (see
-`council-policy`). Two more entry points sit outside the diagram: `/pr`
+whose chair's verdict settles the choice (except the escalation cases in the
+`council-policy` skill). Two more entry points sit outside the diagram: `/pr`
 runs the `commit-and-pr` skill directly, for a change you've already verified
 yourself and don't want the full `/release` pipeline for. The `token-auditor`
 agent runs on demand (not part of this diagram) to report context bloat in `CLAUDE.md`, skills,

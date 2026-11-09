@@ -57,7 +57,9 @@ bug.
   than retrying Haiku a third time — repeated Haiku loops often cost more
   than one Sonnet pass.
 - Keep this file and every skill free of duplication; link to the skill that
-  owns a topic instead of restating its rules here.
+  owns a topic instead of restating its rules here. A rule that must stand in a file
+  read on its own (a decision record, the README, this file) may be repeated in one
+  sentence, and the skill that owns it says so.
 
 ## Cost awareness
 Follow the `token-budget` skill for consumption warnings and

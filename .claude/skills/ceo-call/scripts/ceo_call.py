@@ -772,7 +772,13 @@ def ask(
         if not (dial["placed"] or reached["owner"]):
             release_throttle(config, stamp, wall)
 
-    if quiet():
+    try:
+        in_quiet = quiet()
+    except BaseException:
+        settle()  # a failing clock or zone lookup must not leave the throttle slot or the lock behind
+        run_lock.close()
+        raise
+    if in_quiet:
         # Inside quiet hours only a silent chat message is sent. It goes through the same lock and
         # throttle as a call, so a loop of asks at night cannot become a stream of messages.
         try:
