@@ -479,6 +479,19 @@ publish_branch() {
     return 1
   fi
 
+  # A pushed branch can trigger the repository's workflows (a push event runs the workflow files of the pushed
+  # commit), and those can read repository secrets before anyone reviews the draft pull request. So a worker
+  # branch never changes anything under .github/: the deny rules keep the model out of it, and this refuses
+  # a bundle that got there anyway (for example through a test runner). Fails closed.
+  local changed touched
+  changed=$(git -C "$pub" diff --no-renames --name-only -z "origin/$BASE...refs/heads/$BRANCH" | tr '\0' '\n') \
+    || { PUBLISH_MSG="the branch's changed files could not be listed; nothing was pushed"; return 1; }
+  touched=$(printf '%s\n' "$changed" | grep -i -e '^\.github$' -e '^\.github/' | head -n 3 | paste -sd, - || true)
+  if [ -n "$touched" ]; then
+    PUBLISH_MSG="the branch changes files under .github/ ($touched), which could run workflows with repository secrets; nothing was pushed. Make that change by hand"
+    return 1
+  fi
+
   # Explicit refspec only; no hooks; no force. The branch name was validated above.
   git -c core.hooksPath=/dev/null -C "$pub" push --quiet --no-verify origin \
     "refs/heads/$BRANCH:refs/heads/$BRANCH" >/dev/null 2>&1 || { PUBLISH_MSG="git push of $BRANCH failed"; return 1; }

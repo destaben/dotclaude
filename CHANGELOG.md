@@ -33,7 +33,8 @@ entrypoint's arguments (`--setting-sources ""` loads no settings file, because
 `--allowedTools` adds to loaded settings and a repository allow rule would widen the
 exact-command rules); its handoff is written inside its own worktree, the one place no
 deny rule covers; a failure to save its edits ends the run `blocked`, never the
-worker's `done`; and the scan fails closed. SKILL.md has the mechanism for each.
+worker's `done`; the scan fails closed; and a branch that touches `.github/` is never
+pushed, because a pushed workflow file runs with the repository's secrets. SKILL.md has the mechanism for each.
 The decision is recorded in `docs/decisions/0004-tooling-choices.md`, item 10.
 
 ## 2026-11-08 — PR review only posts finished reviews

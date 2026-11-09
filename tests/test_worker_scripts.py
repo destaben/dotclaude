@@ -245,7 +245,9 @@ if knobs.get("leak") == "1":
 emit({"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}})
 # The worker edits files only. The entrypoint, not the worker, commits them afterwards.
 if knobs.get("commit"):
-    with open(os.path.join(os.getcwd(), knobs["commit"]), "w") as work:
+    target_path = os.path.join(os.getcwd(), knobs["commit"])
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+    with open(target_path, "w") as work:
         work.write(knobs.get("commit_content", "work\n"))
 if knobs.get("plant"):
     # A test runner the worker started can write anywhere the container user can, the run directory included.
@@ -301,6 +303,8 @@ if knobs.get("delete_creds") == "1":
 if knobs.get("refresh") == "1":
     with open(os.path.join(config_dir, ".credentials.json"), "w") as creds:
         creds.write('{"token": "REFRESHED-VALUE", "padding": "xxxxxxxx"}')
+    if knobs.get("log_refreshed") == "1":
+        emit({"type": "assistant", "message": {"content": [{"type": "text", "text": "new login REFRESHED-VALUE"}]}})
 scan("end")
 with open(os.path.join(config_dir, "claude-scans.json"), "w") as handle:
     json.dump(scans, handle)
@@ -1350,6 +1354,11 @@ class ToolPolicyTests(WorkerCase):
         self.assertIn("Bash(git diff --no-index:*)", deny)
         self.assertIn("Bash(git diff --output:*)", deny)
 
+    def test_the_model_cannot_edit_anything_under_github(self):
+        # Workflow files run with repository secrets once the branch is pushed; see the publish check as well.
+        deny = tool_rules(self.worker_args(), "--disallowedTools")
+        self.assertIn("Edit(**/.github/**)", deny)
+
     def test_git_status_and_git_diff_are_allowed_only_as_exact_commands(self):
         # A prefix rule would also allow `git diff --color=never --no-index /dev/null <file>`, which prints a file
         # the Read deny rules protect, and `git diff --output=<file>` with the arguments in another order.
@@ -1896,6 +1905,18 @@ class CommitTests(WorkerCase):
                 self.assertFalse(self.bare_has("refs/heads/" + RUN_BRANCH))
                 shutil.rmtree(self.out, ignore_errors=True)
 
+    def test_a_branch_that_changes_github_workflows_is_refused_before_the_push(self):
+        # Pushing it would run the workflow file with the repository's secrets before anyone reads the draft PR.
+        for name in (".github/workflows/ci.yml",):
+            with self.subTest(name=name):
+                result = self.run_publishing(STUB_CLAUDE_OUT="done", STUB_CLAUDE_COMMIT=name,
+                                             STUB_CLAUDE_COMMIT_CONTENT="on: push\n")
+                self.assertEqual(result.returncode, 6, result.stderr)
+                self.assertIn(".github", result.stderr)
+                self.assertFalse(self.bare_has("refs/heads/" + RUN_BRANCH), "nothing is pushed")
+                self.assertTrue((self.out / "branch.bundle").exists(), "the work stays in the output directory")
+                shutil.rmtree(self.out, ignore_errors=True)
+
     def test_a_temporary_directory_with_a_space_in_its_path_does_not_block_publishing(self):
         # A guard on the property: the scan's TMPDIR is one word whatever the path holds.
         spaced = self.tmp / "tmp dir with space"
@@ -2191,6 +2212,14 @@ class ScrubberFailClosedTests(WorkerCase):
         text = (run_dir / "HANDOFF-OUT.md").read_text()
         self.assertNotIn("REFRESHED-VALUE", text)
         self.assertIn("[REDACTED]", text)
+
+    def test_a_token_refreshed_during_the_run_is_scrubbed_from_run_log_too(self):
+        result, _, run_dir = self.run_entry(env={
+            "STUB_CLAUDE_OUT": "done", "STUB_CLAUDE_REFRESH": "1", "STUB_CLAUDE_LOG_REFRESHED": "1"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        log = (run_dir / "run.log").read_text()
+        self.assertNotIn("REFRESHED-VALUE", log)
+        self.assertIn("[REDACTED]", log)
 
     def original_login_is_scrubbed(self, knob):
         result, _, run_dir = self.run_entry(env={

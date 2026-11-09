@@ -97,6 +97,7 @@ TOOL_DENYLIST=(
   "Read(**/.git/config)" "Edit(**/.git/config)"
   "Read(**/.git/hooks/**)" "Edit(**/.git/hooks/**)"
   "Read(**/.credentials.json)"
+  "Edit(**/.github)" "Edit(**/.github/**)"
 )
 # /var is deliberately not denied. A test host keeps its temporary directories under /var (on macOS), and a
 # denied /var would also deny the worktree there. In a container the read-only root filesystem covers /var.
@@ -526,7 +527,14 @@ run_claude() {
   commit_work
   make_bundle
 
-  if [ -s "$LOG" ]; then
+  # The live scrubber read the login values when the run started. A token refreshed during the run is only known
+  # now, so the whole log is scrubbed again; if that fails the log is withheld, not left with a possible token.
+  local log_ok=1
+  if [ -s "$LOG" ] && ! scrub_in_place "$LOG"; then
+    printf 'worker: the log could not be scrubbed again after the run, so it was withheld\n' > "$LOG"
+    log_ok=0
+  fi
+  if [ -s "$LOG" ] && [ "$log_ok" = 1 ]; then
     if grep -Eiq '"api_error_status":[[:space:]]*401|"error":[[:space:]]*"authentication_failed"|please run /login|invalid api key|oauth token has expired' "$LOG"; then
       AUTH=failed
     else

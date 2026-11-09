@@ -222,9 +222,15 @@ Runs after the container finishes, for a run that left a bundle and ended as `do
    error, or the scan's wall-clock limit (300 s) refuses the publish with exit 6, and
    the reason is printed without any value. The scanner runs in its own process group and
    the whole group is killed at the limit, so a stalled child cannot hold the run open.
-8. `git -c core.hooksPath=/dev/null push --no-verify origin refs/heads/<branch>:refs/heads/<branch>`.
+8. A check that the branch **changes nothing under `.github/`**. A pushed branch runs the
+   workflow files of its own commit, and a workflow can read repository secrets before
+   anyone reads the draft pull request, so a branch that touches `.github/` is refused
+   (exit 6, the bundle stays in `--out`). The model's `Edit` rules also deny `.github`;
+   this check is the one that holds when a test runner wrote there. A change to a
+   workflow is made by the owner by hand.
+9. `git -c core.hooksPath=/dev/null push --no-verify origin refs/heads/<branch>:refs/heads/<branch>`.
    Hooks are disabled, no force is used, and the refspec names only this branch.
-9. `gh pr create --repo <owner/name> --draft --head <branch> --base <base>` with the scanned title and body.
+10. `gh pr create --repo <owner/name> --draft --head <branch> --base <base>` with the scanned title and body.
    The title is `[worker]` plus the issue title (or the branch name). The body states
    that the worker produced it, names the run id, quotes the worker's checkpoint as
    untrusted text, and says that mentions and closing keywords were neutralised. The
@@ -547,8 +553,10 @@ Other points:
   handoffs. Never point it at third-party issue text or other untrusted input, even
   though issue text is quoted as data and `--issue` refuses issues the owner did not
   write.
-- Pushed branches can trigger the owner's workflows, which can read repository secrets
-  (see *Publishing*).
+- Pushed branches can trigger the owner's workflows, which can read repository secrets.
+  Publishing refuses a branch that changes anything under `.github/` (step 8), so the
+  worker cannot add or edit a workflow; workflows that already exist still run on the
+  pushed branch, as they would for any branch of the owner's.
 - The login can be revoked at any time by `/logout` in the container's Claude session,
   or by deleting the credentials volume. Do that if a run looks wrong.
 - The secret scan is a literal-pattern match and a safety net, not a guarantee (see
