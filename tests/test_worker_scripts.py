@@ -252,7 +252,7 @@ if knobs.get("commit"):
 if knobs.get("plant"):
     # A test runner the worker started can write anywhere the container user can, the run directory included.
     with open(knobs["plant"], "w") as planted:
-        planted.write("planted by the worker\n")
+        planted.write(knobs.get("plant_content", "planted by the worker\n"))
 if knobs.get("extra_branch"):
     subprocess.run(["git", "branch", knobs["extra_branch"]], check=True)
 if knobs.get("break_index") == "1":
@@ -1591,6 +1591,17 @@ class TermTests(WorkerCase):
         self.assertEqual(result.returncode, 124, result.stderr)
         self.assertIn("publish=too-large", result.stdout)
 
+    def test_a_handoff_planted_in_the_run_directory_is_not_taken_for_the_workers_own(self):
+        run_id = "20261108-000000-8"
+        planted = self.remote / "worker" / "runs" / run_id / "HANDOFF-OUT.md"
+        text = handoff_text(branch="worker/fix-widget-15", status="done").replace("none yet.", "PLANTED-CHECKPOINT")
+        result, _, run_dir = self.run_entry(run_id=run_id, env={"STUB_CLAUDE_OUT": "none", "STUB_CLAUDE_PLANT": str(planted),
+                                                                "STUB_CLAUDE_PLANT_CONTENT": text})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        out = (run_dir / "HANDOFF-OUT.md").read_text()
+        self.assertNotIn("PLANTED-CHECKPOINT", out)
+        self.assertIn("did not write a valid HANDOFF-OUT.md", out)
+
     def test_a_bundle_the_worker_planted_in_the_run_directory_is_removed_not_published(self):
         run_id = "20261108-000000-7"
         planted = self.remote / "worker" / "runs" / run_id / "branch.bundle"
@@ -1904,6 +1915,14 @@ class CommitTests(WorkerCase):
                 self.assertIn(name, result.stderr + result.stdout)
                 self.assertFalse(self.bare_has("refs/heads/" + RUN_BRANCH))
                 shutil.rmtree(self.out, ignore_errors=True)
+
+    def test_new_files_the_repository_gitignore_matches_are_reported_not_dropped_quietly(self):
+        self.add_to_main(".gitignore", "generated/\n")
+        result = self.run_publishing(STUB_CLAUDE_OUT="done", STUB_CLAUDE_COMMIT="generated/api.md")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(".gitignore", result.stderr)
+        self.assertIn("generated", result.stderr)
+        self.assertIn("were not committed", result.stderr)
 
     def test_a_branch_that_changes_github_workflows_is_refused_before_the_push(self):
         # Pushing it would run the workflow file with the repository's secrets before anyone reads the draft PR.

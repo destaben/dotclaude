@@ -133,6 +133,7 @@ CLAUDE_PGID=""
 # 1 when the worker's edits could not be saved (staging, commit or bundle failed): the run cannot end as done.
 SAVE_FAILED=0
 SAVE_NOTE=""
+IGNORED_NOTE=""
 
 refuse() { REASON=$1; STATUS=refused; echo "worker: refused: $1" >&2; exit 2; }
 fail() { REASON=$1; STATUS=error; echo "worker: error: $1" >&2; exit 1; }
@@ -349,6 +350,9 @@ build_tool_rules() {
 # .worker-out directory is removed in every case, so the handoff is never committed.
 collect_handoff() {
   local dir="$WORK/tree/$WORKER_OUT_DIR" src="$WORK/tree/$WORKER_OUT_DIR/HANDOFF-OUT.md"
+  # A test runner can write under the run directory while claude runs. Only a handoff taken from the worktree
+  # below counts, so whatever is already at the output path was not written by the worker's own file and goes.
+  rm -f "$OUT_FILE"
   if [ -L "$src" ] || { [ -e "$src" ] && [ ! -f "$src" ]; }; then
     echo "worker: the worker's HANDOFF-OUT.md is not a regular file; it was not taken" >&2
   elif [ -f "$src" ]; then
@@ -404,11 +408,26 @@ report_left_out() {
   save_failed "$count file(s) were left out of the commit because their names look like credential files ($shown)"
 }
 
+# note_ignored: new files the repository's own .gitignore matches are not committed (force-adding them would
+# commit build output and caches). They are not dropped quietly either: the count and the first names go into
+# summary.env and the owner's machine prints them. Directories are listed once. Not a failure.
+note_ignored() {
+  local ignored count shown
+  ignored=$(git -C "$WORK/tree" ls-files -z --others --ignored --exclude-standard --directory 2>/dev/null \
+    | tr '\0' '\n' | grep -v -e "^$WORKER_OUT_DIR\$" -e "^$WORKER_OUT_DIR/" || true)
+  [ -n "$ignored" ] || return 0
+  count=$(printf '%s\n' "$ignored" | wc -l | tr -d ' ')
+  shown=$(printf '%s\n' "$ignored" | head -n 5 | tr -cd 'A-Za-z0-9 ._/\n-' | cut -c1-60 | paste -sd, - | sed 's/,/, /g')
+  [ "$count" -le 5 ] || shown="$shown and $((count - 5)) more"
+  IGNORED_NOTE="$count path(s) matched by the repository .gitignore were not committed ($shown)"
+}
+
 # commit_work: commits the worker's edits. The author, committer and message are fixed here: the message is
 # "worker: <run id>" plus, when it is clean, the title above. No file the worker chose is read for it, and
 # no -F is used. Hooks are disabled and --no-verify is passed. Nothing is committed if nothing changed.
 commit_work() {
   [ -d "$WORK/tree" ] || return 0
+  note_ignored
   local changes
   changes=$(git -C "$WORK/tree" status --porcelain 2>/dev/null) \
     || { save_failed "git status failed, so the worker's edits could not be saved"; return 0; }
@@ -623,6 +642,7 @@ write_summary() {
     echo "CREDS_CHANGED=$CREDS_CHANGED"
     echo "COMMITS=$COMMITS"
     echo "BUNDLE=$BUNDLE"
+    echo "IGNORED=$(printf '%s' "$IGNORED_NOTE" | tr -cd 'A-Za-z0-9 .,:/_()#-' | cut -c1-200)"
   } > "$RUN_DIR/summary.env.tmp" && mv "$RUN_DIR/summary.env.tmp" "$RUN_DIR/summary.env"
 }
 

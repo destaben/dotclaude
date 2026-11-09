@@ -94,7 +94,9 @@
    anywhere its token reaches, including after a prompt injection. So the container
    clones public repos anonymously and only edits files. The owner's machine fetches
    the bundle, checks that it holds exactly one `worker/` branch, scans the branch and
-   the pull request text, then pushes that branch and opens a draft pull request with
+   the pull request text, refuses a branch that changes anything under `.github/` (a
+   pushed workflow file runs with the repository's secrets before anyone reads the
+   draft), then pushes that branch and opens a draft pull request with
    the owner's own `gh`. The cost is that nothing is published until the owner's
    machine picks the run up, and private repos are out of scope for this version.
    The residual risks are listed in the skill's own section. The one the owner accepted

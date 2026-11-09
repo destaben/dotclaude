@@ -688,6 +688,11 @@ main() {
     timeout) code=124 ;;
   esac
   if [ "$code" != 0 ]; then echo "worker: $reason" >&2; fi
+  local ignored_note=""
+  if [ -s "$OUT_DIR/summary.env" ]; then
+    ignored_note=$(summary_value IGNORED | tr -cd 'A-Za-z0-9 .,:/_()#-' | cut -c1-200)
+  fi
+  if [ -n "$ignored_note" ]; then echo "worker: note: $ignored_note" >&2; fi
   # A run stopped at the time limit can still have written its question before it was stopped: it is shown too.
   if { [ "$status" = blocked ] || [ "$status" = timeout ]; } && [ -s "$OUT_DIR/HANDOFF-OUT.md" ]; then
     escalation=$(section_of "$OUT_DIR/HANDOFF-OUT.md" Escalation)

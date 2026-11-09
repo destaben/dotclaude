@@ -25,7 +25,7 @@ something attached to the tool-call event system. The one hook in this config
 is the `claudio` agent's own shell guard, which sits outside the pipeline (see
 the `ceo-call` skill).
 
-Changes made by the `worker` skill are outside this pipeline: the owner reviews each
+Changes made by a project's `worker`-style skill are outside this pipeline: the owner reviews each
 draft pull request it opens.
 
 ## Decisions
@@ -46,7 +46,7 @@ bug.
 - Never stage a file that looks like it holds secrets or credentials — check
   contents, not just the filename, before a broad `git add`.
 - Open PRs only through the `commit-and-pr` skill. The one other path is the owner-side
-  publish step of the `worker` skill, for `worker/` branches only.
+  publish step of a project's `worker`-style skill, for `worker/` branches only.
 - Use conventional commit messages.
 
 ## Token rules
