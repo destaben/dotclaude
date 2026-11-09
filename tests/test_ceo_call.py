@@ -1131,10 +1131,6 @@ class AskFlowTests(unittest.TestCase):
         self.assertTrue(asterisk.dirs)  # the call may still be playing its thank-you: the folder is left for the sweep
 
     def test_a_stop_request_after_a_confirmed_key_press_still_returns_the_choice(self):
-        class StopAfterResult(FakeAsterisk):
-            def sleep_hook(self):
-                pass
-
         class Killed(FakeAsterisk):
             killed = False
 
@@ -1303,7 +1299,8 @@ class AskFlowTests(unittest.TestCase):
         for name, text in texts.items():
             flat = _re.sub(r"\s+", " ", text)
             with self.subTest(doc=name):
-                self.assertIn("unanswered fatal flaw", flat) if name != "command" else self.assertIn("fatal flaw from the contrarian went unanswered", flat)
+                phrase = "fatal flaw from the contrarian went unanswered" if name == "command" else "unanswered fatal flaw"
+                self.assertIn(phrase, flat)
                 self.assertNotIn("unanswered security or data-loss flaw: the two cases", flat)
 
     def test_the_skill_defines_what_set_up_means(self):

@@ -43,7 +43,7 @@ alias as `remote-hosts` describes, and run the script there.
   error (`asked again too soon`), and so is any `ask` beyond `max_per_hour` in an hour or `max_per_day` in 24 hours (`too many asks`).
   An `ask` gives its slot back only when nothing reached the owner: no call and no chat message
   of any kind (heads-up, "not connected" notice, error notice). So a broken speech server or an asleep
-  phone cannot be used to spam the chat. A failure before dialling (speech server down, or a call file that definitely never got in) keeps no slot on
+  phone cannot be used to spam the chat. A failure before dialling (speech server or Docker down, or a call file that definitely never got in) keeps no slot on
   purpose *when no chat notice reached the owner* (a notice that did go out, such as the error notice, counts as a
   message and keeps the slot, so a failing loop cannot flood the chat; with no chat configured nothing counts):
   a transient fault must not lock the owner out, and a loop of failing asks is still serialised by the run

@@ -136,8 +136,8 @@ whose chair's verdict settles the choice (see the `council-policy` skill). The
 dotted edge to `claudio` is an escalation, not a step of `/release` (see
 `council-policy`). Two more entry points sit outside the diagram: `/pr`
 runs the `commit-and-pr` skill directly, for a change you've already verified
-yourself and don't want the full `/release` pipeline for. The `token-auditor` agent runs on demand
-(not part of this diagram) to report context bloat in `CLAUDE.md`, skills,
+yourself and don't want the full `/release` pipeline for. The `token-auditor`
+agent runs on demand (not part of this diagram) to report context bloat in `CLAUDE.md`, skills,
 and agents.
 
 Severe findings are security issues, data loss, failing tests, and broken
