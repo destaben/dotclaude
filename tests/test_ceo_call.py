@@ -147,6 +147,19 @@ class ValidateRequestTests(unittest.TestCase):
                 with self.assertRaises(ceo.CallError):
                     ceo.validate_request(request)
 
+    def test_text_that_looks_like_a_secret_is_refused(self):
+        secrets = ("ghp_" + "a" * 30, "sk-" + "b" * 30, "123456789:" + "C" * 35, "AKIA" + "D" * 16,
+                   "-----BEGIN RSA PRIVATE KEY-----")
+        for secret in secrets:
+            for request in ({"question": "Use %s?" % secret, "options": ["a", "b"]},
+                            {"question": "q", "options": ["a", "key %s" % secret]}):
+                with self.subTest(secret=secret[:8], where=list(request)[0]):
+                    with self.assertRaises(ceo.CallError):
+                        ceo.validate_request(request)
+
+    def test_ordinary_text_with_numbers_and_ids_is_accepted(self):
+        ceo.validate_request({"question": "Merge PR 14 at 10:30 (commit 46fca42)?", "options": ["Yes", "No"]})
+
     def test_text_that_is_only_punctuation_is_refused(self):
         for request in ({"question": "q", "options": ["?", "Sí"]}, {"question": "...", "options": ["a", "b"]}):
             with self.subTest(request=request):
@@ -456,7 +469,8 @@ class ConfigTests(unittest.TestCase):
                     ceo.load_config(self.write(content))
 
     def test_empty_quiet_hours_are_refused_instead_of_silently_switching_them_off(self):
-        for content in ['{"quiet_start": "", "quiet_end": ""}', '{"quiet_start": "22:00", "quiet_end": ""}', '{"quiet_start": "22:00"}']:
+        for content in ['{"quiet_start": "", "quiet_end": ""}', '{"quiet_start": "22:00", "quiet_end": ""}', '{"quiet_start": "22:00"}',
+                        '{"quiet_start": "22:00", "quiet_end": "22:00"}']:
             with self.subTest(content=content):
                 with self.assertRaises(ceo.CallError):
                     ceo.load_config(self.write(content))
@@ -2014,6 +2028,21 @@ class DockerAsteriskTests(unittest.TestCase):
         self.assertEqual(calls[0][0][-2:], ["sh", "/var/spool/asterisk/ceo/x/prompt.wav"])
         self.assertEqual(calls[-1][0][-3:], ["mv", "/var/spool/asterisk/tmp/ceo-abc.call", "/var/spool/asterisk/outgoing/ceo-abc.call"])
 
+    def test_a_timeout_while_staging_the_call_file_is_not_a_live_call(self):
+        class Result:
+            returncode = 0
+            stdout = b""
+
+        def run(command, **kwargs):
+            if "cat" in " ".join(command):
+                raise ceo.subprocess.TimeoutExpired(command, 60)
+            return Result()
+
+        asterisk = ceo.DockerAsterisk("asterisk", run=run)
+        with self.assertRaises(ceo.CallError) as caught:
+            asterisk.originate("ceo-abc", "Channel: PJSIP/phone\n")
+        self.assertNotIsInstance(caught.exception, ceo.MayBeLive)
+
     def test_a_failing_cleanup_does_not_replace_the_reason_the_call_was_stopped(self):
         class Result:
             returncode = 0
@@ -2101,6 +2130,23 @@ class CliTests(unittest.TestCase):
         code, out, _ = self.run_main(["ask", "--request", str(self.request)], script=["undecided"])
         self.assertEqual(code, 3)
         self.assertEqual(json.loads(out)["status"], "undecided")
+
+    def test_an_encoding_failure_on_output_is_reported_as_such(self):
+        import contextlib
+
+        class AsciiOut(io.StringIO):
+            def write(self, text):
+                text.encode("ascii")
+                return super().write(text)
+
+        self.request.write_text(json.dumps({"question": "¿Seguimos?", "options": ["Sí", "No"]}))
+        ceo.DockerAsterisk = lambda container: FakeAsterisk(["1"])
+        err = io.StringIO()
+        with contextlib.redirect_stdout(AsciiOut()), contextlib.redirect_stderr(err):
+            code = ceo.main(["--config", str(self.config), "ask", "--request", str(self.request)])
+        self.assertEqual(code, 1)
+        self.assertIn("encoding", err.getvalue())
+        self.assertNotIn("configured path", err.getvalue())
 
     def test_a_state_file_path_with_a_nul_byte_is_an_error_line_not_a_traceback(self):
         env_file = Path(self.tmp.name) / "env"

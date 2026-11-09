@@ -78,6 +78,11 @@ TIME_RE = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]\Z")
 ENDPOINT_RE = re.compile(r"^PJSIP/[A-Za-z0-9_.-]+\Z")
 CONTAINER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+# Best effort, not a guarantee: text that looks like a credential is refused before it is spoken or posted
+# (GitHub, OpenAI-style and AWS keys, Telegram bot tokens, PEM private keys). The agent prompt remains the main control.
+SECRET_RE = re.compile(
+    r"gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|\bAKIA[0-9A-Z]{16}\b"
+    r"|\b\d{6,}:[A-Za-z0-9_-]{30,}|-----BEGIN [A-Z ]*PRIVATE KEY-----")
 
 # Spoken and chat phrases (Spanish): the owner's language. They are data for the voice and the chat,
 # not code comments or documentation, so the English-only rule does not apply to them.
@@ -149,6 +154,8 @@ def validate_request(request) -> Dict:
     for text in [question] + clean:
         if CONTROL_RE.search(text):
             raise CallError("text must not contain control characters")
+        if SECRET_RE.search(text):
+            raise CallError("text looks like a credential and will not be spoken or posted")
         try:
             text.encode("utf-8")  # a lone surrogate would crash the final JSON output after the call
         except UnicodeEncodeError:
@@ -202,6 +209,8 @@ def load_config(path: Optional[str]) -> Dict:
     quiet = (config["quiet_start"], config["quiet_end"])
     if any(v is not None for v in quiet) and not all(isinstance(v, str) and TIME_RE.match(v) for v in quiet):
         raise CallError("quiet_start and quiet_end must both be HH:MM")
+    if quiet[0] is not None and quiet[0] == quiet[1]:
+        raise CallError("quiet_start and quiet_end must differ (equal times would switch quiet hours off)")
     for key in ("piper_port", "attempts", "retry_delay_s", "ring_timeout_s", "call_timeout_s", "poll_interval_s", "heads_up_s", "min_gap_s", "max_per_hour", "max_per_day"):
         if not isinstance(config[key], int) or isinstance(config[key], bool) or config[key] < 0:
             raise CallError("%s must be a non-negative integer" % key)
@@ -494,7 +503,11 @@ class DockerAsterisk:
         runs between the two steps and may raise to stop the call: the staged file is then removed."""
         staging = "%s/tmp/%s.call" % (SPOOL, name)
         target = "%s/outgoing/%s.call" % (SPOOL, name)
-        self.write_file(staging, call_file.encode("utf-8"))
+        try:
+            self.write_file(staging, call_file.encode("utf-8"))
+        except DockerError as error:
+            # Nothing watches the staging folder, so a failure (or timeout) here never placed a call.
+            raise CallError(str(error))
         if before_commit is not None:
             try:
                 before_commit()
@@ -1199,6 +1212,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         return args.func(args)
     except CallError as error:
         print("ERROR: %s" % error, file=sys.stderr)
+        return 1
+    except UnicodeError:
+        print("ERROR: cannot write the result with this terminal encoding (set PYTHONIOENCODING=utf-8)", file=sys.stderr)
         return 1
     except (OSError, ValueError) as error:
         # An owner-written path or file the script could not use (for example a NUL byte in `state_file`):

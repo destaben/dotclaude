@@ -28,7 +28,7 @@ alias as `remote-hosts` describes, and run the script there.
   `call_timeout_s`, `poll_interval_s` (defaults: `container` asterisk, `piper_host` 127.0.0.1, `piper_port` 10200,
   `endpoint` PJSIP/phone, `attempts` 3, `retry_delay_s` 300, `ring_timeout_s` 30, `call_timeout_s` 300,
   `poll_interval_s` 2), `env_file`, and `quiet_start` / `quiet_end` (`HH:MM`; both or
-  neither; checked at the start, before every retry and again right before each dial, after any
+  neither, and different; checked at the start, before every retry and again right before each dial, after any
   heads-up wait), `timezone` (IANA name such as `Europe/Madrid`; default is the host's local time), `heads_up_s` (default 90),
   `min_gap_s` (default 120), `max_per_hour` (default 6), `max_per_day` (default 24), `state_file` and `lock_file`. `piper_port` must be 1-65535.
   Unknown keys are rejected, and `ring_timeout_s` must be at least 5 and `call_timeout_s` at
@@ -189,6 +189,9 @@ a decision taken with no one to act on it. The decision stays pending and `claud
   without the skill), and a document that says "no hooks" without the exception would be false. Each copy is one
   sentence. ADR 0004 item 9 keeps its operational detail for the same reason: a decision record must still make
   sense after the skill changes. Do not report this duplication again unless a copy disagrees with the others.
+- **Credential-looking text is refused (best effort):** `validate_request` rejects a question or option that
+  matches common credential shapes (GitHub, `sk-` and AWS keys, Telegram bot tokens, PEM private keys). It cannot
+  recognise every secret, so the agent prompt rule stays the main control and the residual risk below stays accepted.
 - **The question goes to the owner's chat verbatim:** the same text that is spoken is posted to the owner's own
   chat, and a spoken-only question would hide from the owner what was asked. The agent prompt already forbids
   anything but the decision's question and options (no secrets, no quoted brief text), and the guard cannot
