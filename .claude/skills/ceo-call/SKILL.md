@@ -81,7 +81,7 @@ the local shell must not expand it: `ssh <alias> python3 '~/.claude/skills/ceo-c
 The single quotes protect the `~` only from the *local* shell: `ssh` joins its arguments with spaces and
 hands the string to the remote shell, which sees no quotes and expands the `~` in its own home). Any other file
 named `ceo_call.py`, in a repository, `/tmp` or elsewhere, is refused. `--config` must be
-`~/.config/ceo-call/config.json`, and the agent must always pass it (the only config it may name, so it can neither pick one that turns the throttle off nor skip the quiet hours by running on defaults) (quoted the same way over ssh). Optionally behind `ssh <alias>` (no ssh options), and only for an alias the owner listed in
+`~/.config/ceo-call/config.json` (locally the guard also accepts this machine's absolute home path to that same file, which is the same file and not a bypass), and the agent must always pass it (the only config it may name, so it can neither pick one that turns the throttle off nor skip the quiet hours by running on defaults) (quoted the same way over ssh). Optionally behind `ssh <alias>` (no ssh options), and only for an alias the owner listed in
 `~/.config/ceo-call/hosts` (one per line, on the machine that runs the agent; with no file, no remote host
 is allowed, because the alias would otherwise come from the untrusted brief); no shell operators
 or `..` or control characters other than newline (a carriage return could change where bash ends a
@@ -160,6 +160,13 @@ a decision taken with no one to act on it. The decision stays pending and `claud
 A call gets three rounds to produce a confirmed choice. Pressing 9 (repeat), any other key, or staying
 silent starts the next round, so a wrong key uses one up; after three the call ends as `undecided`.
 The limit bounds how long a call can occupy the phone.
+
+Design note (type-ahead): `Read()` lets a key interrupt the playback, so an owner who presses the choice and
+the confirmation key back to back confirms before the read-back is heard. This is accepted and not changed:
+the confirmation is a second, deliberate press of the one key `1` (never the key that picks an option), a
+wrong choice by a single mistyped key is still caught because it takes `1` right after it, and forcing the
+read-back to play to the end would only lengthen a call that is already bounded by three rounds. Do not
+report it again unless the confirmation key becomes the same as an option key.
 
 ## Use
 `ask` can take several minutes (heads-up wait, ringing, the call itself, up to `attempts` times),

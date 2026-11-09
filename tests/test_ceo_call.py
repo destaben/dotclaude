@@ -1988,6 +1988,23 @@ class DockerAsteriskTests(unittest.TestCase):
         self.assertEqual(calls[0][0][-2:], ["sh", "/var/spool/asterisk/ceo/x/prompt.wav"])
         self.assertEqual(calls[-1][0][-3:], ["mv", "/var/spool/asterisk/tmp/ceo-abc.call", "/var/spool/asterisk/outgoing/ceo-abc.call"])
 
+    def test_a_failing_cleanup_does_not_replace_the_reason_the_call_was_stopped(self):
+        class Result:
+            returncode = 0
+            stdout = b""
+
+        def run(command, **kwargs):
+            if command[-2:-1] == ["-rf"] or "rm" in command:
+                raise ceo.subprocess.TimeoutExpired(command, 60)
+            return Result()
+
+        def stop():
+            raise ceo.DialAbandoned()
+
+        asterisk = ceo.DockerAsterisk("asterisk", run=run)
+        with self.assertRaises(ceo.DialAbandoned):
+            asterisk.originate("ceo-abc", "Channel: PJSIP/phone\n", before_commit=stop)
+
 
 class DialplanTests(unittest.TestCase):
     """The dialplan cannot run here, so pin the order of the steps that protect the decision."""

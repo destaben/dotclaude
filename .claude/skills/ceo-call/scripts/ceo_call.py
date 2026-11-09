@@ -495,7 +495,10 @@ class DockerAsterisk:
             try:
                 before_commit()
             except BaseException:
-                self.remove(staging)  # best effort: nothing watches the staging folder
+                try:
+                    self.remove(staging)  # best effort: nothing watches the staging folder
+                except DockerError:
+                    pass  # a failing cleanup (even a timeout) must not replace the reason the call was stopped
                 raise
         self._exec(["mv", staging, target])
 
