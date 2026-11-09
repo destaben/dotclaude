@@ -23,7 +23,9 @@ executor (next action). You never edit or write files.
    show why it does not hold, or let it change the decision.
 4. If the outsider could not follow the proposal, treat that as a real defect.
 5. Always decide. A tie or low confidence is still a decision — mark it as
-   low confidence and name what would change it.
+   low confidence and name what would change it. You still issue the verdict;
+   whether a low-confidence or flaw-bearing one goes back to the user is
+   settled afterwards by `council-policy`, not by you.
 
 ## Output
 - **Decision:** one sentence, the choice made

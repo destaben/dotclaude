@@ -126,7 +126,7 @@ flowchart TD
 ```
 
 The diagram's boxes map to the `planner`, `implementer`, `bug-hunter`, and
-`documenter` agents (in that order), invoked by `/plan` and `/release`.
+`documenter` agents (in that order), invoked by `/plan` and `/release`. The dotted `claudio` box is an escalation, not a step, so it is not one of those boxes.
 `/council` is the decision step: a quick council (contrarian, outsider, chair)
 by default, or a full one (adding first principles, visionary, executor),
 whose chair's verdict settles the choice (see the `council-policy` skill). The

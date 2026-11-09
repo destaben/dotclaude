@@ -188,6 +188,12 @@ a decision taken with no one to act on it. The decision stays pending and `claud
   without the skill), and a document that says "no hooks" without the exception would be false. Each copy is one
   sentence. ADR 0004 item 9 keeps its operational detail for the same reason: a decision record must still make
   sense after the skill changes. Do not report this duplication again unless a copy disagrees with the others.
+- **The question goes to the owner's chat verbatim:** the same text that is spoken is posted to the owner's own
+  chat, and a spoken-only question would hide from the owner what was asked. The agent prompt already forbids
+  anything but the decision's question and options (no secrets, no quoted brief text), and the guard cannot
+  judge wording (see "Agent safety"). Do not report it again unless the destination stops being the owner's chat.
+- **A kept prompt folder lives up to a day:** a folder kept because the call end was unconfirmed is removed by the
+  daily sweep (`sweep_stale`, older than 1440 minutes). That is the intended bound, not a leak.
 
 ## Rounds
 A call gets three rounds to produce a confirmed choice. Pressing 9 (repeat), any other key, or staying
