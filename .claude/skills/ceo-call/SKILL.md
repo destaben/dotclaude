@@ -25,7 +25,9 @@ alias as `remote-hosts` describes, and run the script there.
 ## Configuration
 - **Config file** (`--config`, JSON, optional). Keys: `container`, `piper_host`, `piper_port`,
   `endpoint` (`PJSIP/<name>`), `attempts` (1-10), `retry_delay_s`, `ring_timeout_s`,
-  `call_timeout_s`, `poll_interval_s`, `env_file`, and `quiet_start` / `quiet_end` (`HH:MM`; both or
+  `call_timeout_s`, `poll_interval_s` (defaults: `container` asterisk, `piper_host` 127.0.0.1, `piper_port` 10200,
+  `endpoint` PJSIP/phone, `attempts` 3, `retry_delay_s` 300, `ring_timeout_s` 30, `call_timeout_s` 300,
+  `poll_interval_s` 2), `env_file`, and `quiet_start` / `quiet_end` (`HH:MM`; both or
   neither; checked at the start, before every retry and again right before each dial, after any
   heads-up wait), `timezone` (IANA name such as `Europe/Madrid`; default is the host's local time), `heads_up_s` (default 90),
   `min_gap_s` (default 120), `max_per_hour` (default 6), `max_per_day` (default 24), `state_file` and `lock_file`. `piper_port` must be 1-65535.
@@ -155,6 +157,20 @@ When a call is still open at `call_timeout_s` and the grace, `ask` returns `time
 no decision was recorded. A confirmation given after that is written to the kept folder (a daily sweep
 removes it) and is never read, on purpose: nobody is waiting for it any more, so recording it later would be
 a decision taken with no one to act on it. The decision stays pending and `claudio` reports it as such.
+
+## Design notes
+- **Spoken language:** the spoken intro and the chat messages the script sends to the owner (`HEADS_UP`,
+  `deferred`, `phone_not_registered`, the test call) are in Spanish on purpose: they are product output for
+  the owner's phone, not code, comments or docs, which stay in English. Translating them would change what
+  the owner hears; do not report them as a violation of the English-only rule.
+- **Voice sample rate:** the audio caps assume a 22.05 kHz mono Piper voice (the `medium` voices). A 44.1 kHz
+  voice can exceed `MAX_PCM_BYTES` for a near-maximum question; that fails cleanly (`ERROR:` and no call is
+  placed), so it is an unsupported configuration rather than a defect.
+- **A failed `mv` is not a live call:** the call file moves into `outgoing/` with one `mv`, which only
+  renames. A non-zero exit means the rename did not happen (a timeout is different and is treated as live).
+  The one gap, the container dying in the instant after a successful rename, would make the folder be
+  removed under a call that was never placed anyway, since a stopped Asterisk cannot dial. Do not report it
+  again unless `originate` gets a step after the move.
 
 ## Rounds
 A call gets three rounds to produce a confirmed choice. Pressing 9 (repeat), any other key, or staying

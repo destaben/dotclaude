@@ -580,7 +580,8 @@ def run_attempt(asterisk, config: Dict, call_id: str, option_count: int, sleep=t
         on_dial()
         raise  # the move may have completed before the timeout or the stop: the phone may be ringing
     except MayBeLive as error:
-        # The call file is moved into place in one step, so a plain failure here means no call exists.
+        # The call file is moved into place in one step, so a plain failure here means no call exists
+        # (see 'A failed mv is not a live call' in SKILL.md).
         raise CallError(str(error))
     on_dial()
     started = clock()
