@@ -271,7 +271,10 @@ run_bounded() {
 run_scan_bounded() {
   local secs=$1
   shift
-  perl -e '
+  # TMPDIR points at the host run's directory: when the limit SIGKILLs the scanner its EXIT trap cannot run, and
+  # the directory its mktemp -d made would otherwise stay in the system temp directory. Here the host's own
+  # cleanup removes it with the rest of the run.
+  env ${TMP_DIR:+TMPDIR="$TMP_DIR"} perl -e '
     my $secs = shift;
     my $pid = fork();
     defined $pid or exit 127;
@@ -294,6 +297,7 @@ summary_value() {
 # The text is written by the worker, so it is shown or quoted as data and never acted on here.
 section_of() {
   awk -v want="## $2" '
+    { sub(/[ \t\r]+$/, "") }
     /^## / { keep = ($0 == want); next }
     keep { print }
   ' "$1" | tr -d '\000-\010\013\014\016-\037\177'

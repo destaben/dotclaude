@@ -3,6 +3,20 @@
 All notable changes to this repo are recorded here. Entries explain why a
 change was made, not just what changed — the diff already shows what.
 
+## 2026-11-09 — Worker review fixes: no settings files, heading whitespace, scan temp files
+
+`--allowedTools` adds to the permissions of whatever settings are loaded, so a
+repository that allows `Bash(git diff:*)` (this one does) undid the exact-command rules
+and let `git diff --no-index` print the login file. The worker now runs with
+`--setting-sources ""`, which loads no user, project or local settings; its permissions
+are exactly the entrypoint's arguments. Section headings are compared with trailing
+whitespace removed everywhere (the escalation and checkpoint readers and the commit
+title were the ones that still compared exactly), so a blocked handoff headed
+`## Escalation ` exits 3 instead of 1. The scanner makes its temp directory from an
+explicit `${TMPDIR}` template (a bare `mktemp -d` ignores `TMPDIR` on macOS) and the host
+sets `TMPDIR` to its own run directory for scans, so a scan killed at its time limit
+leaves no dump of blobs behind.
+
 ## 2026-11-08 — Worker review fixes: scanner coverage, tool rules, shutdown, save failures
 
 The secret scan now reads the entry names of every tree the range adds (a file copied

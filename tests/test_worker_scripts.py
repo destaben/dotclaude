@@ -18,6 +18,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -1368,6 +1369,16 @@ class RealClaudeFlagTests(WorkerCase):
     not prove that a malformed rule is rejected: offline, a malformed rule did not stop startup in a check
     against 2.1.319. Enforcement needs a login, which this suite does not have."""
 
+    def test_the_worker_loads_no_settings_files_so_repository_allow_rules_cannot_widen_the_allowlist(self):
+        # --allowedTools adds to whatever settings are loaded. This repository allows `Bash(git diff:*)`, which
+        # would let `git diff --no-index /dev/null <login file>` through the exact-command rules. An empty
+        # --setting-sources loads no user, project or local settings at all.
+        result, _, _ = self.run_entry()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = self.claude_call()["args"]
+        self.assertIn("--setting-sources", args)
+        self.assertEqual(args[args.index("--setting-sources") + 1], "")
+
     def test_the_binary_accepts_the_permission_flags_and_rule_strings_the_entrypoint_builds(self):
         result, _, _ = self.run_entry()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -1721,8 +1732,12 @@ class RealClaudeHandoffTests(WorkerCase):
         self.mock = MockAnthropic()
         self.addCleanup(self.mock.close)
         (self.claude_cfg / ".credentials.json").unlink()   # the mock needs no login; no real login is used
-        (self.claude_cfg / "settings.json").write_text(json.dumps({"env": {
-            "ANTHROPIC_BASE_URL": self.mock.url, "ANTHROPIC_API_KEY": "sk-ant-" + "test-dummy-key-000000000000"}}))
+        # The worker loads no settings files (--setting-sources ""), and its environment is an explicit list, so the
+        # mock is reached through a claude wrapper on PATH that sets the two variables and runs the real binary.
+        wrapper = self.bin / "claude"
+        wrapper.write_text("#!/bin/sh\nexport ANTHROPIC_BASE_URL=%s\nexport ANTHROPIC_API_KEY=%s\nexec %s \"$@\"\n"
+                           % (shlex.quote(self.mock.url), "sk-ant-" + "test-dummy-key-000000000000", shlex.quote(REAL_CLAUDE)))
+        wrapper.chmod(0o755)
 
     def test_a_blocked_escalation_written_under_the_real_rules_exits_3_and_runs_the_hook(self):
         hook = self.tmp / "hook.py"
@@ -1738,6 +1753,35 @@ class RealClaudeHandoffTests(WorkerCase):
         self.assertIn("1. Option A", result.stderr)
         run_id = result.stdout.split(" run ", 1)[1].split(" ", 1)[0]
         self.assertEqual(json.loads(marker.read_text())[0], run_id)
+
+    def test_an_escalation_heading_with_trailing_whitespace_is_still_shown_and_exits_3(self):
+        self.mock.tool = ("Write", {"file_path": "{HANDOFF}",
+                                    "content": ESCALATION_HANDOFF.replace("## Escalation\n", "## Escalation \t\n", 1)})
+        result = self.run_worker("--handoff", str(self.handoff_src))
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertIn("Which storage backend", result.stderr)
+
+    def test_a_repository_that_allows_git_diff_by_prefix_cannot_widen_the_workers_exact_rules(self):
+        # End-to-end guard on the property, with the real permission engine: the repository's own
+        # .claude/settings.json allows `Bash(git diff:*)`, and `git diff --color=never --no-index /dev/null <file>`
+        # (which the prefix deny rules do not match) must still be refused. Note: in a fresh config directory the
+        # engine did not apply the repository's allow rules even without --setting-sources, so this test passes
+        # either way; the argument test above is the one that fails if the flag is dropped.
+        push = self.tmp / "settings-push"
+        self.git("clone", "-q", str(self.bare), str(push))
+        (push / ".claude").mkdir()
+        (push / ".claude" / "settings.json").write_text(json.dumps({"permissions": {"allow": ["Bash(git diff:*)"]}}))
+        self.git("-C", str(push), "add", "-A")
+        self.git("-C", str(push), "-c", "user.name=test", "-c", "user.email=test@localhost",
+                 "commit", "-q", "-m", "allow git diff by prefix")
+        self.git("-C", str(push), "push", "-q", "origin", "main")
+        self.mock.tool = ("Bash", {"command": "git diff --color=never --no-index /dev/null README.md",
+                                   "description": "print a file through git diff"})
+        result = self.run_worker("--handoff", str(self.handoff_src))
+        self.assertTrue(self.mock.results, "the worker never reached its tool call: " + result.stderr)
+        outcome = self.mock.results[0]
+        self.assertTrue(outcome.get("is_error"), "the prefix command was allowed: %s" % outcome)
+        self.assertNotIn("hello", json.dumps(outcome), "the file content must not reach the worker")
 
 
 class CommitTests(WorkerCase):
@@ -1976,6 +2020,24 @@ class ScanTimeoutTests(WorkerCase):
         self.assertIn("could not be scanned", result.stderr)
         self.assertFalse(self.bare_has("refs/heads/" + RUN_BRANCH), "nothing is pushed when the scan does not finish")
         self.assertLess(elapsed, 20, "the stalled child must be killed with the scanner at the limit")
+
+    def test_a_timed_out_scanner_leaves_nothing_in_the_system_temp_directory(self):
+        # The limit SIGKILLs the scanner, so its own EXIT trap never removes the directory its mktemp -d made.
+        # The scan runs with TMPDIR inside the host run's directory, which the host removes.
+        skill = self.tmp / "skill-copy"
+        shutil.copytree(SKILL, skill)
+        scanner = skill / "scripts" / "secret_scan.sh"
+        scanner.write_text('#!/bin/sh\nd=$(mktemp -d "${TMPDIR:-/tmp}/secret-scan.XXXXXX")\necho blob > "$d/dump"\nsleep 25\n')
+        scanner.chmod(0o755)
+        self.handoff_src.write_text(handoff_text(branch=RUN_BRANCH))
+        merged = {**self.env, "STUB_CLAUDE_OUT": "done", "STUB_CLAUDE_COMMIT": "feature.txt", "WORKER_SCAN_TIMEOUT": "2"}
+        self.write_claude_knobs(merged)
+        before = set(os.listdir(self.tmpdir))
+        result = subprocess.run([str(skill / "scripts" / "worker_run.sh"), "box", REPO, "--config", str(self.config),
+                                 "--out", str(self.out), "--handoff", str(self.handoff_src)],
+                                env=merged, capture_output=True, text=True, timeout=120, cwd=str(self.tmp))
+        self.assertEqual(result.returncode, 6, result.stderr)
+        self.assertEqual(set(os.listdir(self.tmpdir)) - before, set(), "the host must clean up the scan's files")
 
 
 class ScrubberFailClosedTests(WorkerCase):

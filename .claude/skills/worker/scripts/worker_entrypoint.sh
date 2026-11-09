@@ -358,7 +358,7 @@ collect_handoff() {
 # at most 72 characters, scrubbed of login values, and scanned. It prints nothing if any step fails.
 commit_title() {
   local line
-  line=$(awk '/^## / { keep = ($0 == "## Task"); next } keep && NF { print; exit }' "$HANDOFF" \
+  line=$(awk '{ sub(/[ \t\r]+$/, "") } /^## / { keep = ($0 == "## Task"); next } keep && NF { print; exit }' "$HANDOFF" \
     | tr -cd 'A-Za-z0-9 ._,:()/-' | cut -c1-72 | token_filter) || return 0
   [ -n "$line" ] || return 0
   local file="$RUN_DIR/commit-title.txt"
@@ -457,7 +457,7 @@ run_claude() {
   rm -f "$CLAUDE_EXIT_FILE"
   set -m
   ( "${claude_env[@]}" claude -p "$PROMPT" --output-format stream-json --verbose --max-turns "$MAX_TURNS" \
-      --permission-mode acceptEdits --permission-prompts none \
+      --permission-mode acceptEdits --permission-prompts none --setting-sources "" \
       --allowedTools "${TOOL_ALLOWLIST[@]}" --disallowedTools "${TOOL_DENYLIST[@]}" 2>&1
     echo $? > "$CLAUDE_EXIT_FILE" ) | token_filter | tee "$LOG" &
   CLAUDE_JOB=$!

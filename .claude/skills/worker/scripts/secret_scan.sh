@@ -79,7 +79,9 @@ scan_repo() {
   [ -d "$dir" ] || return 2
   git -C "$dir" rev-parse --verify --quiet "$base^{commit}" >/dev/null || return 2
   git -C "$dir" rev-parse --verify --quiet "$ref^{commit}" >/dev/null || return 2
-  TMP=$(mktemp -d) || return 2
+  # An explicit template: a bare `mktemp -d` ignores TMPDIR on macOS, and the host points TMPDIR at its own run
+  # directory so a scan killed at its time limit (no EXIT trap) leaves nothing behind.
+  TMP=$(mktemp -d "${TMPDIR:-/tmp}/secret-scan.XXXXXX") || return 2
 
   objects=$(git -C "$dir" -c core.attributesFile=/dev/null rev-list --objects "$base..$ref") || return 2
   shas=$(printf '%s\n' "$objects" | awk '{print $1}')

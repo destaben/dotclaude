@@ -285,7 +285,10 @@ A run that failed (claude exited nonzero, or the login check failed) is always
 The worker runs `claude -p` with `--permission-mode acceptEdits` and
 `--permission-prompts none`. Headless runs have no one to answer a prompt, so anything
 not allowed is denied. The rules live in the entrypoint's `TOOL_ALLOWLIST` and
-`TOOL_DENYLIST` arrays, and deny rules always win.
+`TOOL_DENYLIST` arrays, and deny rules always win. The run passes `--setting-sources ""`
+so no user, project or local settings file is loaded: `--allowedTools` adds to loaded
+settings, and a repository's own allow rules (for example `Bash(git diff:*)`) would
+otherwise widen the exact-command rules.
 
 **The worker edits; the entrypoint commits.** The worker does not commit, stage,
 branch, check out, reset, stash, tag, show or log history, or read a bundle. Those
