@@ -7,6 +7,10 @@ name: docs-check
 on:
   pull_request:
 
+# This job runs the pull request's own scripts and tests, so its token is read-only.
+permissions:
+  contents: read
+
 jobs:
   validate:
     runs-on: ubuntu-latest

@@ -175,6 +175,15 @@ check_issue_owner() {
   me=$(gh api user --jq .login) || refuse "could not read the authenticated gh user"
   [ -n "$author" ] && [ "$author" = "$me" ] \
     || refuse "issue #$ISSUE was not written by the authenticated gh user; only owner-authored issues can run with --issue (use --handoff for other work)"
+  # Anyone with write access can edit an issue body. If it was edited, the last editor must be the owner too.
+  local editor
+  # shellcheck disable=SC2016 # the single quotes hold a GraphQL query; $o, $r and $n are its variables
+  editor=$(gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){lastEditedAt editor{login}}}}' \
+    -f o="${REPO%%/*}" -f r="${REPO##*/}" -F n="$ISSUE" \
+    --jq '.data.repository.issue | if .lastEditedAt == null then "" else (.editor.login // "unknown") end' | tr -cd 'A-Za-z0-9[]_-') \
+    || refuse "could not read who last edited issue #$ISSUE in $REPO"
+  [ -z "$editor" ] || [ "$editor" = "$me" ] \
+    || refuse "issue #$ISSUE was last edited by $editor, not by the authenticated gh user; edit it again yourself after reading the change, or use --handoff"
 }
 
 # build_issue_handoff <out-file>: fills templates/handoff.md for --issue. The issue title and body are
@@ -350,6 +359,12 @@ neutralise() {
         low = tolower(s)
         # keyword, optional separator, then #N, owner/repo#N or a full issue URL
         if (!match(low, /(fix|fixes|fixed|close|closes|closed|resolve|resolves|resolved)[ \t:]*(([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)?#[0-9]+|https?:\/\/[^ \t]*\/issues\/[0-9]+)/)) break
+        # A keyword inside a longer word ("prefix #3") is not a closing keyword: leave it as it is.
+        if (RSTART > 1 && substr(low, RSTART - 1, 1) ~ /[a-z0-9_]/) {
+          out = out substr(s, 1, RSTART + RLENGTH - 1)
+          s = substr(s, RSTART + RLENGTH)
+          continue
+        }
         token = substr(s, RSTART, RLENGTH)
         pre = token
         sub(/[ \t:]*(([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)?#[0-9]+|[Hh][Tt][Tt][Pp][Ss]?:\/\/[^ \t]*\/[Ii][Ss][Ss][Uu][Ee][Ss]\/[0-9]+)$/, "", pre)
@@ -482,7 +497,9 @@ publish_branch() {
   # A pushed branch can trigger the repository's workflows (a push event runs the workflow files of the pushed
   # commit), and those can read repository secrets before anyone reviews the draft pull request. So a worker
   # branch never changes anything under .github/: the deny rules keep the model out of it, and this refuses
-  # a bundle that got there anyway (for example through a test runner). Fails closed.
+  # a bundle that got there anyway (for example through a test runner). Fails closed. This does not stop the
+  # repository's own pull_request workflows from running the branch's code (a test or a script) once the draft PR
+  # opens; that is the owner's choice of repository, see Known residual risk in SKILL.md.
   local changed touched
   changed=$(git -C "$pub" diff --no-renames --name-only -z "origin/$BASE...refs/heads/$BRANCH" | tr '\0' '\n') \
     || { PUBLISH_MSG="the branch's changed files could not be listed; nothing was pushed"; return 1; }

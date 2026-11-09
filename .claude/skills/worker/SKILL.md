@@ -109,7 +109,10 @@ owner (used to read owner-authored issues and to open the draft pull request).
 - `--issue N`: the script checks that the issue's author is the authenticated `gh`
   user, reads the issue's title and body, builds the handoff from
   `templates/handoff.md`, and quotes the issue text into the Untrusted input section
-  only. A non-owner issue exits 2 with a message.
+  only. A non-owner issue exits 2 with a message. An issue whose body was last edited
+  by someone other than the authenticated user is refused too (anyone with write access
+  can edit a body): read the change, then edit the issue again yourself, or use
+  `--handoff`.
 - `--handoff FILE`: the owner's own handoff is uploaded unchanged after checks
   (version 1, matching repo, status `new` or `checkpoint`, a valid branch). A handoff
   that a worker wrote is refused unless `--accept-worker-handoff` is given.
@@ -539,7 +542,14 @@ can also:
   (the files the entrypoint later turns into the bundle and `summary.env`);
 - start a detached process (for example with `setsid`) that leaves the process group
   the entrypoint waits for, so it can keep writing into the worktree after the edits
-  are committed.
+  are committed;
+- run in the target repository's CI: opening the draft pull request starts that
+  repository's `pull_request` workflows on the branch's code, so a test or script the
+  worker edited runs on a runner before anyone has read the diff. The `.github/` check
+  keeps the worker from adding or changing a workflow, not from changing what an existing
+  one executes. Use the worker only on repositories whose `pull_request` workflows hold
+  no secrets (or gate them behind an environment that needs approval) and whose token is
+  read-only (declare `permissions: contents: read` on the workflows that run pull request code).
 
 An injection through repository content (a README or a test fixture in a public repo)
 can therefore ask the worker to write a test that sends the login somewhere; the secret
@@ -572,6 +582,25 @@ Other points:
 - The log scrubber replaces the login values it can find in the run's output. It is a
   safety net for the log, not a boundary, and the run log can hold a token that was
   refreshed mid-run (see *Environment of the worker*).
+
+## Design notes: choices reviewers keep asking about
+These were raised in review, decided, and are written down so they are not re-argued.
+- **Test runners run worker-written code.** Accepted for the spike, with its conditions
+  and full scope in *Known residual risk*. The remedy is the hardening in (c), a network
+  allow-list and a test environment without the login, not a rule in the allowlist.
+- **`acceptEdits` approves file commands (`touch`, `mkdir`, `cp` between worktree files).**
+  Checked against the real binary with the mock API: the `Read` deny rules still apply to
+  their path arguments, so `cp`, `ln -s` and `sed` of the login file are refused. The tests
+  `RealClaudeHandoffTests` keep that true, with a control that an ordinary `cp` is allowed.
+- **A run stopped at the time limit is never published.** It can hold half-finished
+  edits. Its question is printed, the bundle is kept (*Exit codes*, 124).
+- **Files the repository's `.gitignore` matches are not forced into the commit.** They
+  are reported (*The commit*). Files whose names look like credentials are reported as a
+  save failure.
+- **The scanner has no generic `password=` pattern.** It would block ordinary code and
+  docs; the scanner is a literal-pattern safety net (*The secret scanner*).
+- **The real-binary tests are skipped where `claude` is absent, CI included.** Said
+  plainly in *Verification status*; pinning the binary in CI is a separate change.
 
 ## Scripts and files
 - `scripts/worker_run.sh`: runs on the owner's machine (validation, handoff, the

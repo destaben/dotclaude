@@ -142,6 +142,13 @@ class ValidateTests(unittest.TestCase):
         self.assertIsNone(check_review.validate(text, "9"))
 
 
+class DocsCheckWorkflowTests(unittest.TestCase):
+    def test_docs_check_runs_the_branchs_code_with_a_read_only_token(self):
+        text = (REPO_ROOT / ".github" / "workflows" / "docs-check.yml").read_text()
+        self.assertRegex(text, r"(?m)^permissions:\n  contents: read$")
+        self.assertNotIn("secrets.", text)
+
+
 class WorkflowContractTests(unittest.TestCase):
     """Cheap text-level guards on the workflow the validation depends on.
 

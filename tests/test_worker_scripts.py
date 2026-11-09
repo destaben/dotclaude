@@ -174,6 +174,10 @@ if args[:2] == ["issue", "view"] and "--json" in args:
     else:
         sys.stdout.write(knob("STUB_ISSUE_" + field.upper()))
     sys.exit(0)
+if args[:2] == ["api", "graphql"]:
+    editor = knob("STUB_ISSUE_EDITOR")
+    sys.stdout.write(editor + "\n" if editor else "\n")
+    sys.exit(0)
 if args[:2] == ["api", "user"]:
     sys.stdout.write(knob("STUB_GH_USER", "owner-user") + "\n")
     sys.exit(0)
@@ -661,6 +665,17 @@ class HandoffTests(WorkerCase):
         self.assertEqual(self.calls("docker"), [])
         self.assertFalse(self.claude_record.exists())
 
+    def test_an_issue_last_edited_by_someone_else_is_refused_before_any_run(self):
+        result = self.run_worker("--issue", "15", env={"STUB_ISSUE_EDITOR": "a-collaborator"})
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("last edited by a-collaborator", result.stderr)
+        self.assertEqual(self.calls("docker"), [])
+        self.assertFalse(self.claude_record.exists())
+
+    def test_an_issue_the_owner_edited_themselves_is_accepted(self):
+        result = self.run_worker("--issue", "15", env={"STUB_ISSUE_EDITOR": "owner-user", "STUB_CLAUDE_OUT": "done"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_handoff_file_is_uploaded_unchanged(self):
         result = self.run_worker("--handoff", str(self.handoff_src))
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -976,6 +991,18 @@ class PublishTests(WorkerCase):
         self.assertFalse(self.bare_has("refs/heads/" + RUN_BRANCH))
         self.assertEqual(self.push_calls(), [])
         self.assertEqual(self.calls("gh"), [])
+
+    def test_a_keyword_inside_a_longer_word_is_not_treated_as_a_closing_keyword(self):
+        result = self.run_worker("--issue", "15", env={
+            "STUB_ISSUE_TITLE": "Add a prefix #3 and fix #4",
+            "STUB_CLAUDE_OUT": "done",
+            "STUB_CLAUDE_COMMIT": "feature.txt",
+        })
+        self.assertEqual(result.returncode, 0, result.stderr)
+        create = [call for call in self.calls("gh") if call.startswith("gh pr create")]
+        self.assertEqual(len(create), 1, create)
+        self.assertIn("prefix #3", create[0], "an ordinary word is left as written")
+        self.assertIn("fix" + ZWSP + " #4", create[0], "a real closing keyword is still neutralised")
 
     def test_mentions_and_closing_keywords_are_neutralised_in_the_title_and_the_body(self):
         result = self.run_worker("--issue", "15", env={
@@ -1830,6 +1857,37 @@ class RealClaudeHandoffTests(WorkerCase):
         result = self.run_worker("--handoff", str(self.handoff_src))
         self.assertEqual(result.returncode, 3, result.stderr)
         self.assertIn("Which storage backend", result.stderr)
+
+    def bash_result(self, command):
+        """Runs one Bash call from the mock model under the real rules and returns the tool result."""
+        (self.claude_cfg / ".credentials.json").write_text(json.dumps({"claudeAiOauth": {"accessToken": LOGIN_SECRET}}))
+        self.mock.tool = ("Bash", {"command": command, "description": "probe"})
+        result = self.run_worker("--handoff", str(self.handoff_src))
+        self.assertTrue(self.mock.results, "the worker never reached its tool call: " + result.stderr)
+        return self.mock.results[0]
+
+    def login_stays_out_of_reach_of(self, template):
+        # acceptEdits auto-approves file commands such as cp, ln and sed inside the worktree; the Read deny rules
+        # still apply to their path arguments, so the login file cannot be copied into the tree (and committed)
+        # or printed.
+        login = str(self.claude_cfg / ".credentials.json")
+        outcome = self.bash_result(template % login)
+        self.assertTrue(outcome.get("is_error"), "the login file was reachable: %s" % outcome)
+        self.assertNotIn(LOGIN_SECRET, json.dumps(outcome))
+
+    def test_the_login_cannot_be_copied_into_the_worktree(self):
+        self.login_stays_out_of_reach_of("cp %s notes.txt")
+
+    def test_the_login_cannot_be_linked_into_the_worktree(self):
+        self.login_stays_out_of_reach_of("ln -s %s notes.txt")
+
+    def test_the_login_cannot_be_printed_with_sed(self):
+        self.login_stays_out_of_reach_of("sed -n p %s")
+
+    def test_acceptedits_still_allows_file_commands_between_ordinary_worktree_files(self):
+        # Positive control for the test above: the rules are not simply refusing every file command.
+        outcome = self.bash_result("cp README.md copy.md")
+        self.assertFalse(outcome.get("is_error"), outcome)
 
     def test_a_repository_that_allows_git_diff_by_prefix_cannot_widen_the_workers_exact_rules(self):
         # End-to-end guard on the property, with the real permission engine: the repository's own

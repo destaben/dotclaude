@@ -69,7 +69,7 @@ Personal overrides (API keys, local-only permissions) go in that project's
 | Command | `/council` | Decision council: quick by default, `full` on request |
 | Command | `/release` | Full pipeline: tests → bug-hunter → docs → PR |
 | Command | `/pr` | Commit and open a PR without the full pipeline |
-| Skill | `commit-and-pr`, `github-ops`, `testing-mindset`, `release-policy`, `council-policy`, `token-budget`, `session-cost-report`, `remote-hosts`, `worker`, `ceo-call` (inert until set up: see its "What it needs" and "Is it set up?" sections), `mcp-gmail-ops`, `mcp-drive-ops`, `mcp-calendar-ops`, `mcp-docs-ops`, `browser-ops`, `codebase-memory-ops` | See `.claude/skills/*/SKILL.md` |
+| Skill | `commit-and-pr`, `github-ops`, `testing-mindset`, `release-policy`, `council-policy`, `token-budget`, `session-cost-report`, `remote-hosts`, `worker` (needs an owner-listed SSH host with Docker: see "What the owner's host must provide" in its SKILL.md), `ceo-call` (inert until set up: see its "What it needs" and "Is it set up?" sections), `mcp-gmail-ops`, `mcp-drive-ops`, `mcp-calendar-ops`, `mcp-docs-ops`, `browser-ops`, `codebase-memory-ops` | See `.claude/skills/*/SKILL.md` |
 
 See `docs/pipeline.md` for the prose walkthrough and `docs/references.md` for
 what was adapted from [awesome-copilot](https://github.com/github/awesome-copilot).
@@ -137,8 +137,9 @@ whose chair's verdict settles the choice (except the escalation cases in the
 runs the `commit-and-pr` skill directly, for a change you've already verified
 yourself and don't want the full `/release` pipeline for, and the `worker` skill,
 which you start yourself and which, unless it is skipped, stopped or refused by its
-checks, publishes its result as a draft pull request for you to review. The `token-auditor` agent runs on demand (not part of this
-diagram) to report context bloat in `CLAUDE.md`, skills, and agents.
+checks, publishes its result as a draft pull request for you to review. The
+`token-auditor` agent runs on demand (not part of this diagram) to report context bloat
+in `CLAUDE.md`, skills, and agents.
 
 Severe findings are security issues, data loss, failing tests, and broken
 public contracts. Everything else asks you first. No step here is a hook —

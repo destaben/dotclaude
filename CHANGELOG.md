@@ -28,13 +28,7 @@ out of the container means a misbehaving run cannot push or open pull requests.
 data, not instructions. The container's claude process runs with a scrubbed
 environment. The residual risk is stated in the skill: an allowed test runner
 executes code the worker wrote, so tasks must come only from owner-authored input.
-Why the design looks the way it does: the worker's permissions are exactly the
-entrypoint's arguments (`--setting-sources ""` loads no settings file, because
-`--allowedTools` adds to loaded settings and a repository allow rule would widen the
-exact-command rules); its handoff is written inside its own worktree, the one place no
-deny rule covers; a failure to save its edits ends the run `blocked`, never the
-worker's `done`; the scan fails closed; and a branch that touches `.github/` is never
-pushed, because a pushed workflow file runs with the repository's secrets. SKILL.md has the mechanism for each.
+The mechanisms and the reasons behind them are in the skill's SKILL.md and in the decision record.
 The decision is recorded in `docs/decisions/0004-tooling-choices.md`, item 10.
 
 ## 2026-11-08 — PR review only posts finished reviews
