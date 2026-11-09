@@ -30,12 +30,13 @@ python3 scripts/install.py --uninstall      # remove what a prior run installed
   `~/.claude/dotclaude-scripts/`) — all applied across every project you
   work in afterward.
 - **Project scope**: installs `CLAUDE.md` and `.claude/{agents,commands,skills}`
-  into one specific project. The `claudio` agent and the `ceo-call` skill need the user-scope install:
-  a project-level copy takes precedence over it and can change or drop its
-  shell-guard hook (see "Agent safety" in the `ceo-call` skill). Use project scope for a project where you want a
+  into one specific project. Use project scope for a project where you want a
   GitHub Actions workflow (like `claude-pr-review.yml`) to see these agents — a
   CI runner only checks out that project, not your `~/.claude/`. The workflow and
   its `.github/scripts/check_review.py` are copied by hand, not by `install.py`.
+- **`claudio` and `ceo-call` need the user-scope install**: a project-level copy
+  takes precedence over it and can change or drop its shell-guard hook (see
+  "Agent safety" in the `ceo-call` skill).
 - Everything is symlinked (or copied with `--copy`) whole, **except
   `settings.json`, which is merged** — every run, not just the first. Your
   existing `hooks`, `theme`, `model`, or anything else dotclaude doesn't own
@@ -67,7 +68,7 @@ Personal overrides (API keys, local-only permissions) go in that project's
 | Command | `/council` | Decision council: quick by default, `full` on request |
 | Command | `/release` | Full pipeline: tests → bug-hunter → docs → PR |
 | Command | `/pr` | Commit and open a PR without the full pipeline |
-| Skill | `commit-and-pr`, `github-ops`, `testing-mindset`, `release-policy`, `council-policy`, `token-budget`, `session-cost-report`, `remote-hosts`, `ceo-call`, `mcp-gmail-ops`, `mcp-drive-ops`, `mcp-calendar-ops`, `mcp-docs-ops`, `browser-ops`, `codebase-memory-ops` | See `.claude/skills/*/SKILL.md` |
+| Skill | `commit-and-pr`, `github-ops`, `testing-mindset`, `release-policy`, `council-policy`, `token-budget`, `session-cost-report`, `remote-hosts`, `ceo-call` (inert until set up: see its "What it needs" and "Is it set up?" sections), `mcp-gmail-ops`, `mcp-drive-ops`, `mcp-calendar-ops`, `mcp-docs-ops`, `browser-ops`, `codebase-memory-ops` | See `.claude/skills/*/SKILL.md` |
 
 See `docs/pipeline.md` for the prose walkthrough and `docs/references.md` for
 what was adapted from [awesome-copilot](https://github.com/github/awesome-copilot).

@@ -88,7 +88,7 @@ named `ceo_call.py`, in a repository, `/tmp` or elsewhere, is refused. `--config
 `~/.config/ceo-call/config.json` (locally the guard also accepts this machine's absolute home path to that same file, which is the same file and not a bypass), and the agent must always pass it (the only config it may name, so it can neither pick one that turns the throttle off nor skip the quiet hours by running on defaults) (quoted the same way over ssh). Optionally behind `ssh <alias>` (no ssh options), and only for an alias the owner listed in
 `~/.config/ceo-call/hosts` (one per line, on the machine that runs the agent; with no file, no remote host
 is allowed, because the alias would otherwise come from the untrusted brief); no shell operators
-or `..` or control characters other than newline (a carriage return could change where bash ends a
+or `..` on the command line (the heredoc body is data for the script's stdin and is never run by a shell, so a `..` inside the request text is allowed) or control characters other than newline (a carriage return could change where bash ends a
 heredoc); the request JSON only through a quoted heredoc (`ask --request -`): a request file path is
 refused, because the agent cannot write files and the owner's own CLI use of a file is
 unrestricted, but an existing file must not be spoken by the agent.
@@ -178,6 +178,16 @@ a decision taken with no one to act on it. The decision stays pending and `claud
   its own `WaitTime` ends the ring first, so a pickup delay above 15 s means Asterisk is already unhealthy; the
   failure is then a clean `unanswered` and the owner can ask again. Widening the margin would only delay that
   report. Do not report it again unless the pickup delay becomes configurable.
+- **A stop mid-call still looks for the answer:** on SIGTERM/SIGINT with a call possibly live, `ask` reads the
+  result once more and messages the owner before it exits. Both steps are bounded (60 s and 15 s), the only cost
+  is a slower shutdown when docker itself hangs, and skipping them could lose a decision that is already on
+  disk. Do not report it again unless those bounds are removed.
+- **Repeated rules are on purpose:** the single-hook exception and the two escalation cases are stated in more
+  than one file (CLAUDE.md, README, `docs/pipeline.md`, the ADRs, `council-policy`, `council.md`) because each
+  file is read on its own (`CLAUDE.md` is installed alone, the README is the entry point, the ADRs must stand
+  without the skill), and a document that says "no hooks" without the exception would be false. Each copy is one
+  sentence. ADR 0004 item 9 keeps its operational detail for the same reason: a decision record must still make
+  sense after the skill changes. Do not report this duplication again unless a copy disagrees with the others.
 
 ## Rounds
 A call gets three rounds to produce a confirmed choice. Pressing 9 (repeat), any other key, or staying
