@@ -10,7 +10,7 @@ of them lints YAML at 150 columns, so two long lines made its Lint check fail
 after every sync. The lines are wrapped without changing what they do; keep new
 lines in this file under 150 columns.
 
-## 2026-11-08 — Background worker container on a remote Docker host
+## 2026-11-09 — Background worker container on a remote Docker host
 
 Added a `worker` skill for one-shot, owner-triggered Claude Code runs in a
 container on an SSH host the owner controls, so a bounded task can run unattended
@@ -28,18 +28,12 @@ out of the container means a misbehaving run cannot push or open pull requests.
 data, not instructions. The container's claude process runs with a scrubbed
 environment. The residual risk is stated in the skill: an allowed test runner
 executes code the worker wrote, so tasks must come only from owner-authored input.
-Choices that came out of review, kept for their reason:
-the worker's permissions are exactly the entrypoint's arguments (`--setting-sources ""`
-loads no settings file, because `--allowedTools` adds to loaded settings and a repository
-allow rule such as `Bash(git diff:*)` would widen the exact-command rules); the worker
-writes its handoff inside its own worktree (`.worker-out/`), the one place no deny rule
-covers; any failure to stage, commit or bundle ends the run `blocked`, never the
-worker's `done`, and a file left out of the commit because its name looks like a
-credential file is reported the same way; the scan covers tree entry names and commit
-headers and fails closed (a timeout, an unreadable object, or a newline inside a path
-name that could split a token), runs in its own process group, and keeps its temporary
-files under the host's run directory; headings are compared with trailing whitespace
-removed everywhere, so a padded `## Escalation ` cannot hide a question.
+Why the design looks the way it does: the worker's permissions are exactly the
+entrypoint's arguments (`--setting-sources ""` loads no settings file, because
+`--allowedTools` adds to loaded settings and a repository allow rule would widen the
+exact-command rules); its handoff is written inside its own worktree, the one place no
+deny rule covers; a failure to save its edits ends the run `blocked`, never the
+worker's `done`; and the scan fails closed. SKILL.md has the mechanism for each.
 The decision is recorded in `docs/decisions/0004-tooling-choices.md`, item 10.
 
 ## 2026-11-08 — PR review only posts finished reviews

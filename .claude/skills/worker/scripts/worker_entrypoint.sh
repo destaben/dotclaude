@@ -431,6 +431,9 @@ commit_work() {
 # and publish. It holds commits above the base only. No config or hooks travel with it.
 make_bundle() {
   [ -d "$WORK/repo" ] || return 0
+  # A test runner can write under the run directory while claude runs. Any bundle already there was not made
+  # here, so it is removed; only the bundle this function creates can reach the host.
+  rm -f "$RUN_DIR/branch.bundle"
   if ! COMMITS=$(git -C "$WORK/repo" rev-list --count "origin/$BASE..refs/heads/$BRANCH" 2>/dev/null); then
     COMMITS=0
     save_failed "the commit range could not be read, so no bundle was made"
@@ -451,7 +454,10 @@ reap_group() {
   local waited=0 limit=${WORKER_REAP_WAIT:-20}
   [[ $CLAUDE_PGID =~ ^[0-9]+$ ]] || return 0
   # Never signal the entrypoint's own group, in case job control did not give the pipeline one.
-  [ "$CLAUDE_PGID" != "$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')" ] || return 0
+  [ "$CLAUDE_PGID" != "$$" ] || return 0
+  local own
+  own=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ' || true)
+  [ -z "$own" ] || [ "$CLAUDE_PGID" != "$own" ] || return 0
   while kill -0 -- "-$CLAUDE_PGID" 2>/dev/null; do
     if [ "$waited" -ge $((limit * 5)) ]; then
       kill -KILL -- "-$CLAUDE_PGID" 2>/dev/null || true
@@ -488,7 +494,14 @@ run_claude() {
   CLAUDE_JOB=$!
   set +m
   # The pipeline's process group id is its first process, not $!, which is the last one.
-  CLAUDE_PGID=$(ps -o pgid= -p "$CLAUDE_JOB" 2>/dev/null | tr -d ' ' || true)
+  # jobs -p prints the process group leader of the job, so no ps is needed; ps is only a fallback. If neither
+  # gives a group, the run says so: the tree could still be changing when it is committed.
+  CLAUDE_PGID=$(jobs -p 2>/dev/null | head -n 1 | tr -d ' ' || true)
+  [[ $CLAUDE_PGID =~ ^[0-9]+$ ]] || CLAUDE_PGID=$(ps -o pgid= -p "$CLAUDE_JOB" 2>/dev/null | tr -d ' ' || true)
+  if ! [[ $CLAUDE_PGID =~ ^[0-9]+$ ]]; then
+    CLAUDE_PGID=""
+    save_failed "the worker's process group could not be determined, so its processes were not waited for and the tree may have been changing when it was saved"
+  fi
   CLAUDE_RAN=1
   set +e
   # A trapped TERM interrupts wait while the pipeline may still be shutting down, so wait again until the

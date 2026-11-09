@@ -85,7 +85,8 @@ owner (used to read owner-authored issues and to open the draft pull request).
   Never point the worker at third-party text (see *Known residual risk*).
 - **Tools are allowlisted**: the worker gets only the rules in *Tool policy*. There
   is no bare shell and no GitHub CLI, and no git command except `status` and `diff`.
-  The test runners it may run can open network sockets; see *Known residual risk*.
+  The test runners it may run can open network sockets and read or write anything the
+  container user can; see *Known residual risk*.
 - **Irreversible actions are never taken alone**: the worker does not merge,
   force-push, delete data, or do anything only the owner can approve. A real
   question goes to the owner through *Escalation*.
@@ -379,7 +380,7 @@ matches. The enforcement for "the worktree is the only writable area" is the con
 **read-only root filesystem** (see the host contract). The rules are a second layer.
 Reads of a location no rule lists are not blocked either. The model's only way to read
 a file is the `Read` tool, except through the test runners, which run as the same user
-and can read anything (see *Known residual risk*).
+and can read and write anything that user can (see *Known residual risk*).
 
 **Verification status.** The worker test suite checks the rule strings the entrypoint
 builds: their form, their absolute paths, that the handoff path matches no rule, and
@@ -496,6 +497,32 @@ future hardening.
 The model cannot read the login through the `Read` tool: reads of the login directory
 are denied. That is the only statement about reading the login that holds. Through a
 test runner, it can. Do not claim more protection than that.
+
+**The full scope.** A test runner is a process the worker wrote the code of, running as
+the container user. The deny rules constrain the model's tools, not that process, so it
+can also:
+- read the clone's `.git` directory (its config and hooks included) and anything else
+  the user can read;
+- write anywhere the user can write, which includes the run directory under `/runs`
+  (the files the entrypoint later turns into the bundle and `summary.env`);
+- start a detached process (for example with `setsid`) that leaves the process group
+  the entrypoint waits for, so it can keep writing into the worktree after the edits
+  are committed.
+
+An injection through repository content (a README or a test fixture in a public repo)
+can therefore ask the worker to write a test that sends the login somewhere; the secret
+scan never sees it, because the login is never committed. Condition (a) does not stop
+that, since the text arrives through the repository and not through the task. The
+owner accepted this for the spike knowing that, and the remedy is the hardening in (c).
+
+What still holds when the run directory is writable by the worker: the host treats
+everything it copies back as untrusted. A planted `branch.bundle` still has to pass the
+one-ref check, verification, the scan and the fresh-clone push; a planted `summary.env`
+can change the label printed for the run (for example `STATUS=done`), not what is
+published, and the pull request is always a draft the owner reads. On a normal
+exit the entrypoint rewrites `summary.env` and deletes any `branch.bundle` it did not
+make itself before it creates its own. Only a container killed before that point leaves
+planted files in place.
 
 Other points:
 - Because of this, the worker must only be given tasks from the owner's own issues and

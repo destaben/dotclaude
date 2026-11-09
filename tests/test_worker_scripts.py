@@ -247,6 +247,10 @@ emit({"type": "assistant", "message": {"content": [{"type": "text", "text": text
 if knobs.get("commit"):
     with open(os.path.join(os.getcwd(), knobs["commit"]), "w") as work:
         work.write(knobs.get("commit_content", "work\n"))
+if knobs.get("plant"):
+    # A test runner the worker started can write anywhere the container user can, the run directory included.
+    with open(knobs["plant"], "w") as planted:
+        planted.write("planted by the worker\n")
 if knobs.get("extra_branch"):
     subprocess.run(["git", "branch", knobs["extra_branch"]], check=True)
 if knobs.get("break_index") == "1":
@@ -1540,6 +1544,27 @@ class TermTests(WorkerCase):
         summary = read_summary(self.out / "summary.env")
         self.assertEqual(summary["COMMITS"], "1", "the edit written during the shutdown is committed")
         self.assertEqual(summary["BUNDLE"], "yes")
+
+    def test_the_slow_shutdown_is_still_waited_for_when_ps_is_not_available(self):
+        # The process group comes from the shell's job table, not from ps, which an image may not have.
+        ps = self.bin / "ps"
+        ps.write_text("#!/bin/sh\nexit 127\n")
+        ps.chmod(0o755)
+        result = self.run_worker("--handoff", str(self.handoff_src), "--timeout", "3s", "--no-publish", env={
+            "STUB_CLAUDE_SLEEP": "30", "STUB_CLAUDE_TERM_DELAY": "2", "WORKER_STOP_GRACE": "20"})
+        self.assertEqual(result.returncode, 124, result.stderr)
+        self.assertIn("LATE-HANDOFF", (self.out / "HANDOFF-OUT.md").read_text())
+        summary = read_summary(self.out / "summary.env")
+        self.assertEqual(summary["COMMITS"], "1", "the edit written during the shutdown is committed")
+
+    def test_a_bundle_the_worker_planted_in_the_run_directory_is_removed_not_published(self):
+        run_id = "20261108-000000-7"
+        planted = self.remote / "worker" / "runs" / run_id / "branch.bundle"
+        result, _, run_dir = self.run_entry(run_id=run_id, env={"STUB_CLAUDE_OUT": "done",
+                                                                "STUB_CLAUDE_PLANT": str(planted)})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((run_dir / "branch.bundle").exists(), "only a bundle the entrypoint made may remain")
+        self.assertEqual(read_summary(run_dir / "summary.env")["BUNDLE"], "no")
 
 
 class HandoffOutTests(WorkerCase):

@@ -137,9 +137,8 @@ whose chair's verdict settles the choice (except the escalation cases in the
 runs the `commit-and-pr` skill directly, for a change you've already verified
 yourself and don't want the full `/release` pipeline for, and the `worker` skill,
 which you start yourself and which publishes its result as a draft pull request
-for you to review. The `token-auditor`
-agent runs on demand (not part of this diagram) to report context bloat in `CLAUDE.md`, skills,
-and agents.
+for you to review. The `token-auditor` agent runs on demand (not part of this
+diagram) to report context bloat in `CLAUDE.md`, skills, and agents.
 
 Severe findings are security issues, data loss, failing tests, and broken
 public contracts. Everything else asks you first. No step here is a hook —
