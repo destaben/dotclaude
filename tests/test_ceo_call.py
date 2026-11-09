@@ -2102,6 +2102,14 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 3)
         self.assertEqual(json.loads(out)["status"], "undecided")
 
+    def test_a_state_file_path_with_a_nul_byte_is_an_error_line_not_a_traceback(self):
+        env_file = Path(self.tmp.name) / "env"
+        self.config.write_text(json.dumps({"env_file": str(env_file), "state_file": "bad\u0000path"}))
+        code, out, err = self.run_main(["ask", "--request", str(self.request)])
+        self.assertEqual(code, 1)
+        self.assertTrue(err.startswith("ERROR:"))
+        self.assertNotIn("Traceback", err)
+
     def test_input_problems_exit_one_with_an_error_line_and_no_traceback(self):
         for argv in (["ask", "--request", str(Path(self.tmp.name) / "missing.json")],):
             code, out, err = self.run_main(argv)

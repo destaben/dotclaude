@@ -1200,6 +1200,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     except CallError as error:
         print("ERROR: %s" % error, file=sys.stderr)
         return 1
+    except (OSError, ValueError) as error:
+        # An owner-written path or file the script could not use (for example a NUL byte in `state_file`):
+        # report the kind of failure only, never a traceback or the offending text.
+        print("ERROR: cannot use a configured path or file (%s)" % type(error).__name__, file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
