@@ -102,4 +102,8 @@
    The residual risks are listed in the skill's own section. The one the owner accepted
    for the spike: the allowed test runners execute code the worker wrote, with network
    access and read access to the login, so tasks come only from owner-authored input and
-   the login stays revocable; a network allow-list is the future hardening.
+   the login stays revocable; a network allow-list is the future hardening. A related
+   judgment call: a pushed branch opens the repository's `pull_request` workflows on its
+   own code, so the one that runs a branch's scripts and tests (`docs-check`) declares a
+   read-only token (`permissions: contents: read`), and the skill tells the owner to use
+   the worker only on repositories whose such workflows hold no secrets.

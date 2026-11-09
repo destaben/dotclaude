@@ -106,15 +106,15 @@ owner (used to read owner-authored issues and to open the draft pull request).
     scripts/worker_run.sh <ssh-alias> <repo> --handoff FILE --accept-worker-handoff [--original FILE] ...
 
 - `<repo>` is `owner/name`. `--timeout` takes `90`, `90s`, `90m` or `2h` (at most 24 h).
-- `--issue N`: one query reads the issue's author, title, body, who last edited the body
-  and who renamed the title. The script checks that the author is the authenticated `gh`
+- `--issue N`: one query reads the issue's author, title, body, everyone who edited the
+  body (its revision history) and who renamed the title. The script checks that the author is the authenticated `gh`
   user, builds the handoff from `templates/handoff.md` out of that same answer (so the
   text cannot change between the check and its use), and quotes the issue text into the
   Untrusted input section only. A non-owner issue exits 2 with a message. An issue whose
-  body was last edited, or whose title was changed, by someone other than the
+  body was ever edited, or whose title was changed, by someone other than the
   authenticated user is refused too (anyone with write access can do either): read the
-  change, then edit the issue again yourself, or use `--handoff`. Only the last 100 title
-  changes are looked at.
+  change and use `--handoff`, or recreate the issue yourself. Only the last 100 title
+  changes and the first 100 body revisions are looked at.
 - `--handoff FILE`: the owner's own handoff is uploaded unchanged after checks
   (version 1, matching repo, status `new` or `checkpoint`, a valid branch). A handoff
   that a worker wrote is refused unless `--accept-worker-handoff` is given.
@@ -437,7 +437,7 @@ handoff path is writable under the real rules; it does not show that any given d
 path is refused, which needs a login the suite does not have. The enforcement claims
 above come from a review against claude 2.1.319 with a mock API, not from a test in the
 test suite. Both tests are skipped where the binary is absent, which includes the repository's
-CI (`docs-check`), so they show something only on a machine that has `claude`; the
+CI, so they show something only on a machine that has `claude`; the
 2.1.319 results are from local runs.
 
 The rule syntax is Claude Code's, and both lists are for the owner to tune after the

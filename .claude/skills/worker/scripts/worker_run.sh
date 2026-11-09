@@ -171,13 +171,13 @@ show_instruction_diff() {
 
 # check_issue_owner: --issue runs only for issues the authenticated gh user wrote and has not seen changed by anyone
 # else. Anyone else's issue text is untrusted input the worker must never be asked to act on. Everything is read in
-# one query (author, title, body, last editor of the body, who renamed the title) and the title and body used later
+# one query (author, title, body, everyone who edited the body, who renamed the title) and the title and body used later
 # are the ones from that same answer, so nothing can change between the check and the use.
 check_issue_owner() {
-  local me raw author editor renamers who
+  local me raw author editors renamers who
   me=$(gh api user --jq .login) || refuse "could not read the authenticated gh user"
   # shellcheck disable=SC2016 # the single quotes hold a GraphQL query; $o, $r and $n are its variables
-  raw=$(gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){author{login} title body lastEditedAt editor{login} timelineItems(last:100,itemTypes:[RENAMED_TITLE_EVENT]){nodes{... on RenamedTitleEvent{actor{login}}}}}}}' \
+  raw=$(gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){author{login} title body lastEditedAt editor{login} userContentEdits(first:100){nodes{editor{login}}} timelineItems(last:100,itemTypes:[RENAMED_TITLE_EVENT]){nodes{... on RenamedTitleEvent{actor{login}}}}}}}' \
     -f o="${REPO%%/*}" -f r="${REPO##*/}" -F n="$ISSUE") || refuse "could not read issue #$ISSUE in $REPO"
   issue_field() {
     printf '%s' "$raw" | python3 -I -c '
@@ -190,8 +190,13 @@ elif what == "title":
     sys.stdout.write((issue["title"] or "").replace("\x00", ""))
 elif what == "body":
     sys.stdout.write((issue.get("body") or "").replace("\x00", ""))
-elif what == "editor":
-    print(((issue.get("editor") or {}).get("login") or "unknown") if issue.get("lastEditedAt") else "")
+elif what == "editors":
+    # Everyone who changed the body: the whole revision history, plus the last editor GitHub reports.
+    nodes = (issue.get("userContentEdits") or {}).get("nodes") or []
+    names = {(n.get("editor") or {}).get("login") or "unknown" for n in nodes if n}
+    if issue.get("lastEditedAt"):
+        names.add((issue.get("editor") or {}).get("login") or "unknown")
+    print(" ".join(sorted(names)))
 elif what == "renamers":
     nodes = (issue.get("timelineItems") or {}).get("nodes") or []
     print(" ".join(sorted({(n.get("actor") or {}).get("login") or "unknown" for n in nodes if n})))
@@ -201,9 +206,11 @@ elif what == "renamers":
   [ -n "$author" ] && [ "$author" = "$me" ] \
     || refuse "issue #$ISSUE was not written by the authenticated gh user; only owner-authored issues can run with --issue (use --handoff for other work)"
   # Anyone with write access can edit a body or rename an issue. Every editor must be the owner too.
-  editor=$(issue_field editor | tr -cd 'A-Za-z0-9[]_-') || refuse "could not read who last edited issue #$ISSUE in $REPO"
-  [ -z "$editor" ] || [ "$editor" = "$me" ] \
-    || refuse "issue #$ISSUE was last edited by $editor, not by the authenticated gh user; edit it again yourself after reading the change, or use --handoff"
+  editors=$(issue_field editors | tr -cd 'A-Za-z0-9[]_ -') || refuse "could not read who edited issue #$ISSUE in $REPO"
+  for who in $editors; do
+    [ "$who" = "$me" ] \
+      || refuse "issue #$ISSUE was edited by $who, not only by the authenticated gh user; read the change and use --handoff, or recreate the issue yourself"
+  done
   renamers=$(issue_field renamers | tr -cd 'A-Za-z0-9[]_ -') || refuse "could not read who renamed issue #$ISSUE in $REPO"
   for who in $renamers; do
     [ "$who" = "$me" ] || refuse "the title of issue #$ISSUE was changed by $who, not by the authenticated gh user; rename it yourself after reading the change, or use --handoff"

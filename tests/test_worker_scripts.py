@@ -178,10 +178,12 @@ if args[:2] == ["issue", "view"] and "--json" in args:
 if args[:2] == ["api", "graphql"]:
     import json
     editor = knob("STUB_ISSUE_EDITOR")
+    history = [name for name in knob("STUB_ISSUE_EDIT_HISTORY").split(",") if name]
     renamer = knob("STUB_ISSUE_RENAMER")
     issue = {"author": {"login": knob("STUB_ISSUE_AUTHOR", "owner-user")}, "title": knob("STUB_ISSUE_TITLE"),
              "body": knob("STUB_ISSUE_BODY"), "lastEditedAt": "2026-11-09T00:00:00Z" if editor else None,
              "editor": {"login": editor} if editor else None,
+             "userContentEdits": {"nodes": [{"editor": {"login": name}} for name in history]},
              "timelineItems": {"nodes": [{"actor": {"login": renamer}}] if renamer else []}}
     sys.stdout.write(json.dumps({"data": {"repository": {"issue": issue}}}) + "\n")
     sys.exit(0)
@@ -675,9 +677,17 @@ class HandoffTests(WorkerCase):
     def test_an_issue_last_edited_by_someone_else_is_refused_before_any_run(self):
         result = self.run_worker("--issue", "15", env={"STUB_ISSUE_EDITOR": "a-collaborator"})
         self.assertEqual(result.returncode, 2)
-        self.assertIn("last edited by a-collaborator", result.stderr)
+        self.assertIn("edited by a-collaborator", result.stderr)
         self.assertEqual(self.calls("docker"), [])
         self.assertFalse(self.claude_record.exists())
+
+    def test_an_issue_a_collaborator_edited_before_the_owner_edited_it_again_is_still_refused(self):
+        # GitHub reports only the last editor; the revision history shows the earlier one.
+        result = self.run_worker("--issue", "15", env={"STUB_ISSUE_EDITOR": "owner-user",
+                                                       "STUB_ISSUE_EDIT_HISTORY": "a-collaborator,owner-user"})
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("edited by a-collaborator", result.stderr)
+        self.assertEqual(self.calls("docker"), [])
 
     def test_an_issue_renamed_by_someone_else_is_refused_before_any_run(self):
         result = self.run_worker("--issue", "15", env={"STUB_ISSUE_RENAMER": "a-collaborator"})

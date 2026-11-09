@@ -24,7 +24,7 @@ REPO_SPECIFIC_PATTERNS = (
     "docs/decisions/",
     "docs/plans/",
     "scripts/validate_repo.py",
-    "docs-check.yml",
+    "docs-check",
 )
 
 
