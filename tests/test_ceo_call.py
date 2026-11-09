@@ -2479,6 +2479,14 @@ class GuardTests(unittest.TestCase):
             (folder / "hosts").write_text("# the telephony host\nmyhost\n\n bad alias \nsecond-host\n")
             self.assertEqual(self.guard.read_hosts(home), ("myhost", "second-host"))
 
+    def test_a_trailing_comment_after_an_alias_is_ignored(self):
+        import tempfile as _t
+        with _t.TemporaryDirectory() as home:
+            folder = Path(home) / ".config" / "ceo-call"
+            folder.mkdir(parents=True)
+            (folder / "hosts").write_text("homelab  # telephony box\nother#note\n")
+            self.assertEqual(self.guard.read_hosts(home), ("homelab", "other"))
+
     def test_the_config_is_mandatory(self):
         for command in (
             "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py check",

@@ -37,7 +37,7 @@ def read_hosts(home: str):
     otherwise come from the council brief, which is untrusted; a missing file allows no remote host."""
     try:
         with open(os.path.join(home, ".config", "ceo-call", "hosts"), encoding="utf-8") as handle:
-            lines = [line.strip() for line in handle]
+            lines = [line.split("#", 1)[0].strip() for line in handle]  # a trailing "# note" is a comment
     except (OSError, UnicodeDecodeError):
         return ()
     return tuple(line for line in lines if line and not line.startswith("#") and ALIAS.fullmatch(line))

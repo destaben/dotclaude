@@ -55,9 +55,10 @@ The exceptions are in "When the council cannot resolve it" below.
 The chair's verdict binds in every case but two, and in those the decision goes back to the user: a
 low-confidence verdict on something costly to reverse, or an unanswered fatal flaw from the
 contrarian (which includes the security or data-loss flaw that "What it never overrides" already sends
-back), the same two cases `/council` names. Nothing else in a verdict goes back to the user; the confirmations under "What it never overrides" still do. If the `ceo-call`
-skill is set up (see "Is it set up?" there), hand the decision to the
-`claudio` agent (the CEO, above the chair, with the user as its only superior),
+back), the same two cases `/council` names. Nothing else in a verdict goes
+back to the user; the confirmations under "What it never overrides" still do.
+If the `ceo-call` skill is set up (see its "Is it set up?" section), hand the
+decision to the `claudio` agent (the CEO, above the chair, with the user as its only superior),
 which phones the user. The user's answer is final. If it cannot reach them, the decision
 stays pending: stop the work that depends on it, say so in the terminal and wait for the user. Without
 the `ceo-call` skill, simply ask the user in the terminal.
