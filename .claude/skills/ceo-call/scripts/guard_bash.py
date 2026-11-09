@@ -10,8 +10,8 @@ stdin; exits 0 to allow and 2 to block (the message on stderr goes back to the a
 
 Allowed (optionally prefixed by `ssh <alias>`, with no ssh options, and only for an alias listed in
 `~/.config/ceo-call/hosts`, one per line), only with the script at exactly
-`~/.claude/skills/ceo-call/scripts/ceo_call.py` (over ssh, only this `~` form, single-quoted so the remote
-shell expands it; locally, also this machine's own absolute home path), no quotes, no shell operators, no `..`:
+`~/.claude/skills/ceo-call/scripts/ceo_call.py` (over ssh, only this `~` form, single-quoted so the local shell
+leaves the `~` alone and the remote shell expands it; locally, also this machine's own absolute home path), no quotes, no shell operators, no `..`:
     python3 <script> --config ~/.config/ceo-call/config.json check
     python3 <script> --config ~/.config/ceo-call/config.json ask --request - <<'CEO_REQUEST'   (JSON lines follow, the last line
         is CEO_REQUEST; the quoted delimiter means the body is never expanded). A request file path

@@ -36,7 +36,8 @@ python3 scripts/install.py --uninstall      # remove what a prior run installed
   its `.github/scripts/check_review.py` are copied by hand, not by `install.py`.
 - **`claudio` and `ceo-call` need the user-scope install**: a project-level copy
   takes precedence over it and can change or drop its shell-guard hook (see
-  "Agent safety" in the `ceo-call` skill).
+  "Agent safety" in the `ceo-call` skill). Project-scope `install.py` still
+  copies both, with no special case, so do not rely on it for these two.
 - Everything is symlinked (or copied with `--copy`) whole, **except
   `settings.json`, which is merged** — every run, not just the first. Your
   existing `hooks`, `theme`, `model`, or anything else dotclaude doesn't own

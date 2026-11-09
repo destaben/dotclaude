@@ -213,6 +213,11 @@ a decision taken with no one to act on it. The decision stays pending and `claud
   120 s socket deadline per prompt plus conversion, and `SYNTH_BUDGET_S` = 300 s for the whole request, checked
   after every prompt); when it overruns, no call is placed and the owner gets an error notice. Adding it to the
   call arithmetic would not make a retry safer, since no call is live while it runs.
+- **A stale phone channel blocks asks:** `endpoint_in_call` refuses while any channel of the endpoint is up,
+  whoever started it, so an ask never rings on top of a live call. A channel Asterisk leaves behind is an Asterisk
+  fault that only the owner can clear (`core show channels`); the refusal says so, and ageing channels out by
+  guesswork could ring over a real call. Each refusal keeps its slot like any message, which caps the notices at
+  `max_per_hour`. Do not report it again unless the check can tell a stale channel from a live one.
 
 ## Rounds
 A call gets three rounds to produce a confirmed choice. Pressing 9 (repeat), any other key, or staying

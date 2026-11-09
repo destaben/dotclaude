@@ -83,4 +83,6 @@
    (speech server or Docker down) gives the throttle slot back on purpose, so a
    transient fault does not lock the owner out, but only when no chat message
    reached the owner (an error notice that did go out keeps the slot); a loop of
-   such failures is serialised by the run lock.
+   such failures is serialised by the run lock. The spoken prompts and the owner's chat messages
+   are in Spanish on purpose (product output for the owner's phone, not docs); the
+   rule and its limit live in the skill's design notes.

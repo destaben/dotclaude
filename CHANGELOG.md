@@ -51,7 +51,7 @@ now hand two named cases back to the user, by phone when this is set up (the cha
 still issues its verdict; `council-policy` decides afterwards whether it goes back
 to the user); install `claudio` and `ceo-call` at user scope, because a
 project-level copy takes precedence and can change its hook. No instance data
-enters this repo. Why: `docs/decisions/0004-tooling-choices.md`, item 9.
+enters this repo. Tracks #13. Why: `docs/decisions/0004-tooling-choices.md`, item 9.
 
 ## 2026-11-07 — Administer LAN devices over SSH
 
