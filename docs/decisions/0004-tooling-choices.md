@@ -106,8 +106,10 @@
    judgment call: a pushed branch opens the repository's `pull_request` workflows on its
    own code. Two workflows here run on `pull_request`: `docs-check` runs the branch's
    scripts and tests and declares a read-only token (`permissions: contents: read`);
-   `claude-pr-review` holds `CLAUDE_CODE_OAUTH_TOKEN`, skips drafts, and runs for a
-   draft only on an `@claude review` comment from the owner, a member or a collaborator.
+   `claude-pr-review` holds `CLAUDE_CODE_OAUTH_TOKEN` and keeps write permission on pull
+   requests and issues (unlike `docs-check`, so draft-until-read is its only guard), skips
+   drafts, and runs for a draft only on an `@claude review` comment from the owner, a
+   member or a collaborator.
    So worker pull requests stay drafts until read, and the skill tells the owner to use
    the worker only on repositories whose `push` and `pull_request` workflows hold no
    secrets or wait for an approval (the skill's wording).

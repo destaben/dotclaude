@@ -455,10 +455,11 @@ The `claude` process is started with `env -i` and only these variables: `PATH`, 
 repo's config (`.git/config` and `.git/hooks` are denied), but a test runner can. So once
 claude has exited, every git command the entrypoint runs gets `core.fsmonitor=false` and
 `core.hooksPath=/dev/null` from the environment, which outranks the config files, and the
-commit identity and `--no-verify` are passed explicitly. A filter driver named in a planted
-`.git/config` and selected by a `.gitattributes` is not covered: it could run inside the
-container when files are staged. The impact stays in the container, and the owner's machine
-still verifies and scans the bundle.
+commit identity and `--no-verify` are passed explicitly. The filter and include sections of
+the repository's config are removed first, so a filter driver a test planted (and a
+`.gitattributes` selecting it) cannot run when files are staged. Other config that names a
+program is not enumerated; the impact stays in the container, and the owner's machine still
+verifies and scans the bundle.
 
 **The log scrubber fails closed.** Before claude starts, the entrypoint checks that the
 login directory and work directory paths are plain (see *Tool policy*), and that the
@@ -583,7 +584,9 @@ would reach a public draft pull request. Two layers stand in the way, and neithe
 guarantee. Before it commits, the entrypoint checks what is staged against the actual login
 values: the value, every 16-character window of it (so a split into pieces of 16 or more
 characters is seen), and its base64 and hex forms; a match commits nothing and ends the run
-`blocked`. Then the host's secret scan looks for the literal token shapes. A copy that is
+`blocked`. The same check runs over every commit on the branch before the bundle is made (the
+content of each commit and its message), because a test the worker ran can `git commit` by
+itself; a match makes no bundle. Then the host's secret scan looks for the literal token shapes. A copy that is
 reversed, encrypted, split into pieces shorter than 16 characters or otherwise transformed
 passes both. The owner accepted the residual risk for the spike with this publication path
 included.

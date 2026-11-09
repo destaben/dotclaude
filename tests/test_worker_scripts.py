@@ -287,6 +287,19 @@ if knobs.get("commit"):
     os.makedirs(os.path.dirname(target_path), exist_ok=True)
     with open(target_path, "w") as work:
         work.write(knobs.get("commit_content", "work\n"))
+if knobs.get("direct_commit"):
+    # Code the worker ran commits by itself, outside the entrypoint's own commit.
+    direct_name, _, direct_content = knobs["direct_commit"].partition("=")
+    with open(os.path.join(os.getcwd(), direct_name), "w") as direct_file:
+        direct_file.write(direct_content)
+    subprocess.run(["git", "add", direct_name], check=True)
+    subprocess.run(["git", "-c", "user.name=w", "-c", "user.email=w@invalid", "commit", "-q", "--no-verify", "-m", "direct"],
+                   check=True)
+if knobs.get("plant_filter"):
+    # A test runner writes a filter driver into the repository config and selects it with .gitattributes.
+    subprocess.run(["git", "config", "--local", "filter.evil.clean", "touch " + knobs["plant_filter"]], check=True)
+    with open(os.path.join(os.getcwd(), ".gitattributes"), "w") as attributes:
+        attributes.write("* filter=evil\n")
 if knobs.get("break_jq"):
     # From here on the login scrubber cannot read the login values: jq (a test stub) fails once this file exists.
     open(knobs["break_jq"], "w").close()
@@ -1766,6 +1779,25 @@ class TermTests(WorkerCase):
         summary = read_summary(run_dir / "summary.env")
         self.assertEqual(summary["STATUS"], "blocked", result.stderr)
         self.assertEqual(summary["COMMITS"], "0", "nothing is committed when the check could not run")
+
+    def test_a_commit_the_workers_own_code_made_with_the_login_in_it_is_not_bundled(self):
+        import base64
+        result, _, run_dir = self.run_entry(run_id="20261108-000000-26", env={
+            "STUB_CLAUDE_OUT": "done",
+            "STUB_CLAUDE_DIRECT_COMMIT": "fixture.py=T = %r\n" % base64.b64encode(LOGIN_SECRET.encode()).decode()})
+        summary = read_summary(run_dir / "summary.env")
+        self.assertEqual(summary["STATUS"], "blocked", result.stderr)
+        self.assertIn("login", summary["REASON"])
+        self.assertEqual(summary["BUNDLE"], "no")
+        self.assertFalse((run_dir / "branch.bundle").exists())
+
+    def test_a_filter_driver_planted_in_the_repository_config_is_not_run_when_files_are_staged(self):
+        marker = self.tmp / "filter-ran"
+        result, _, run_dir = self.run_entry(run_id="20261108-000000-27", env={
+            "STUB_CLAUDE_OUT": "done", "STUB_CLAUDE_COMMIT": "feature.txt", "STUB_CLAUDE_PLANT_FILTER": str(marker)})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(marker.exists(), "the planted filter ran")
+        self.assertEqual(read_summary(run_dir / "summary.env")["COMMITS"], "1", "the edits are still committed")
 
     def test_a_run_without_any_login_file_still_commits_its_edits(self):
         # With no login there is nothing to look for; the check must not block every commit.

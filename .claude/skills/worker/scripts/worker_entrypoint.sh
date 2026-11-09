@@ -416,6 +416,19 @@ report_left_out() {
   save_failed "$count file(s) were left out of the commit because their names look like credential files ($shown)"
 }
 
+# neutralise_repo_config: a test the worker ran can write a filter driver into the repository's config and select it
+# with a .gitattributes in the tree; git add would then run that program. Filter and include sections are removed
+# from the local config before git touches the tree again. Best effort: a failure here is not a reason to stop.
+neutralise_repo_config() {
+  git -C "$WORK/repo" config --local --name-only --list 2>/dev/null | while IFS= read -r key; do
+    case $key in
+      filter.*.*|include.*|includeif.*.*) printf '%s\n' "${key%.*}" ;;
+    esac
+  done | sort -u | while IFS= read -r section; do
+    git -C "$WORK/repo" config --local --remove-section "$section" 2>/dev/null || true
+  done || true
+}
+
 # login_patterns: fixed strings that betray the login in a file: every 16-character window of each long login
 # value (so a value split into pieces of 16 or more characters still matches), of its base64 form at the three
 # alignments and of its hex form. Values shorter than 24 characters are not tokens and are left out, so ordinary
@@ -449,6 +462,25 @@ login_in_staged() {
   case $rc in 0) return 0 ;; 1) return 1 ;; *) return 2 ;; esac
 }
 
+# login_in_commits: 0 when a commit on the run's branch (its content, or its message) holds a login value or a
+# disguised copy of it, 1 when none does, 2 when the check could not run. The staged check covers only what the
+# entrypoint commits; code the worker ran can commit by itself.
+login_in_commits() {
+  local patterns rev rc=0
+  local -a revs=()
+  [ "$(secret_values | head -n 1)" = OK ] || return 2
+  patterns=$(login_patterns) || return 2
+  [ -n "$patterns" ] || return 1
+  while IFS= read -r rev; do revs+=("$rev"); done < <(git -C "$WORK/repo" rev-list "origin/$BASE..refs/heads/$BRANCH" 2>/dev/null)
+  [ "${#revs[@]}" -gt 0 ] || return 1
+  git -C "$WORK/repo" grep -a -q -F -f <(printf '%s\n' "$patterns") "${revs[@]}" >/dev/null 2>&1 || rc=$?
+  case $rc in 0) return 0 ;; 1) ;; *) return 2 ;; esac
+  rc=0
+  git -C "$WORK/repo" log --format=%B "origin/$BASE..refs/heads/$BRANCH" 2>/dev/null \
+    | grep -a -q -F -f <(printf '%s\n' "$patterns") || rc=$?
+  case $rc in 0) return 0 ;; 1) return 1 ;; *) return 2 ;; esac
+}
+
 # note_ignored: new files the repository's own .gitignore matches are not committed (force-adding them would
 # commit build output and caches). They are not dropped quietly either: the count and the first names go into
 # summary.env and the owner's machine prints them. Directories are listed once. Not a failure.
@@ -470,10 +502,11 @@ note_ignored() {
 commit_work() {
   [ -d "$WORK/tree" ] || return 0
   # The repository's own .git/config can have been written by a test the worker ran. These two settings are
-  # forced for every git command from here on (the environment outranks the config files); filter drivers named
-  # in that config are not covered, see Known residual risk.
+  # forced for every git command from here on (the environment outranks the config files), and the sections that
+  # name a program to run when files are staged (filter drivers) or pull in more config (includes) are removed.
   export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=core.fsmonitor GIT_CONFIG_VALUE_0=false \
     GIT_CONFIG_KEY_1=core.hooksPath GIT_CONFIG_VALUE_1=/dev/null
+  neutralise_repo_config
   note_ignored
   local changes
   changes=$(git -C "$WORK/tree" status --porcelain 2>/dev/null) \
@@ -522,6 +555,15 @@ make_bundle() {
   fi
   COMMITS=$(digits_or "$COMMITS")
   if [ "$COMMITS" -gt 0 ]; then
+    local commits_rc=0
+    login_in_commits || commits_rc=$?
+    if [ "$commits_rc" = 0 ]; then
+      save_failed "a commit on the branch holds the login or a disguised copy of it, so no bundle was made"
+      return 0
+    elif [ "$commits_rc" != 1 ]; then
+      save_failed "the commits could not be checked for the login, so no bundle was made"
+      return 0
+    fi
     if git -C "$WORK/repo" bundle create "$RUN_DIR/branch.bundle" "refs/heads/$BRANCH" "^origin/$BASE" >/dev/null 2>&1; then
       BUNDLE=yes
     else
