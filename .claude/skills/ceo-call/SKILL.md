@@ -185,7 +185,7 @@ a decision taken with no one to act on it. The decision stays pending and `claud
   disk.
 - **Repeated rules are on purpose:** the single-hook exception and the two escalation cases are stated briefly in
   more than one place, because each file that states them is read on its own, and a statement of "no hooks" without
-  the exception would be false. Where they are repeated is recorded in the install's decision records.
+  the exception would be false.
 - **Credential-looking text is refused (best effort):** `validate_request` rejects a question or option that
   matches common credential shapes (GitHub, `sk-` and AWS keys, Telegram bot tokens, PEM private keys). It cannot
   recognise every secret, so the agent prompt rule stays the main control and the residual risk below stays accepted.

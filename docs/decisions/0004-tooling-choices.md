@@ -85,6 +85,7 @@
    reached the owner (an error notice that did go out keeps the slot); a loop of
    such failures is serialised by the run lock. The spoken prompts and the owner's chat messages
    are in Spanish on purpose (product output for the owner's phone, not docs); the
-   rule and its limit live in the skill's design notes. The single-hook exception and
-   the two escalation cases are repeated briefly in CLAUDE.md, the README, `docs/pipeline.md`,
-   the ADRs, `council-policy` and `council.md`, because each is read on its own.
+   rule and its limit live in the skill's design notes. The single-hook exception is
+   repeated briefly in CLAUDE.md, the README, `docs/pipeline.md` and the ADRs, and the
+   two escalation cases in the README, `docs/pipeline.md`, `council-policy` and
+   `council.md`, because each file is read on its own.
