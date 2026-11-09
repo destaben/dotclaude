@@ -32,6 +32,7 @@ The mechanisms and the reasons behind them are in the skill's SKILL.md and in th
 The CI job that runs a branch's own scripts and tests (`docs-check`) now declares a read-only
 token (`contents: read`), with a test, because a worker branch's code runs there as soon as
 its draft pull request opens.
+`validate_repo.py` now also rejects a mention of the `docs-check` job in shipped files.
 The decision is recorded in `docs/decisions/0004-tooling-choices.md`, item 10.
 
 ## 2026-11-08 — PR review only posts finished reviews

@@ -183,8 +183,10 @@ if args[:2] == ["api", "graphql"]:
     issue = {"author": {"login": knob("STUB_ISSUE_AUTHOR", "owner-user")}, "title": knob("STUB_ISSUE_TITLE"),
              "body": knob("STUB_ISSUE_BODY"), "lastEditedAt": "2026-11-09T00:00:00Z" if editor else None,
              "editor": {"login": editor} if editor else None,
-             "userContentEdits": {"nodes": [{"editor": {"login": name}} for name in history]},
-             "timelineItems": {"nodes": [{"actor": {"login": renamer}}] if renamer else []}}
+             "userContentEdits": {"pageInfo": {"hasNextPage": knob("STUB_ISSUE_TRUNCATED") == "1"},
+                                  "nodes": [{"editor": {"login": name}} for name in history]},
+             "timelineItems": {"pageInfo": {"hasPreviousPage": False},
+                               "nodes": [{"actor": {"login": renamer}}] if renamer else []}}
     sys.stdout.write(json.dumps({"data": {"repository": {"issue": issue}}}) + "\n")
     sys.exit(0)
 if args[:2] == ["api", "user"]:
@@ -687,6 +689,12 @@ class HandoffTests(WorkerCase):
                                                        "STUB_ISSUE_EDIT_HISTORY": "a-collaborator,owner-user"})
         self.assertEqual(result.returncode, 2)
         self.assertIn("edited by a-collaborator", result.stderr)
+        self.assertEqual(self.calls("docker"), [])
+
+    def test_an_issue_with_more_edits_than_the_query_returns_is_refused_not_half_checked(self):
+        result = self.run_worker("--issue", "15", env={"STUB_ISSUE_EDITOR": "owner-user", "STUB_ISSUE_TRUNCATED": "1"})
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("more than 100", result.stderr)
         self.assertEqual(self.calls("docker"), [])
 
     def test_an_issue_renamed_by_someone_else_is_refused_before_any_run(self):

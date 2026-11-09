@@ -113,8 +113,8 @@ owner (used to read owner-authored issues and to open the draft pull request).
   Untrusted input section only. A non-owner issue exits 2 with a message. An issue whose
   body was ever edited, or whose title was changed, by someone other than the
   authenticated user is refused too (anyone with write access can do either): read the
-  change and use `--handoff`, or recreate the issue yourself. Only the last 100 title
-  changes and the first 100 body revisions are looked at.
+  change and use `--handoff`, or recreate the issue yourself. An issue with more than 100
+  body revisions or title changes is refused as well, because the rest cannot be checked.
 - `--handoff FILE`: the owner's own handoff is uploaded unchanged after checks
   (version 1, matching repo, status `new` or `checkpoint`, a valid branch). A handoff
   that a worker wrote is refused unless `--accept-worker-handoff` is given.
