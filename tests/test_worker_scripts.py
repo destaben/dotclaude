@@ -2376,6 +2376,12 @@ class SecretScanTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("private key", result.stdout)
 
+    def test_a_pgp_private_key_block_is_detected(self):
+        self.commit("key.asc", "-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOY\n-----END PGP PRIVATE KEY BLOCK-----\n", "key")
+        result = self.scan_repo()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("private key", result.stdout)
+
     def test_an_openai_project_key_is_caught(self):
         self.commit("config.txt", "key=sk-proj-" + "A" * 24 + "\n", "add key")
         result = self.scan_repo()

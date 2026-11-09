@@ -66,7 +66,7 @@ back to the user: see "When the council cannot resolve it" there, and the `ceo-c
   - not published, the bundle kept in the output directory: `--no-publish`, a run that
     timed out (exit 124), or one the publish checks refuse (exit 6);
   - not published, nothing usable: a run `refused` at the start (exit 2) or ended as an
-    `error` (exit 1).
+    `error` (exit 1; a `blocked` run without an escalation also exits 1 and is published).
 
 ## GitHub PR review (`.github/workflows/claude-pr-review.yml`)
 This workflow is dotclaude's own project-specific CI — it is *not* installed

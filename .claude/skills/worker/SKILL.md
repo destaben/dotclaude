@@ -258,7 +258,7 @@ the generic `sk-` form), AWS access key ids (`AKIA`), Google API keys (`AIza`), 
 tokens (`xox`), npm tokens (`npm_`), PyPI tokens (`pypi-AgEIcHlwaS5vcmc`), Stripe live keys
 (`sk_live_`, `rk_live_`), Slack webhook URLs, Google OAuth access tokens (`ya29.`),
 JWT-shaped strings, `"accessToken"` and `"refreshToken"` fields, and PEM private-key
-headers. A generic `password=` line is deliberately not matched: it would block ordinary
+headers (PEM and PGP). A generic `password=` line is deliberately not matched: it would block ordinary
 code, docs and tests, and the scanner is a literal-pattern safety net, not a guarantee. A
 newline inside a path name is a finding of its own, because the path scan reads one name
 per line and a token split by a newline would never match.

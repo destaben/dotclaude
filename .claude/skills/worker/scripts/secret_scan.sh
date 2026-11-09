@@ -45,7 +45,7 @@ PATTERNS=(
   'ya29\.[A-Za-z0-9_-]{20,}'
   'eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
   '"(accessToken|refreshToken)"[[:space:]]*:'
-  '-----BEGIN ([A-Z0-9]+ )*PRIVATE KEY-----'
+  '-----BEGIN ([A-Z0-9]+ )*PRIVATE KEY( BLOCK)?-----'
 )
 
 TMP=""
