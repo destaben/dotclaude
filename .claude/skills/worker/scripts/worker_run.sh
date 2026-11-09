@@ -32,6 +32,8 @@ BASE=""
 BRANCH=""
 RUN_ID=""
 ISSUE_TITLE=""
+ISSUE_BODY=""
+RUN_STARTED=0
 PUBLISH="none"
 PUBLISH_MSG=""
 PR_URL=""
@@ -167,38 +169,60 @@ show_instruction_diff() {
   fi
 }
 
-# check_issue_owner: --issue runs only for issues the authenticated gh user wrote. Anyone else's issue
-# text is untrusted input the worker must never be asked to act on.
+# check_issue_owner: --issue runs only for issues the authenticated gh user wrote and has not seen changed by anyone
+# else. Anyone else's issue text is untrusted input the worker must never be asked to act on. Everything is read in
+# one query (author, title, body, last editor of the body, who renamed the title) and the title and body used later
+# are the ones from that same answer, so nothing can change between the check and the use.
 check_issue_owner() {
-  local author me
-  author=$(gh issue view "$ISSUE" --repo "$REPO" --json author --jq .author.login) || refuse "could not read issue #$ISSUE in $REPO"
+  local me raw author editor renamers who
   me=$(gh api user --jq .login) || refuse "could not read the authenticated gh user"
+  # shellcheck disable=SC2016 # the single quotes hold a GraphQL query; $o, $r and $n are its variables
+  raw=$(gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){author{login} title body lastEditedAt editor{login} timelineItems(last:100,itemTypes:[RENAMED_TITLE_EVENT]){nodes{... on RenamedTitleEvent{actor{login}}}}}}}' \
+    -f o="${REPO%%/*}" -f r="${REPO##*/}" -F n="$ISSUE") || refuse "could not read issue #$ISSUE in $REPO"
+  issue_field() {
+    printf '%s' "$raw" | python3 -I -c '
+import json, sys
+issue = json.load(sys.stdin)["data"]["repository"]["issue"]
+what = sys.argv[1]
+if what == "author":
+    print((issue.get("author") or {}).get("login") or "")
+elif what == "title":
+    sys.stdout.write((issue["title"] or "").replace("\x00", ""))
+elif what == "body":
+    sys.stdout.write((issue.get("body") or "").replace("\x00", ""))
+elif what == "editor":
+    print(((issue.get("editor") or {}).get("login") or "unknown") if issue.get("lastEditedAt") else "")
+elif what == "renamers":
+    nodes = (issue.get("timelineItems") or {}).get("nodes") or []
+    print(" ".join(sorted({(n.get("actor") or {}).get("login") or "unknown" for n in nodes if n})))
+' "$1"
+  }
+  author=$(issue_field author | tr -cd 'A-Za-z0-9[]_-') || refuse "could not read issue #$ISSUE in $REPO"
   [ -n "$author" ] && [ "$author" = "$me" ] \
     || refuse "issue #$ISSUE was not written by the authenticated gh user; only owner-authored issues can run with --issue (use --handoff for other work)"
-  # Anyone with write access can edit an issue body. If it was edited, the last editor must be the owner too.
-  local editor
-  # shellcheck disable=SC2016 # the single quotes hold a GraphQL query; $o, $r and $n are its variables
-  editor=$(gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){lastEditedAt editor{login}}}}' \
-    -f o="${REPO%%/*}" -f r="${REPO##*/}" -F n="$ISSUE" \
-    --jq '.data.repository.issue | if .lastEditedAt == null then "" else (.editor.login // "unknown") end' | tr -cd 'A-Za-z0-9[]_-') \
-    || refuse "could not read who last edited issue #$ISSUE in $REPO"
+  # Anyone with write access can edit a body or rename an issue. Every editor must be the owner too.
+  editor=$(issue_field editor | tr -cd 'A-Za-z0-9[]_-') || refuse "could not read who last edited issue #$ISSUE in $REPO"
   [ -z "$editor" ] || [ "$editor" = "$me" ] \
     || refuse "issue #$ISSUE was last edited by $editor, not by the authenticated gh user; edit it again yourself after reading the change, or use --handoff"
+  renamers=$(issue_field renamers | tr -cd 'A-Za-z0-9[]_ -') || refuse "could not read who renamed issue #$ISSUE in $REPO"
+  for who in $renamers; do
+    [ "$who" = "$me" ] || refuse "the title of issue #$ISSUE was changed by $who, not by the authenticated gh user; rename it yourself after reading the change, or use --handoff"
+  done
+  ISSUE_TITLE=$(issue_field title) || refuse "could not read issue #$ISSUE in $REPO"
+  ISSUE_BODY=$(issue_field body) || refuse "could not read issue #$ISSUE in $REPO"
 }
 
 # build_issue_handoff <out-file>: fills templates/handoff.md for --issue. The issue title and body are
 # quoted (every line prefixed with "> ") into the Untrusted input section only, so they cannot open
 # a heading that the worker would read as instructions.
 build_issue_handoff() {
-  local body quoted="$TMP_DIR/untrusted.md"
-  ISSUE_TITLE=$(gh issue view "$ISSUE" --repo "$REPO" --json title --jq .title) || refuse "could not read issue #$ISSUE in $REPO"
-  body=$(gh issue view "$ISSUE" --repo "$REPO" --json body --jq .body) || refuse "could not read issue #$ISSUE in $REPO"
+  local quoted="$TMP_DIR/untrusted.md"
   BASE=$(gh repo view "$REPO" --json defaultBranchRef --jq .defaultBranchRef.name) || refuse "could not read the default branch of $REPO"
   valid_base "$BASE" || refuse "the default branch name of $REPO is not a valid branch name"
   BRANCH="worker/$(slugify "$ISSUE_TITLE")-$ISSUE"
   valid_branch "$BRANCH" || refuse "could not derive a valid branch name from the issue"
 
-  printf 'Issue #%s, title:\n\n%s\n\nIssue #%s, body:\n\n%s\n' "$ISSUE" "$ISSUE_TITLE" "$ISSUE" "$body" \
+  printf 'Issue #%s, title:\n\n%s\n\nIssue #%s, body:\n\n%s\n' "$ISSUE" "$ISSUE_TITLE" "$ISSUE" "$ISSUE_BODY" \
     | head -c 30000 | tr -d '\000-\010\013\014\016-\037\177' | sed 's/^/> /' > "$quoted"
 
   sed -e "s|{{REPO}}|$REPO|g" -e "s|{{BASE}}|$BASE|g" -e "s|{{BRANCH}}|$BRANCH|g" \
@@ -259,6 +283,28 @@ cleanup() {
   if [ "$LOCK_HELD" = 1 ] && [ "$(readlink "$LOCK_PATH" 2>/dev/null || true)" = "$$" ]; then
     rm -f "$LOCK_PATH"
   fi
+}
+
+# stop_container: stops the run's container with TERM and a grace period, so the entrypoint can finish its handoff,
+# summary and bundle, and removes it with rm -f only if it is still there after that.
+stop_container() {
+  remote "docker stop -t $STOP_GRACE worker-$RUN_ID >/dev/null 2>&1 || true; if [ -n \"\$(docker ps -aq --filter 'name=^worker-$RUN_ID\$')\" ]; then docker rm -f worker-$RUN_ID >/dev/null 2>&1 || true; fi" || true
+}
+
+# on_interrupt: Ctrl-C, TERM or HUP while the run is going. Without this the local script would exit and leave the
+# container running on the host. The container is stopped the way a timed-out run is, the work stays in the remote
+# runs directory, and nothing is fetched or published. A signal sent to this script alone is acted on when the ssh
+# in the foreground returns.
+# shellcheck disable=SC2329 # invoked by the INT, TERM and HUP trap
+on_interrupt() {
+  trap '' INT TERM HUP
+  if [ "$RUN_STARTED" = 1 ]; then
+    echo "worker: interrupted; stopping worker-$RUN_ID on $ALIAS (what it wrote stays in the remote runs directory)" >&2
+    stop_container
+  else
+    echo "worker: interrupted before the run started; nothing was run" >&2
+  fi
+  exit 130
 }
 
 # remote <command>: runs one line through `sh -c` on the host, the same way remote-hosts does.
@@ -564,6 +610,7 @@ main() {
   if [ "$ISSUE_SET" = 0 ] && [ "$HANDOFF_SET" = 0 ]; then usage; fi
 
   trap cleanup EXIT
+  trap on_interrupt INT TERM HUP
   [[ $ALIAS =~ $ALIAS_RE ]] || refuse "the ssh alias must be a plain name (letters, digits, . _ -)"
   [[ $REPO =~ $REPO_RE ]] || refuse "the repo must be owner/name"
   local listed
@@ -631,6 +678,7 @@ main() {
   # Every value below was validated above, so none of them can carry shell syntax.
   local run_cmd rc
   run_cmd="cd \"\$HOME/$REMOTE_DIR\" && if [ -n \"\$(docker ps -q --filter 'name=^worker-')\" ]; then echo 'another worker container is running on this host' >&2; exit 75; fi && docker compose run --rm -T --name worker-$RUN_ID -e RUN_ID=$RUN_ID -e REPO=$REPO -e BRANCH=$BRANCH -e HANDOFF=/inbox/$RUN_ID.md -e MAX_TURNS=$MAX_TURNS worker"
+  RUN_STARTED=1
   if run_bounded "$SECS" ssh -o BatchMode=yes -o ConnectTimeout=10 -- "$ALIAS" "sh -c $(shell_quote "$run_cmd")" >/dev/null; then
     rc=0
   else
@@ -641,9 +689,8 @@ main() {
     echo "busy: a worker container is already running on $ALIAS; nothing was run" >&2
     exit 5
   fi
-  # Stop the container with TERM and a grace period, so the entrypoint can finish its handoff, summary and bundle.
-  # Remove it with rm -f only if it is still there after that: a run that hit the limit is killed on this side.
-  remote "docker stop -t $STOP_GRACE worker-$RUN_ID >/dev/null 2>&1 || true; if [ -n \"\$(docker ps -aq --filter 'name=^worker-$RUN_ID\$')\" ]; then docker rm -f worker-$RUN_ID >/dev/null 2>&1 || true; fi" || true
+  # Stop the container with TERM and a grace period (see stop_container): a run that hit the limit is killed on this side.
+  stop_container
 
   fetch_run_file summary.env "$SUMMARY_MAX" || true
   fetch_run_file HANDOFF-OUT.md "$HANDOFF_OUT_MAX" || true

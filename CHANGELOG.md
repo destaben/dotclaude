@@ -29,6 +29,9 @@ data, not instructions. The container's claude process runs with a scrubbed
 environment. The residual risk is stated in the skill: an allowed test runner
 executes code the worker wrote, so tasks must come only from owner-authored input.
 The mechanisms and the reasons behind them are in the skill's SKILL.md and in the decision record.
+The CI job that runs a branch's own scripts and tests (`docs-check`) now declares a read-only
+token (`contents: read`), with a test, because a worker branch's code runs there as soon as
+its draft pull request opens.
 The decision is recorded in `docs/decisions/0004-tooling-choices.md`, item 10.
 
 ## 2026-11-08 — PR review only posts finished reviews

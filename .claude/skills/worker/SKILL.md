@@ -106,13 +106,15 @@ owner (used to read owner-authored issues and to open the draft pull request).
     scripts/worker_run.sh <ssh-alias> <repo> --handoff FILE --accept-worker-handoff [--original FILE] ...
 
 - `<repo>` is `owner/name`. `--timeout` takes `90`, `90s`, `90m` or `2h` (at most 24 h).
-- `--issue N`: the script checks that the issue's author is the authenticated `gh`
-  user, reads the issue's title and body, builds the handoff from
-  `templates/handoff.md`, and quotes the issue text into the Untrusted input section
-  only. A non-owner issue exits 2 with a message. An issue whose body was last edited
-  by someone other than the authenticated user is refused too (anyone with write access
-  can edit a body): read the change, then edit the issue again yourself, or use
-  `--handoff`.
+- `--issue N`: one query reads the issue's author, title, body, who last edited the body
+  and who renamed the title. The script checks that the author is the authenticated `gh`
+  user, builds the handoff from `templates/handoff.md` out of that same answer (so the
+  text cannot change between the check and its use), and quotes the issue text into the
+  Untrusted input section only. A non-owner issue exits 2 with a message. An issue whose
+  body was last edited, or whose title was changed, by someone other than the
+  authenticated user is refused too (anyone with write access can do either): read the
+  change, then edit the issue again yourself, or use `--handoff`. Only the last 100 title
+  changes are looked at.
 - `--handoff FILE`: the owner's own handoff is uploaded unchanged after checks
   (version 1, matching repo, status `new` or `checkpoint`, a valid branch). A handoff
   that a worker wrote is refused unless `--accept-worker-handoff` is given.
@@ -186,6 +188,12 @@ ignores TERM is killed after the grace period and whatever it had not yet writte
 lost. After TERM the entrypoint waits for the whole claude process group to exit (up to
 `WORKER_REAP_WAIT` seconds, default 20, then kills what is left) before it collects the
 handoff and commits, so a worker's last edit during a slow shutdown is not lost.
+
+Ctrl-C (or TERM or HUP) on the owner's machine while a run is going does the same stop:
+the script stops the container with the same grace period, prints that it was interrupted
+and exits 130. Nothing is fetched or published; what the entrypoint wrote stays in the
+remote runs directory. A signal sent to the script alone (not the whole foreground group
+that Ctrl-C reaches) is acted on when the ssh in the foreground returns.
 
 If the entrypoint cannot save the worker's edits (staging, the commit or the bundle fails),
 the run ends as `blocked` whatever the worker wrote, the worker's own status is kept as
@@ -588,10 +596,12 @@ These were raised in review, decided, and are written down so they are not re-ar
 - **Test runners run worker-written code.** Accepted for the spike, with its conditions
   and full scope in *Known residual risk*. The remedy is the hardening in (c), a network
   allow-list and a test environment without the login, not a rule in the allowlist.
-- **`acceptEdits` approves file commands (`touch`, `mkdir`, `cp` between worktree files).**
-  Checked against the real binary with the mock API: the `Read` deny rules still apply to
-  their path arguments, so `cp`, `ln -s` and `sed` of the login file are refused. The tests
-  `RealClaudeHandoffTests` keep that true, with a control that an ordinary `cp` is allowed.
+- **`acceptEdits` approves some file commands (`touch`, `mkdir`, `cp` and `sed` on worktree
+  files).** Checked against the real binary with the mock API: the `Read` deny rules still
+  apply to their path arguments, so `cp` and `sed` of the login file are refused, each with
+  a control that the same command on an ordinary file is allowed. `ln` is different: it is
+  not approved at all, even between ordinary files, so it is refused for that reason and
+  not by a `Read` rule. The tests in `RealClaudeHandoffTests` keep all of this true.
 - **A run stopped at the time limit is never published.** It can hold half-finished
   edits. Its question is printed, the bundle is kept (*Exit codes*, 124).
 - **Files the repository's `.gitignore` matches are not forced into the commit.** They
