@@ -3,6 +3,20 @@
 All notable changes to this repo are recorded here. Entries explain why a
 change was made, not just what changed — the diff already shows what.
 
+## 2026-11-09 — PR review loop stops at no severe findings
+
+The `github-ops` recipe for iterating on a PR's automated review aimed at zero
+findings, severe and non-severe. On a large PR that never converged: each push brought
+six to ten new items, many of them hardening of edge cases and some of them wrong, and
+the PR collected about seventy comments, two per round, which also started extra
+workflow runs that were skipped or cancelled. The loop now stops when a review has no
+severe findings. Severe findings are fixed (or, when demonstrably wrong or an accepted
+risk, justified with evidence); non-severe findings get one pass in the same round, fixed
+if worth it and justified otherwise, and never trigger another round on their own. The
+answer and the next review request go in a single comment per round, and five rounds
+with severe findings still open stop the loop and go back to the owner. `/release` and
+`release-policy` are unchanged: outside that explicit request nothing is auto-fixed.
+
 ## 2026-11-09 — Review workflow stays within 150 columns
 
 `claude-pr-review.yml` is copied into other repos by `github-config`, and one
