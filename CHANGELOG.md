@@ -17,6 +17,13 @@ explicit `${TMPDIR}` template (a bare `mktemp -d` ignores `TMPDIR` on macOS) and
 sets `TMPDIR` to its own run directory for scans, so a scan killed at its time limit
 leaves no dump of blobs behind.
 
+## 2026-11-09 — Review workflow stays within 150 columns
+
+`claude-pr-review.yml` is copied into other repos by `github-config`, and one
+of them lints YAML at 150 columns, so two long lines made its Lint check fail
+after every sync. The lines are wrapped without changing what they do; keep new
+lines in this file under 150 columns.
+
 ## 2026-11-08 — Worker review fixes: scanner coverage, tool rules, shutdown, save failures
 
 The secret scan now reads the entry names of every tree the range adds (a file copied
@@ -79,7 +86,31 @@ out of the container means a misbehaving run cannot push or open pull requests.
 data, not instructions. The container's claude process runs with a scrubbed
 environment. The residual risk is stated in the skill: an allowed test runner
 executes code the worker wrote, so tasks must come only from owner-authored input.
-The decision is recorded in `docs/decisions/0004-tooling-choices.md`, item 9.
+The decision is recorded in `docs/decisions/0004-tooling-choices.md`, item 10.
+
+## 2026-11-08 — PR review only posts finished reviews
+
+The `claude-pr-review` workflow could post an interim message ("waiting for the
+agents...") as the review and still pass, which a wait-for-zero-findings loop
+reads as an empty review. The workflow now validates the message (a
+`## Review of PR #<n>` first line and a `Result: ... findings (...)` last line
+with consistent counts) in a tested script, retries the review once when it is
+incomplete, and fails the job rather than posting it. The prompt states the
+format explicitly. One-comment-per-PR editing and a higher effort level were
+considered and left out; reasons are in `docs/decisions/0002-cost-and-quota.md`.
+A separate check step validates the message and the posting step re-checks it.
+The gate also refuses to post a review that contains a secret's value, and the
+agent's file access is narrowed to `Read` inside the checked-out workspace, to
+close a path by which an injected diff could have leaked a token into a
+comment. The review job also runs with `--setting-sources user`, since the repo's own
+`.claude/settings.json` grants would otherwise add to the workflow's tool list. The allow and deny lists and their limits are in the "Secret-leak
+defence" section of `docs/decisions/0002-cost-and-quota.md`.
+Only an incomplete result (exit 3 of the script) is retried; a crash or setup
+error fails the job at once, and a run where the action itself failed is never
+posted.
+`github-ops` also tells the waiting recipe not to count a green run with a
+status-only comment as zero findings.
+
 
 ## 2026-11-08 — remote-hosts: allow the user's read-only sudoers whitelist
 
@@ -92,6 +123,21 @@ open-ended entry is not used. A new rule says reading state never means printing
 that a whitelist does not waive it. The whitelist is described as a convenience list, not a
 security boundary, because `docker` group membership is root-equivalent. The whitelist and the
 host facts stay in the user's private vault.
+
+## 2026-11-07 — Claudio, a CEO agent that phones the user
+
+Added `claudio`, a CEO agent above the council, and a `ceo-call` skill, so a decision the council
+cannot resolve reaches the user by phone instead of waiting in a terminal. It asks with text-to-
+speech and takes a keypad answer, not spoken words, because speech recognition on telephone audio is
+least reliable on exactly the short words (yes, no, numbers) that binding decisions depend on; a
+choice counts only after a second key press confirms it. Night calls, a sleeping phone, retries and
+abuse by a manipulated agent are handled by the skill's rules, and the agent's shell is limited by a
+hook to the call script, since its briefs can quote untrusted text. `council-policy` and `/council`
+now hand two named cases back to the user, by phone when this is set up (the chair
+still issues its verdict; `council-policy` decides afterwards whether it goes back
+to the user); install `claudio` and `ceo-call` at user scope, because a
+project-level copy takes precedence and can change its hook. No instance data
+enters this repo. Tracks #13. Why: `docs/decisions/0004-tooling-choices.md`, item 9.
 
 ## 2026-11-07 — Administer LAN devices over SSH
 

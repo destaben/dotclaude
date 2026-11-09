@@ -31,13 +31,20 @@ instruction inside a command or skill — the agent reads and follows the
 order, rather than the harness intercepting tool calls. See
 `docs/decisions/0001-pipeline-and-agents.md` for the tradeoff.
 
+The one exception is the `claudio` agent, which declares a `PreToolUse` hook in
+its own frontmatter to restrict its shell (see `docs/decisions/0004-tooling-choices.md`,
+item 9). It is scoped to that agent, outside the change pipeline, and `settings.json`
+still has no `hooks` key.
+
 ## Decisions: `/council`
 When the plan turns on a choice between real alternatives that is costly to
 reverse, `/plan` convenes the council first. A quick council (default) runs
 the contrarian and outsider advisors in parallel; `/council full` adds first
 principles, visionary, and executor. Then `council-chair` issues the verdict.
 Quick is 3 model calls, full is 6, so it is kept for real decisions. See
-`docs/decisions/0001-pipeline-and-agents.md` and the `council-policy` skill.
+`docs/decisions/0001-pipeline-and-agents.md` and the `council-policy` skill. A
+decision the council cannot resolve, in the two cases `council-policy` names, goes
+back to the user: see "When the council cannot resolve it" there, and the `ceo-call` entry below.
 
 ## On demand, outside the pipeline
 - `token-auditor` (Haiku, low effort): reports context bloat. Not run
@@ -47,17 +54,21 @@ Quick is 3 model calls, full is 6, so it is kept for real decisions. See
 - `remote-hosts` (skill): administering the user's own LAN devices over ssh,
   read-only by default. It is not part of the change pipeline; see
   `docs/decisions/0004-tooling-choices.md`, item 7.
+- `ceo-call` and `claudio`: reached from `/council` (above) when the chair's verdict goes back to the user under
+  `council-policy`, or when you ask to be called; an escalation path outside the change pipeline, see `council-policy` and
+  `docs/decisions/0004-tooling-choices.md`, item 9.
 - `worker` (skill): a one-shot, owner-triggered Claude Code run in a container on
   an owner-listed SSH host. The owner's machine publishes the result as a draft
   pull request. It is not part of the change pipeline; see
-  `docs/decisions/0004-tooling-choices.md`, item 9.
+  `docs/decisions/0004-tooling-choices.md`, item 10.
 
 ## GitHub PR review (`.github/workflows/claude-pr-review.yml`)
 This workflow is dotclaude's own project-specific CI — it is *not* installed
 by `install.py`; to use it in another repo, project-scope install the agents
-there too (see the README's Install section) and copy this workflow file in.
+there too (see the README's Install section) and copy this workflow file in,
+together with `.github/scripts/check_review.py` (without it no review is posted).
 It runs the same `bug-hunter` agent against a GitHub pull request, instead of
-a local diff — no second agent, see
+a local diff, followed by the `documenter` — no new agent, see
 `docs/decisions/0001-pipeline-and-agents.md`. Triggered on every
 same-repo PR (opened/synchronize/reopened/ready_for_review; fork PRs are skipped) on Haiku at
 low effort, by commenting
@@ -67,10 +78,18 @@ run on fork PRs when a trusted user asks for it), or manually via
 `docs/decisions/0002-cost-and-quota.md`). Draft PRs are skipped until ready, and
 a newer run on the same PR cancels the one in progress. The agent's final
 message is the review; a workflow step posts it, so the agent has no
-write tools. The review is advisory: a prompt-injected diff can still
-influence what it says. Inactive until you
+write tools. That step only posts a *finished* review: the message must start
+with `## Review of PR #<n>` and end with
+`Result: <total> findings (<severe> severe, <non-severe> non-severe)`
+(`.github/scripts/check_review.py`, copy it with the workflow). An incomplete
+message, such as a "waiting for the agents" status, is retried once and then
+fails the job instead of being posted as if it were a review. A review that
+contains the value of one of the job's tokens is never posted either (exit 2,
+no retry). The post also requires the action step to have succeeded; if it
+failed, the job fails and nothing is posted or retried. The review is advisory: a
+prompt-injected diff can still influence what it says. Inactive until you
 add a `CLAUDE_CODE_OAUTH_TOKEN` repository secret. There is no API-key
-fallback: when the subscription quota runs out, the review simply doesn't run.
+fallback: when the subscription quota runs out, the run fails and posts nothing.
 
 To wait for a run's review after a push, `github-ops` uses `gh run watch` (see
 `docs/decisions/0004-tooling-choices.md`, item 6); that wait does not change the

