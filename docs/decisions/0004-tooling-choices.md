@@ -104,6 +104,9 @@
    access and read access to the login, so tasks come only from owner-authored input and
    the login stays revocable; a network allow-list is the future hardening. A related
    judgment call: a pushed branch opens the repository's `pull_request` workflows on its
-   own code, so the one that runs a branch's scripts and tests (`docs-check`) declares a
-   read-only token (`permissions: contents: read`), and the skill tells the owner to use
+   own code. Two workflows here run on `pull_request`: `docs-check` runs the branch's
+   scripts and tests and declares a read-only token (`permissions: contents: read`);
+   `claude-pr-review` holds `CLAUDE_CODE_OAUTH_TOKEN`, skips drafts, and runs for a
+   draft only on an `@claude review` comment from the owner, a member or a collaborator.
+   So worker pull requests stay drafts until read, and the skill tells the owner to use
    the worker only on repositories whose such workflows hold no secrets.

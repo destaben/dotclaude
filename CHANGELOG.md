@@ -33,6 +33,9 @@ The CI job that runs a branch's own scripts and tests (`docs-check`) now declare
 token (`contents: read`), with a test, because a worker branch's code runs there as soon as
 its draft pull request opens.
 `validate_repo.py` now also rejects a mention of the `docs-check` job in shipped files.
+Before committing, the entrypoint checks the staged changes against the login values (the value,
+16-character windows of it, its base64 and hex forms), because the host scan matches only
+literal token shapes.
 The decision is recorded in `docs/decisions/0004-tooling-choices.md`, item 10.
 
 ## 2026-11-08 — PR review only posts finished reviews

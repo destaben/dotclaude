@@ -408,6 +408,32 @@ report_left_out() {
   save_failed "$count file(s) were left out of the commit because their names look like credential files ($shown)"
 }
 
+# login_patterns: fixed strings that betray the login in a file: every 16-character window of each long login
+# value (so a value split into pieces of 16 or more characters still matches), of its base64 form at the three
+# alignments and of its hex form. Values shorter than 24 characters are not tokens and are left out, so ordinary
+# words that appear in the login file (such as scope names) do not cause false alarms. Written to a pipe only.
+login_patterns() {
+  local value pad enc
+  secret_values | tail -n +2 | while IFS= read -r value; do
+    [ "${#value}" -ge 24 ] || continue
+    printf '%s\n' "$value"
+    for pad in "" "x" "xx"; do
+      enc=$(printf '%s%s' "$pad" "$value" | base64 | tr -d '\n=') || continue
+      [ "${#enc}" -gt 12 ] && printf '%s\n' "${enc:4:${#enc}-8}"
+    done
+    printf '%s' "$value" | od -An -tx1 | tr -d ' \n'
+    printf '\n'
+  done | awk '{ if (length($0) <= 16) print; else for (i = 1; i <= length($0) - 15; i++) print substr($0, i, 16) }'
+}
+
+# login_in_staged: 0 when something staged holds a login value or one of its common disguises, 1 when nothing
+# does, 2 when the check could not run (which counts as a failure to save, not as clean).
+login_in_staged() {
+  local rc=0
+  git -C "$WORK/tree" grep --cached -a -q -F -f <(login_patterns) >/dev/null 2>&1 || rc=$?
+  case $rc in 0) return 0 ;; 1) return 1 ;; *) return 2 ;; esac
+}
+
 # note_ignored: new files the repository's own .gitignore matches are not committed (force-adding them would
 # commit build output and caches). They are not dropped quietly either: the count and the first names go into
 # summary.env and the owner's machine prints them. Directories are listed once. Not a failure.
@@ -435,6 +461,19 @@ commit_work() {
   git -C "$WORK/tree" add -A -- . "${COMMIT_EXCLUDES[@]}" \
     || { save_failed "the changes could not be staged"; return 0; }
   report_left_out
+  # The host scan matches literal token shapes only. A test the worker ran can read the login and write it into a
+  # file split or encoded, so what is staged is checked here, against the actual login values, before it is committed.
+  local login_rc=0
+  login_in_staged || login_rc=$?
+  if [ "$login_rc" != 1 ]; then
+    git -C "$WORK/tree" reset -q 2>/dev/null || true
+    if [ "$login_rc" = 0 ]; then
+      save_failed "the worker's changes contain the login or a disguised copy of it, so nothing was committed"
+    else
+      save_failed "the changes could not be checked for the login, so nothing was committed"
+    fi
+    return 0
+  fi
   # Exit 0 means nothing is staged (for example, every change was an excluded file); 1 means there is something.
   local staged=0
   git -C "$WORK/tree" diff --cached --quiet || staged=$?

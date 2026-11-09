@@ -157,7 +157,8 @@ Exit codes:
   (`missing-bundle`), secret-like text in the pull request text or the branch, a scan
   that could not run (it fails closed), a push that failed, or a pull request that
   could not be opened. A failed pull request leaves the pushed branch in place. Any
-  escalation is still printed and passed to `on_blocked`.
+  escalation is still printed and passed to `on_blocked`. A run stopped at the time limit
+  is the exception: it keeps 124, see below.
 - 124: the wall-clock limit was reached. The run was stopped (see *Stopping a run*).
   Nothing is published, because a stopped run can hold half-finished edits; a question
   the worker wrote before it was stopped is still printed, but `on_blocked` does not run
@@ -558,12 +559,25 @@ can also:
   one executes. Use the worker only on repositories whose `pull_request` workflows hold
   no secrets (or gate them behind an environment that needs approval) and whose token is
   read-only (declare `permissions: contents: read` on the workflows that run pull request code).
+  A workflow that holds a secret and starts when a draft is marked ready or when someone
+  comments is the case to watch: keep the worker's pull requests as drafts until you have
+  read them.
 
 An injection through repository content (a README or a test fixture in a public repo)
 can therefore ask the worker to write a test that sends the login somewhere; the secret
 scan never sees it, because the login is never committed. Condition (a) does not stop
 that, since the text arrives through the repository and not through the task. The
 owner accepted this for the spike knowing that, and the remedy is the hardening in (c).
+
+The same code can also write the login **into a file that is committed**, and that file
+would reach a public draft pull request. Two layers stand in the way, and neither is a
+guarantee. Before it commits, the entrypoint checks what is staged against the actual login
+values: the value, every 16-character window of it (so a split into pieces of 16 or more
+characters is seen), and its base64 and hex forms; a match commits nothing and ends the run
+`blocked`. Then the host's secret scan looks for the literal token shapes. A copy that is
+reversed, encrypted, split into pieces shorter than 16 characters or otherwise transformed
+passes both. The owner accepted the residual risk for the spike with this publication path
+included.
 
 What still holds when the run directory is writable by the worker: the host treats
 everything it copies back as untrusted. A planted `branch.bundle` still has to pass the
@@ -602,6 +616,11 @@ These were raised in review, decided, and are written down so they are not re-ar
   a control that the same command on an ordinary file is allowed. `ln` is different: it is
   not approved at all, even between ordinary files, so it is refused for that reason and
   not by a `Read` rule. The tests in `RealClaudeHandoffTests` keep all of this true.
+- **A container that had to be killed is not a finished run.** If the entrypoint ignores
+  TERM and `docker rm -f` is needed, it never ran its own checks (the commit excludes, the
+  login check), so the run ends `error`, nothing is published and the files in the run
+  directory are treated as unvetted. The reason shown from `summary.env` is filtered to
+  plain characters, because the file may have been written by the worker.
 - **A run stopped at the time limit is never published.** It can hold half-finished
   edits. Its question is printed, the bundle is kept (*Exit codes*, 124).
 - **Files the repository's `.gitignore` matches are not forced into the commit.** They

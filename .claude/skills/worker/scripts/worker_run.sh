@@ -34,6 +34,7 @@ RUN_ID=""
 ISSUE_TITLE=""
 ISSUE_BODY=""
 RUN_STARTED=0
+FORCE_KILLED=0
 PUBLISH="none"
 PUBLISH_MSG=""
 PR_URL=""
@@ -237,7 +238,7 @@ build_issue_handoff() {
   valid_branch "$BRANCH" || refuse "could not derive a valid branch name from the issue"
 
   printf 'Issue #%s, title:\n\n%s\n\nIssue #%s, body:\n\n%s\n' "$ISSUE" "$ISSUE_TITLE" "$ISSUE" "$ISSUE_BODY" \
-    | head -c 30000 | tr -d '\000-\010\013\014\016-\037\177' | sed 's/^/> /' > "$quoted"
+    | head -c 30000 | tr '\r' '\n' | tr -d '\000-\010\013\014\016-\037\177' | sed 's/^/> /' > "$quoted"
 
   sed -e "s|{{REPO}}|$REPO|g" -e "s|{{BASE}}|$BASE|g" -e "s|{{BRANCH}}|$BRANCH|g" \
       -e "s|{{ISSUE}}|$ISSUE|g" -e "s|{{STATUS}}|new|g" "$TEMPLATE" \
@@ -302,7 +303,11 @@ cleanup() {
 # stop_container: stops the run's container with TERM and a grace period, so the entrypoint can finish its handoff,
 # summary and bundle, and removes it with rm -f only if it is still there after that.
 stop_container() {
-  remote "docker stop -t $STOP_GRACE worker-$RUN_ID >/dev/null 2>&1 || true; if [ -n \"\$(docker ps -aq --filter 'name=^worker-$RUN_ID\$')\" ]; then docker rm -f worker-$RUN_ID >/dev/null 2>&1 || true; fi" || true
+  local out
+  out=$(remote "docker stop -t $STOP_GRACE worker-$RUN_ID >/dev/null 2>&1 || true; if [ -n \"\$(docker ps -aq --filter 'name=^worker-$RUN_ID\$')\" ]; then docker rm -f worker-$RUN_ID >/dev/null 2>&1 || true; echo forced; fi" 2>/dev/null) || true
+  # "forced" means the entrypoint did not exit within the grace period and was killed: it never finished its own
+  # checks, so what is in the run directory is only what the worker left there.
+  case $out in *forced*) FORCE_KILLED=1 ;; esac
 }
 
 # on_interrupt: Ctrl-C, TERM or HUP while the run is going. Without this the local script would exit and leave the
@@ -716,7 +721,7 @@ main() {
     turns=$(summary_value TURNS)
     auth=$(summary_value AUTH)
     duration=$(summary_value DURATION_S)
-    reason=$(summary_value REASON)
+    reason=$(summary_value REASON | tr -cd 'A-Za-z0-9 .,:/_()#-' | cut -c1-200)
     case $status in done|checkpoint|blocked|refused|error) ;; *) status=error ;; esac
     case $auth in ok|failed|unknown) ;; *) auth=unknown ;; esac
     case $turns in ''|*[!0-9]*) turns=0 ;; esac
@@ -733,6 +738,10 @@ main() {
   if [ -s "$OUT_DIR/summary.env" ]; then
     commits_made=$(summary_value COMMITS)
     case $commits_made in ''|*[!0-9]*) commits_made=0 ;; esac
+  fi
+  if [ "$FORCE_KILLED" = 1 ] && [ "$status" != timeout ]; then
+    status=error
+    reason="the container had to be killed, so the entrypoint did not finish its checks; nothing was published and the files in the run directory are unvetted"
   fi
   if [ "$NO_PUBLISH" = 1 ]; then
     PUBLISH=skipped
