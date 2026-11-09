@@ -34,7 +34,8 @@ python3 scripts/install.py --uninstall      # remove what a prior run installed
   a project-level copy takes precedence over it and can change or drop its
   shell-guard hook (see "Agent safety" in the `ceo-call` skill). Use project scope for a project where you want a
   GitHub Actions workflow (like `claude-pr-review.yml`) to see these agents — a
-  CI runner only checks out that project, not your `~/.claude/`.
+  CI runner only checks out that project, not your `~/.claude/`. The workflow and
+  its `.github/scripts/check_review.py` are copied by hand, not by `install.py`.
 - Everything is symlinked (or copied with `--copy`) whole, **except
   `settings.json`, which is merged** — every run, not just the first. Your
   existing `hooks`, `theme`, `model`, or anything else dotclaude doesn't own
@@ -84,7 +85,10 @@ It runs automatically on every non-draft, same-repo PR (`opened`/`synchronize`/`
 `claude-haiku-5-5` at low effort to keep the per-run cost down, plus the
 `@claude review` comment and manual dispatch as a fallback — see
 `docs/decisions/0002-cost-and-quota.md` for why. Waiting on that review from a session
-is described in `docs/pipeline.md`.
+is described in `docs/pipeline.md`. The workflow posts only a finished review (it
+validates the agent's message with `.github/scripts/check_review.py`, retries
+once, then fails the run). `install.py` does not copy it: put that script in the
+project together with the workflow file.
 
 The PR/issue templates are different: they're personal defaults, installed
 to `~/.claude/templates/` and used by `commit-and-pr`/`github-ops` in *any*
