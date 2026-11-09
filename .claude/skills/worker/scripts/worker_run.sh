@@ -697,7 +697,7 @@ main() {
   # Remote command: refuse while another worker container exists, then run the service once.
   # Every value below was validated above, so none of them can carry shell syntax.
   local run_cmd rc
-  run_cmd="cd \"\$HOME/$REMOTE_DIR\" && if [ -n \"\$(docker ps -q --filter 'name=^worker-')\" ]; then echo 'another worker container is running on this host' >&2; exit 75; fi && docker compose run --rm -T --name worker-$RUN_ID -e RUN_ID=$RUN_ID -e REPO=$REPO -e BRANCH=$BRANCH -e HANDOFF=/inbox/$RUN_ID.md -e MAX_TURNS=$MAX_TURNS worker"
+  run_cmd="cd \"\$HOME/$REMOTE_DIR\" && if [ -n \"\$(docker ps -q --filter 'name=^worker-')\" ]; then echo 'another worker container is running on this host' >&2; rm -f \"\$HOME/$REMOTE_DIR/inbox/$RUN_ID.md\"; exit 75; fi && docker compose run --rm -T --name worker-$RUN_ID -e RUN_ID=$RUN_ID -e REPO=$REPO -e BRANCH=$BRANCH -e HANDOFF=/inbox/$RUN_ID.md -e MAX_TURNS=$MAX_TURNS worker"
   RUN_STARTED=1
   if run_bounded "$SECS" ssh -o BatchMode=yes -o ConnectTimeout=10 -- "$ALIAS" "sh -c $(shell_quote "$run_cmd")" >/dev/null; then
     rc=0

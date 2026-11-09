@@ -957,6 +957,8 @@ class RunTests(WorkerCase):
         result = self.run_worker("--handoff", str(self.handoff_src), env={"STUB_DOCKER_BUSY": "1"})
         self.assertEqual(result.returncode, 5, result.stderr)
         self.assertFalse(any(call.startswith("docker compose") for call in self.calls("docker")))
+        self.assertEqual(list((self.remote / "worker" / "inbox").glob("*.md")), [],
+                         "the handoff copy uploaded for a run that never started is removed")
 
     def test_the_login_secret_never_reaches_host_output_local_files_or_the_call_log(self):
         result = self.run_worker("--handoff", str(self.handoff_src), env={"STUB_CLAUDE_LEAK": "1"})
