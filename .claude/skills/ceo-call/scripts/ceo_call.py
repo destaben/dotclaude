@@ -748,8 +748,9 @@ def ask(
 
     def settle():
         """Give the throttle slot back only if nothing reached the owner: no call, no chat message.
-        Deliberate: a failure before dialling (speech server down, docker error) keeps no slot, so a
-        transient fault does not lock the owner out. A loop of failing asks is still serialised by the
+        Deliberate: a failure before dialling (speech server down, docker error) keeps no slot unless an
+        error notice reached the owner (that is a message and keeps it), so a transient fault does not
+        lock the owner out and a failing loop cannot flood the chat. A loop of failing asks is still serialised by the
         run lock, and the work it drives is local speech synthesis, not calls or messages."""
         if not (dial["placed"] or reached["owner"]):
             release_throttle(config, stamp, wall)
@@ -766,7 +767,10 @@ def ask(
     call_id = secrets.token_hex(8)
     base = "%s/ceo/%s" % (SPOOL, call_id)
     try:
-        asterisk.sweep_stale()
+        try:
+            asterisk.sweep_stale()
+        except DockerError:
+            pass  # best effort: a hung docker daemon is reported by the next step, not by the sweep
         asterisk.make_dir(base)
         synth_started = clock()
         for name, text in build_prompts(clean["question"], options).items():

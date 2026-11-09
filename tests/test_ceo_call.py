@@ -123,6 +123,23 @@ def run_ask(script, request=None, env=None, notifier=None, config=None, clock_ti
     return result, asterisk, sent
 
 
+class SweepFailureTests(unittest.TestCase):
+    def test_a_hung_sweep_does_not_stop_the_ask(self):
+        class HungSweep(FakeAsterisk):
+            def sweep_stale(self):
+                raise ceo.DockerTimeout("cannot run docker (timed out)")
+
+        clock = FakeClock()
+        asterisk = HungSweep(["3"])
+        cfg = dict(ceo.DEFAULT_CONFIG, retry_delay_s=0, poll_interval_s=2, ring_timeout_s=30, call_timeout_s=300,
+                   attempts=1, state_file=None, lock_file=None)
+        result = ceo.ask({"question": "Ship it?", "options": ["Yes", "No", "Later"]}, cfg, {}, asterisk,
+                         synth=fake_synth, notifier=lambda *a, **k: True, sleep=clock.sleep, clock=clock,
+                         now=lambda: datetime(2026, 1, 1, 12, 0))
+        self.assertEqual(asterisk.originated, 1)
+        self.assertNotEqual(result.get("status"), "error")
+
+
 class ValidateRequestTests(unittest.TestCase):
     def test_a_lone_surrogate_is_refused_before_any_call(self):
         for request in ({"question": "q\ud83d", "options": ["a", "b"]}, {"question": "q", "options": ["a\ud83d", "b"]}):

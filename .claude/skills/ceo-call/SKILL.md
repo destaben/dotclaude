@@ -43,7 +43,9 @@ alias as `remote-hosts` describes, and run the script there.
   An `ask` gives its slot back only when nothing reached the owner: no call and no chat message
   of any kind (heads-up, "not connected" notice, error notice). So a broken speech server or an asleep
   phone cannot be used to spam the chat. A failure before dialling (speech server down, or a call file that definitely never got in) keeps no slot on
-  purpose: a transient fault must not lock the owner out, and a loop of failing asks is still serialised by the run
+  purpose *when no chat notice reached the owner* (a notice that did go out, such as the error notice, counts as a
+  message and keeps the slot, so a failing loop cannot flood the chat; with no chat configured nothing counts):
+  a transient fault must not lock the owner out, and a loop of failing asks is still serialised by the run
   lock and only drives local speech synthesis, never a call or a message. A refused `ask` (too soon, too many, another running) sends no
   chat message either, for the same reason; the calling workflow reports the decision as still pending. This spaces out and caps the calls a confused or manipulated agent can cause; it does not make a
   loop impossible (up to `max_per_hour` asks, each with up to `attempts` calls, can still ring). The
