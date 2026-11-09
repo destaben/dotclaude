@@ -162,11 +162,10 @@ silent starts the next round, so a wrong key uses one up; after three the call e
 The limit bounds how long a call can occupy the phone.
 
 Design note (type-ahead): `Read()` lets a key interrupt the playback, so an owner who presses the choice and
-the confirmation key back to back confirms before the read-back is heard. This is accepted and not changed:
-the confirmation is a second, deliberate press of the one key `1` (never the key that picks an option), a
-wrong choice by a single mistyped key is still caught because it takes `1` right after it, and forcing the
-read-back to play to the end would only lengthen a call that is already bounded by three rounds. Do not
-report it again unless the confirmation key becomes the same as an option key.
+then `1` (the confirmation key) back to back confirms before the read-back is heard. This is accepted and not
+changed: nothing is recorded without that deliberate second press, a single mistyped key never records
+anything, and forcing the read-back to play to the end would only lengthen a call that is already bounded by
+three rounds. Do not report it again unless a choice can be recorded by one key press.
 
 ## Use
 `ask` can take several minutes (heads-up wait, ringing, the call itself, up to `attempts` times),
