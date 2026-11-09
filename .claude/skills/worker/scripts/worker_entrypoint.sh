@@ -437,8 +437,15 @@ login_patterns() {
 # login_in_staged: 0 when something staged holds a login value or one of its common disguises, 1 when nothing
 # does, 2 when the check could not run (which counts as a failure to save, not as clean).
 login_in_staged() {
-  local rc=0
-  git -C "$WORK/tree" grep --cached -a -q -F -f <(login_patterns) >/dev/null 2>&1 || rc=$?
+  local rc=0 patterns
+  # secret_values prints OK first only when it could read the login file. Without it there are no patterns, and an
+  # empty pattern list must not read as clean: that is a failure to check, not a pass (the answer must not depend on
+  # what the installed git does with an empty pattern file).
+  [ "$(secret_values | head -n 1)" = OK ] || return 2
+  patterns=$(login_patterns) || return 2
+  # The login is readable but holds nothing long enough to be a token (or there is no login file): nothing to look for.
+  [ -n "$patterns" ] || return 1
+  git -C "$WORK/tree" grep --cached -a -q -F -f <(printf '%s\n' "$patterns") >/dev/null 2>&1 || rc=$?
   case $rc in 0) return 0 ;; 1) return 1 ;; *) return 2 ;; esac
 }
 

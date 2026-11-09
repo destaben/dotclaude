@@ -58,13 +58,15 @@ back to the user: see "When the council cannot resolve it" there, and the `ceo-c
   `council-policy`, or when you ask to be called; an escalation path outside the change pipeline, see `council-policy` and
   `docs/decisions/0004-tooling-choices.md`, item 9.
 - `worker` (skill): a one-shot, owner-triggered Claude Code run in a container on
-  an owner-listed SSH host. The owner's machine publishes the result as a draft
-  pull request unless the owner passes `--no-publish`, the run is `refused` at the start
-  (exit 2), times out (exit 124) or ends as an `error` (no usable result), or the publish
-  checks refuse it (the
-  bundle stays in the output directory); a `blocked` run is published too, with its
-  question printed. It is not part of the change pipeline; see
-  `docs/decisions/0004-tooling-choices.md`, item 10.
+  an owner-listed SSH host, outside the change pipeline; see
+  `docs/decisions/0004-tooling-choices.md`, item 10. The owner's machine publishes the
+  result as a draft pull request, with these outcomes (exit codes are in the skill):
+  - published: a `done`, `checkpoint` or `blocked` run (a `blocked` one with its
+    question printed);
+  - not published, the bundle kept in the output directory: `--no-publish`, a run that
+    timed out (exit 124), or one the publish checks refuse (exit 6);
+  - not published, nothing usable: a run `refused` at the start (exit 2) or ended as an
+    `error` (exit 1).
 
 ## GitHub PR review (`.github/workflows/claude-pr-review.yml`)
 This workflow is dotclaude's own project-specific CI — it is *not* installed

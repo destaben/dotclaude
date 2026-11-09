@@ -349,6 +349,9 @@ elif out_path and out == "symlink":
     with open(target, "w") as handoff:
         handoff.write("---\nversion: 1\nstatus: blocked\n---\n\n## Task\n\nLinked elsewhere.\n")
     os.symlink(target, out_path)
+if knobs.get("corrupt_creds") == "1":
+    with open(os.path.join(config_dir, ".credentials.json"), "w") as creds:
+        creds.write("{not json")
 if knobs.get("delete_creds") == "1":
     os.remove(os.path.join(config_dir, ".credentials.json"))
 if knobs.get("refresh") == "1":
@@ -1753,6 +1756,25 @@ class TermTests(WorkerCase):
         self.assertIn("login", summary["REASON"])
         self.assertEqual(summary["COMMITS"], "0", "nothing is committed when the login is in the changes")
 
+    def test_a_login_file_that_became_unreadable_does_not_make_the_commit_check_pass(self):
+        # The check has no patterns when it cannot read the login. That must stop the commit, not read as clean.
+        # (Guard: it also stops today because git grep errors on an empty pattern file; the code no longer relies on it.)
+        import base64
+        result, _, run_dir = self.run_entry(run_id="20261108-000000-24", env={
+            "STUB_CLAUDE_OUT": "done", "STUB_CLAUDE_COMMIT": "fixture.py", "STUB_CLAUDE_CORRUPT_CREDS": "1",
+            "STUB_CLAUDE_COMMIT_CONTENT": "T = %r\n" % base64.b64encode(LOGIN_SECRET.encode()).decode()})
+        summary = read_summary(run_dir / "summary.env")
+        self.assertEqual(summary["STATUS"], "blocked", result.stderr)
+        self.assertEqual(summary["COMMITS"], "0", "nothing is committed when the check could not run")
+
+    def test_a_run_without_any_login_file_still_commits_its_edits(self):
+        # With no login there is nothing to look for; the check must not block every commit.
+        (self.claude_cfg / ".credentials.json").unlink()
+        result, _, run_dir = self.run_entry(run_id="20261108-000000-25", env={
+            "STUB_CLAUDE_OUT": "done", "STUB_CLAUDE_COMMIT": "feature.txt"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(read_summary(run_dir / "summary.env")["COMMITS"], "1")
+
     def test_the_login_split_into_pieces_in_a_changed_file_is_not_committed(self):
         half = LOGIN_SECRET[:19]
         self.login_copy_is_refused("20261108-000000-21", "T = (%r, %r)\n" % (half, LOGIN_SECRET[19:]))
@@ -2138,6 +2160,11 @@ class CommitTests(WorkerCase):
         summary = read_summary(run_dir / "summary.env")
         self.assertEqual(summary["STATUS"], "blocked", result.stderr)
         self.assertIn("left out of the commit", summary["REASON"])
+
+    def test_a_very_long_checkpoint_does_not_stop_the_pull_request_from_being_prepared(self):
+        result = self.run_publishing(STUB_CLAUDE_OUT="done", STUB_CLAUDE_CHECKPOINT="long line " * 20000)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.bare_has("refs/heads/" + RUN_BRANCH))
 
     def test_a_file_named_like_the_login_is_not_echoed_when_it_is_left_out(self):
         result = self.run_publishing(STUB_CLAUDE_OUT="done", STUB_CLAUDE_COMMIT=LOGIN_SECRET + ".token")

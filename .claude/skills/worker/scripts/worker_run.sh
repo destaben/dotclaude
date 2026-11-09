@@ -501,7 +501,8 @@ write_pr_body() {
   echo
   echo "Worker report (untrusted text from the run, quoted):"
   echo
-  section_of "$OUT_DIR/HANDOFF-OUT.md" Checkpoint | head -c 6000 | sed 's/^/> /'
+  # head closes the pipe early on a long section; with pipefail that must not make the body fail
+  { section_of "$OUT_DIR/HANDOFF-OUT.md" Checkpoint | head -c 6000 || true; } | sed 's/^/> /'
 }
 
 # publish_branch: verifies the run's bundle and publishes exactly refs/heads/$BRANCH from a fresh clone,
