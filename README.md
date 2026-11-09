@@ -142,9 +142,8 @@ and agents.
 Severe findings are security issues, data loss, failing tests, and broken
 public contracts. Everything else asks you first. No step here is a hook —
 `.claude/settings.json` has no `hooks` key; this is a sequence of steps
-inside `/release` itself. The one exception is the `claudio` agent, whose
-frontmatter carries a shell-guard hook (see `CLAUDE.md` and `docs/pipeline.md`);
-it is not part of this pipeline.
+inside `/release` itself. The one exception is the `claudio` agent's shell guard (see
+`docs/pipeline.md`).
 <!-- pipeline:end -->
 
 ## Token efficiency

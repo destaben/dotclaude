@@ -194,6 +194,15 @@ a decision taken with no one to act on it. The decision stays pending and `claud
   judge wording (see "Agent safety"). Do not report it again unless the destination stops being the owner's chat.
 - **A kept prompt folder lives up to a day:** a folder kept because the call end was unconfirmed is removed by the
   daily sweep (`sweep_stale`, older than 1440 minutes). That is the intended bound, not a leak.
+- **Throttle refund when nothing reached the owner:** a failure before dialling that sent no message gives its
+  slot back on purpose (see the `settle()` docstring): it cannot ring or message anyone, a looping agent is
+  serialised by the run lock, and the work it drives is local speech synthesis. Counting those would only lock the
+  owner out after a transient speech-server fault. Do not report it again unless a failing ask can reach the owner.
+- **A final send interrupted by a stop signal:** the call outcome is not lost when the decision was recorded (that
+  path returns before the final message); for an undecided call the interruption is reported as an error with the
+  process exit code 1, and the owner can ask again.
+- **A heads-up followed by a quiet-hours notice:** both messages are true when the window opens between them (the
+  second is silent), and re-checking before the heads-up would not remove the case. Accepted as is.
 
 ## Rounds
 A call gets three rounds to produce a confirmed choice. Pressing 9 (repeat), any other key, or staying

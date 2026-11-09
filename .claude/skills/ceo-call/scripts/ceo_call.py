@@ -196,7 +196,7 @@ def load_config(path: Optional[str]) -> Dict:
     if not CONTAINER_RE.match(str(config["container"])):
         raise CallError("container is not a valid Docker container name")
     quiet = (config["quiet_start"], config["quiet_end"])
-    if any(quiet) and not all(isinstance(v, str) and TIME_RE.match(v) for v in quiet):
+    if any(v is not None for v in quiet) and not all(isinstance(v, str) and TIME_RE.match(v) for v in quiet):
         raise CallError("quiet_start and quiet_end must both be HH:MM")
     for key in ("piper_port", "attempts", "retry_delay_s", "ring_timeout_s", "call_timeout_s", "poll_interval_s", "heads_up_s", "min_gap_s", "max_per_hour", "max_per_day"):
         if not isinstance(config[key], int) or isinstance(config[key], bool) or config[key] < 0:

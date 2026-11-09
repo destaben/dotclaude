@@ -449,6 +449,12 @@ class ConfigTests(unittest.TestCase):
                 with self.assertRaises(ceo.CallError):
                     ceo.load_config(self.write(content))
 
+    def test_empty_quiet_hours_are_refused_instead_of_silently_switching_them_off(self):
+        for content in ['{"quiet_start": "", "quiet_end": ""}', '{"quiet_start": "22:00", "quiet_end": ""}', '{"quiet_start": "22:00"}']:
+            with self.subTest(content=content):
+                with self.assertRaises(ceo.CallError):
+                    ceo.load_config(self.write(content))
+
     def test_a_gap_longer_than_the_throttle_memory_is_refused(self):
         self.assertEqual(ceo.load_config(self.write('{"min_gap_s": 86400}'))["min_gap_s"], 86400)
         with self.assertRaises(ceo.CallError):
