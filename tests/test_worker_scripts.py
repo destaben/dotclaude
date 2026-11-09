@@ -66,6 +66,7 @@ STUB_DOCKER = r'''#!/usr/bin/env python3
 #   STUB_TAMPER_SYMLINK="<name>=<t>"  replaces a run file with a symbolic link to <t>;
 #   STUB_TAMPER_BIG="<name>"          makes a run file larger than the copy limit;
 #   STUB_TAMPER_REASON="<text>"       replaces REASON in summary.env after the run;
+#   STUB_ADVANCE_MAIN="<path>"        commits a change to <path> on main after the run, before the host publishes;
 #   STUB_DROP=1                       ends "compose run" with 255 while the container keeps running.
 # "stop -t N NAME" sends SIGTERM to the started entrypoint and waits N seconds; an entrypoint still alive then
 # is killed and recorded as left behind, which "ps -aq" reports until "rm -f" removes it. STUB_IGNORE_TERM=1
@@ -144,6 +145,18 @@ status = entry.wait()
 if os.path.exists(pidfile):
     os.remove(pidfile)
 run_dir = os.path.join(home, "runs", values["RUN_ID"])
+advance = os.environ.get("STUB_ADVANCE_MAIN")
+if advance:
+    # The repository's main branch moves on after the run cloned it, as it does while a long run is going.
+    work_copy = os.path.join(os.environ["FAKE_REMOTE_HOME"], "advance-clone")
+    git_bin = os.environ["STUB_REAL_GIT"]
+    subprocess.check_call([git_bin, "clone", "-q", os.environ["STUB_BARE_REPO"], work_copy])
+    os.makedirs(os.path.dirname(os.path.join(work_copy, advance)), exist_ok=True)
+    with open(os.path.join(work_copy, advance), "w") as moved:
+        moved.write("changed on main\n")
+    subprocess.check_call([git_bin, "-C", work_copy, "add", "-A"])
+    subprocess.check_call([git_bin, "-C", work_copy, "-c", "user.name=t", "-c", "user.email=t@localhost", "commit", "-q", "-m", "main moves on"])
+    subprocess.check_call([git_bin, "-C", work_copy, "push", "-q", "origin", "HEAD:main"])
 reason = os.environ.get("STUB_TAMPER_REASON")
 if reason:
     summary_path = os.path.join(run_dir, "summary.env")
@@ -318,6 +331,16 @@ elif out_path and out == "escalate":
 elif out_path and out == "invalid":
     with open(out_path, "w") as handoff:
         handoff.write("no front matter here\n")
+elif out_path and out == "dirlink":
+    # .worker-out itself becomes a link to a directory outside the worktree that holds a valid handoff.
+    import shutil as _shutil
+    outside = os.path.join(config_dir, "outside-out")
+    os.makedirs(outside, exist_ok=True)
+    with open(os.path.join(outside, "HANDOFF-OUT.md"), "w") as handoff:
+        handoff.write("---\nversion: 1\nrepo: owner/project\nbase: main\nbranch: worker/fix-widget-15\nissue: 15\nstatus: done\n---\n\n"
+                      "## Task\n\nReported by the stub.\n\n## Checkpoint\n\nFROM-LINKED-DIRECTORY\n")
+    _shutil.rmtree(os.path.dirname(out_path))
+    os.symlink(outside, os.path.dirname(out_path))
 elif out_path and out == "symlink":
     target = os.path.join(config_dir, "elsewhere.md")
     with open(target, "w") as handoff:
@@ -1755,6 +1778,13 @@ class HandoffOutTests(WorkerCase):
         self.assertIn("status: done", (run_dir / "HANDOFF-OUT.md").read_text())
         self.assertFalse((Path(self.claude_call()["cwd"]) / ".worker-out").exists())
 
+    def test_a_symbolic_link_worker_out_directory_is_not_followed(self):
+        result, _, run_dir = self.run_entry(env={"STUB_CLAUDE_OUT": "dirlink"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        text = (run_dir / "HANDOFF-OUT.md").read_text()
+        self.assertNotIn("FROM-LINKED-DIRECTORY", text)
+        self.assertIn("symbolic link", result.stderr)
+
     def test_a_symbolic_link_handoff_is_not_taken(self):
         result, _, run_dir = self.run_entry(env={"STUB_CLAUDE_OUT": "symlink"})
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -1788,6 +1818,11 @@ class FailedRunTests(WorkerCase):
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("status=blocked", result.stdout)
         self.assertIn("status: blocked", (self.out / "HANDOFF-OUT.md").read_text())
+
+    def test_the_real_nonzero_exit_status_of_claude_is_recorded_not_a_made_up_one(self):
+        result, _, run_dir = self.run_entry(env={"STUB_CLAUDE_OUT": "done", "STUB_CLAUDE_EXIT": "2"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(read_summary(run_dir / "summary.env")["CLAUDE_EXIT"], "2")
 
 
 class SaveFailureTests(WorkerCase):
@@ -2085,6 +2120,20 @@ class CommitTests(WorkerCase):
         self.assertIn("ID_ED25519", result.stderr + result.stdout)
         self.assertNotIn("status=done", result.stdout)
 
+    def test_a_file_named_like_the_login_is_not_echoed_when_it_is_left_out(self):
+        result = self.run_publishing(STUB_CLAUDE_OUT="done", STUB_CLAUDE_COMMIT=LOGIN_SECRET + ".token")
+        shown = result.stderr + result.stdout
+        self.assertIn("left out of the commit", shown)
+        self.assertNotIn(LOGIN_SECRET, shown)
+        self.assertIn("[REDACTED]", shown)
+
+    def test_a_file_named_like_the_login_is_not_echoed_when_the_repository_ignores_it(self):
+        self.add_to_main(".gitignore", "*.dat\n")
+        result = self.run_publishing(STUB_CLAUDE_OUT="done", STUB_CLAUDE_COMMIT=LOGIN_SECRET + ".dat")
+        shown = result.stderr + result.stdout
+        self.assertIn("were not committed", shown)
+        self.assertNotIn(LOGIN_SECRET, shown)
+
     def test_credential_store_files_are_left_out_reported_and_never_committed(self):
         for name in (".pgpass", ".git-credentials"):
             with self.subTest(name=name):
@@ -2102,6 +2151,13 @@ class CommitTests(WorkerCase):
         self.assertIn(".gitignore", result.stderr)
         self.assertIn("generated", result.stderr)
         self.assertIn("were not committed", result.stderr)
+
+    def test_a_workflow_change_that_landed_on_main_after_the_clone_does_not_block_a_branch_that_never_touched_it(self):
+        # The guard compares the branch with its merge base, so only what the worker changed counts. Comparing the
+        # branch tip with main would refuse every branch the moment main touched .github/.
+        result = self.run_publishing(STUB_ADVANCE_MAIN=".github/workflows/ci.yml")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.bare_has("refs/heads/" + RUN_BRANCH))
 
     def test_a_branch_that_changes_github_workflows_is_refused_before_the_push(self):
         # Pushing it would run the workflow file with the repository's secrets before anyone reads the draft PR.

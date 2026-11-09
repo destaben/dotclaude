@@ -350,6 +350,11 @@ build_tool_rules() {
 # .worker-out directory is removed in every case, so the handoff is never committed.
 collect_handoff() {
   local dir="$WORK/tree/$WORKER_OUT_DIR" src="$WORK/tree/$WORKER_OUT_DIR/HANDOFF-OUT.md"
+  if [ -L "$dir" ]; then
+    echo "worker: $WORKER_OUT_DIR is a symbolic link; it was not followed and no handoff was taken from it" >&2
+    rm -f "$dir"
+    return 0
+  fi
   # A test runner can write under the run directory while claude runs. Only a handoff taken from the worktree
   # below counts, so whatever is already at the output path was not written by the worker's own file and goes.
   rm -f "$OUT_FILE"
@@ -403,7 +408,8 @@ report_left_out() {
     | tr '\0' '\n' | grep -v -e "^$WORKER_OUT_DIR\$" -e "^$WORKER_OUT_DIR/" || true)
   [ -n "$left" ] || return 0
   count=$(printf '%s\n' "$left" | wc -l | tr -d ' ')
-  shown=$(printf '%s\n' "$left" | head -n 5 | tr -d '\000-\010\013\014\016-\037\177' | cut -c1-120 | paste -sd, - | sed 's/,/, /g')
+  shown=$(printf '%s\n' "$left" | head -n 5 | tr -d '\000-\010\013\014\016-\037\177' | cut -c1-120 | token_filter \
+    | paste -sd, - | sed 's/,/, /g')
   [ "$count" -le 5 ] || shown="$shown and $((count - 5)) more"
   save_failed "$count file(s) were left out of the commit because their names look like credential files ($shown)"
 }
@@ -443,7 +449,8 @@ note_ignored() {
     | tr '\0' '\n' | grep -v -e "^$WORKER_OUT_DIR\$" -e "^$WORKER_OUT_DIR/" || true)
   [ -n "$ignored" ] || return 0
   count=$(printf '%s\n' "$ignored" | wc -l | tr -d ' ')
-  shown=$(printf '%s\n' "$ignored" | head -n 5 | tr -cd 'A-Za-z0-9 ._/\n-' | cut -c1-60 | paste -sd, - | sed 's/,/, /g')
+  shown=$(printf '%s\n' "$ignored" | head -n 5 | tr -cd 'A-Za-z0-9 ._/\n-' | cut -c1-120 | token_filter | cut -c1-60 \
+    | paste -sd, - | sed 's/,/, /g')
   [ "$count" -le 5 ] || shown="$shown and $((count - 5)) more"
   IGNORED_NOTE="$count path(s) matched by the repository .gitignore were not committed ($shown)"
 }
@@ -453,6 +460,11 @@ note_ignored() {
 # no -F is used. Hooks are disabled and --no-verify is passed. Nothing is committed if nothing changed.
 commit_work() {
   [ -d "$WORK/tree" ] || return 0
+  # The repository's own .git/config can have been written by a test the worker ran. These two settings are
+  # forced for every git command from here on (the environment outranks the config files); filter drivers named
+  # in that config are not covered, see Known residual risk.
+  export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=core.fsmonitor GIT_CONFIG_VALUE_0=false \
+    GIT_CONFIG_KEY_1=core.hooksPath GIT_CONFIG_VALUE_1=/dev/null
   note_ignored
   local changes
   changes=$(git -C "$WORK/tree" status --porcelain 2>/dev/null) \
@@ -548,7 +560,8 @@ run_claude() {
   CLAUDE_EXIT_FILE="$RUN_DIR/claude.exit"
   rm -f "$CLAUDE_EXIT_FILE"
   set -m
-  ( "${claude_env[@]}" claude -p "$PROMPT" --output-format stream-json --verbose --max-turns "$MAX_TURNS" \
+  ( set +e   # the exit status is recorded below whatever it is; set -e would end this subshell before the echo
+    "${claude_env[@]}" claude -p "$PROMPT" --output-format stream-json --verbose --max-turns "$MAX_TURNS" \
       --permission-mode acceptEdits --permission-prompts none --setting-sources "" \
       --allowedTools "${TOOL_ALLOWLIST[@]}" --disallowedTools "${TOOL_DENYLIST[@]}" 2>&1
     echo $? > "$CLAUDE_EXIT_FILE" ) | token_filter | tee "$LOG" &

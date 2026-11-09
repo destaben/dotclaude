@@ -109,4 +109,5 @@
    `claude-pr-review` holds `CLAUDE_CODE_OAUTH_TOKEN`, skips drafts, and runs for a
    draft only on an `@claude review` comment from the owner, a member or a collaborator.
    So worker pull requests stay drafts until read, and the skill tells the owner to use
-   the worker only on repositories whose such workflows hold no secrets.
+   the worker only on repositories whose `push` and `pull_request` workflows hold no
+   secrets or wait for an approval (the skill's wording).

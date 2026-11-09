@@ -60,7 +60,7 @@ back to the user: see "When the council cannot resolve it" there, and the `ceo-c
 - `worker` (skill): a one-shot, owner-triggered Claude Code run in a container on
   an owner-listed SSH host. The owner's machine publishes the result as a draft
   pull request unless the owner passes `--no-publish`, the run times out (exit 124) or
-  ends as an `error` (no usable result, also exit 1), or the publish checks refuse it (the
+  ends as an `error` (no usable result), or the publish checks refuse it (the
   bundle stays in the output directory); a `blocked` run is published too, with its
   question printed. It is not part of the change pipeline; see
   `docs/decisions/0004-tooling-choices.md`, item 10.

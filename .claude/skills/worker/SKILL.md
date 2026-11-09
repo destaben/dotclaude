@@ -285,8 +285,10 @@ contain no `#` and no `@`, so they cannot carry a reference or a mention.
 
 **Workflows run on pushed branches.** A pushed branch can trigger the repository's
 `push` and `pull_request` workflows, and those can read the repository's secrets.
-Before publishing, the owner must check their workflows: a worker branch should not
-get secrets, or should wait for approval. Nothing in this skill changes that.
+Before using the worker on a repository the owner must check its workflows: those that
+run on `push` or `pull_request` must hold no secrets, or must wait for an approval, so a
+worker branch never gets them. Nothing in this skill changes that, except that the
+`.github/` check keeps the worker from adding a workflow.
 
 Review the draft like any other contributor's change. Merging is the owner's decision
 and is never done by the worker or by this script.
@@ -447,9 +449,14 @@ spike. Change the entrypoint and this section together.
 ## Environment of the worker
 The `claude` process is started with `env -i` and only these variables: `PATH`, `HOME`,
 `LANG`, `CLAUDE_CONFIG_DIR`, `TERM=dumb`, `CLAUDE_CODE_DISABLE_AUTOUPDATER=1` and
-`DISABLE_TELEMETRY=1`. Nothing else is inherited. The repo's own config (set by the
-entrypoint) gives the commit an identity and disables hooks, and the worker cannot
-change it.
+`DISABLE_TELEMETRY=1`. Nothing else is inherited. The model's own tools cannot edit the
+repo's config (`.git/config` and `.git/hooks` are denied), but a test runner can. So once
+claude has exited, every git command the entrypoint runs gets `core.fsmonitor=false` and
+`core.hooksPath=/dev/null` from the environment, which outranks the config files, and the
+commit identity and `--no-verify` are passed explicitly. A filter driver named in a planted
+`.git/config` and selected by a `.gitattributes` is not covered: it could run inside the
+container when files are staged. The impact stays in the container, and the owner's machine
+still verifies and scans the bundle.
 
 **The log scrubber fails closed.** Before claude starts, the entrypoint checks that the
 login directory and work directory paths are plain (see *Tool policy*), and that the
@@ -616,6 +623,10 @@ These were raised in review, decided, and are written down so they are not re-ar
   a control that the same command on an ordinary file is allowed. `ln` is different: it is
   not approved at all, even between ordinary files, so it is refused for that reason and
   not by a `Read` rule. The tests in `RealClaudeHandoffTests` keep all of this true.
+- **The `.github/` check compares the branch with its merge base, not with main.** Only
+  what the worker changed counts. Comparing the branch tip with main would refuse every
+  branch the moment main touches a workflow, and a stale copy of an existing workflow is
+  one the owner already ran. A test keeps this true.
 - **A container that had to be killed is not a finished run.** If the entrypoint ignores
   TERM and `docker rm -f` is needed, it never ran its own checks (the commit excludes, the
   login check), so the run ends `error`, nothing is published and the files in the run
