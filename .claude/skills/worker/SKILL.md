@@ -336,6 +336,14 @@ entrypoint reports it by name (at most five shown) as a save failure, so the run
 `blocked` and not `done`. Its edit is lost with the container, so the owner redoes it
 under a different name.
 
+New files that the target repository's own `.gitignore` matches are not committed
+either (forcing them in would commit build output and caches, and every test run makes
+`__pycache__`). They are not dropped quietly: the entrypoint counts them (a directory
+once) and writes the count and the first five names to `summary.env` as `IGNORED`, and
+the owner's machine prints `worker: note: ...` on stderr. It is a note, not a failure;
+the run keeps its status. If the task needs a file the repository ignores, the owner
+adds it by hand.
+
 Allowed for the model:
 - File tools: `Read`, `Edit`, `Write`, and `Task` for subagents (the council). Claude
   Code 2.1.319 has no `Glob` or `Grep` tool, so there are none here. Searching is done
@@ -492,7 +500,7 @@ is written only with `status: blocked`. Template: `templates/handoff.md`.
   built from git status and the last commits when the worker wrote none),
   `branch.bundle` when the run made commits, and `summary.env` with `STATUS`, `REASON`,
   `BRANCH`, `TURNS`, `DURATION_S`, `AUTH`, `CLAUDE_EXIT`, `CLAUDE_VERSION`,
-  `CREDS_CHANGED`, `COMMITS` and `BUNDLE`.
+  `CREDS_CHANGED`, `COMMITS`, `BUNDLE` and `IGNORED`.
 - **Usage**: `<remote_dir>/runs/usage.jsonl` has one line per run with `run`, `repo`,
   `branch`, `status`, `auth`, `subtype`, `turns`, `duration_s`, `cost_usd`,
   `claude_version`, `creds_changed`, `commits` and `at`. `cost_usd` is an estimate at
