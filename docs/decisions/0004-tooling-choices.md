@@ -97,4 +97,7 @@
    the pull request text, then pushes that branch and opens a draft pull request with
    the owner's own `gh`. The cost is that nothing is published until the owner's
    machine picks the run up, and private repos are out of scope for this version.
-   The residual risks are listed in the skill's own section.
+   The residual risks are listed in the skill's own section. The one the owner accepted
+   for the spike: the allowed test runners execute code the worker wrote, with network
+   access and read access to the login, so tasks come only from owner-authored input and
+   the login stays revocable; a network allow-list is the future hardening.

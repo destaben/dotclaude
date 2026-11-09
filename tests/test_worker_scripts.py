@@ -265,7 +265,11 @@ if knobs.get("term_delay"):
         time.sleep(float(knobs["term_delay"]))
         with open(os.path.join(os.getcwd(), "late.txt"), "w") as late_file:
             late_file.write("late edit\n")
-        if out_path:
+        if out_path and knobs.get("term_escalate"):
+            with open(out_path, "w") as handoff:
+                handoff.write("---\nversion: 1\nrepo: owner/project\nbase: main\nbranch: worker/fix-widget-15\nissue: 15\nstatus: blocked\n---\n\n"
+                              "## Task\n\nReported by the stub.\n\n## Escalation\n\nQuestion: Which storage backend should the widget use?\n")
+        elif out_path:
             with open(out_path, "w") as handoff:
                 handoff.write("---\nversion: 1\nrepo: owner/project\nbase: main\nbranch: worker/fix-widget-15\nissue: 15\nstatus: checkpoint\n---\n\n"
                               "## Task\n\nReported by the stub.\n\n## Checkpoint\n\nLATE-HANDOFF\n")
@@ -1556,6 +1560,15 @@ class TermTests(WorkerCase):
         self.assertIn("LATE-HANDOFF", (self.out / "HANDOFF-OUT.md").read_text())
         summary = read_summary(self.out / "summary.env")
         self.assertEqual(summary["COMMITS"], "1", "the edit written during the shutdown is committed")
+
+    def test_a_question_written_before_the_time_limit_stop_is_still_shown_and_exit_stays_124(self):
+        result = self.run_worker("--handoff", str(self.handoff_src), "--timeout", "3s", env={
+            "STUB_CLAUDE_SLEEP": "30", "STUB_CLAUDE_TERM_DELAY": "2", "STUB_CLAUDE_TERM_ESCALATE": "1",
+            "WORKER_STOP_GRACE": "20"})
+        self.assertEqual(result.returncode, 124, result.stderr)
+        self.assertIn("Which storage backend", result.stderr)
+        self.assertIn("publish=none", result.stdout)
+        self.assertTrue((self.out / "branch.bundle").exists(), "the work stays in the output directory")
 
     def test_a_bundle_the_worker_planted_in_the_run_directory_is_removed_not_published(self):
         run_id = "20261108-000000-7"

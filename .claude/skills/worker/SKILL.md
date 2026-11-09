@@ -6,7 +6,8 @@ description: Hand a task plus handoff to a one-shot Claude Code worker container
 # Background worker on a remote Docker host
 
 A one-shot Claude Code run in a container on a host the owner controls. The
-owner starts it with `scripts/worker_run.sh`. The container clones a public repo
+owner starts it with `scripts/worker_run.sh` (every `scripts/...` path in this file is
+relative to the skill directory, `.claude/skills/worker/`). The container clones a public repo
 anonymously, lets the worker edit files on a new `worker/...` branch, commits those
 edits itself, and writes a handoff back. The owner's machine then verifies the
 branch bundle, scans it for credentials, and publishes it as a draft pull request.
@@ -151,6 +152,11 @@ Exit codes:
   could not be opened. A failed pull request leaves the pushed branch in place. Any
   escalation is still printed and passed to `on_blocked`.
 - 124: the wall-clock limit was reached. The run was stopped (see *Stopping a run*).
+  Nothing is published, because a stopped run can hold half-finished edits; a question
+  the worker wrote before it was stopped is still printed. The bundle and handoff are
+  kept in `--out`. To publish that work, check it, then push the branch and open the
+  draft pull request by hand (the script has no command to publish a saved bundle in this
+  spike, the same as for `--no-publish`).
 
 ## Copying files back
 The owner's machine copies three files back from the run directory: `summary.env`

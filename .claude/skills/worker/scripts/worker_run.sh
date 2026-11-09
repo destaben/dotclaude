@@ -670,7 +670,8 @@ main() {
     timeout) code=124 ;;
   esac
   if [ "$code" != 0 ]; then echo "worker: $reason" >&2; fi
-  if [ "$status" = blocked ] && [ -s "$OUT_DIR/HANDOFF-OUT.md" ]; then
+  # A run stopped at the time limit can still have written its question before it was stopped: it is shown too.
+  if { [ "$status" = blocked ] || [ "$status" = timeout ]; } && [ -s "$OUT_DIR/HANDOFF-OUT.md" ]; then
     escalation=$(section_of "$OUT_DIR/HANDOFF-OUT.md" Escalation)
   fi
   if [ -n "$escalation" ] && [ -n "$(printf '%s' "$escalation" | tr -d '[:space:]')" ]; then
@@ -679,7 +680,8 @@ main() {
     printf '%s\n' "$escalation" >&2
     echo "worker: full handoff: $OUT_DIR/HANDOFF-OUT.md" >&2
     run_on_blocked
-    code=3
+    # Exit 3 is for a blocked run; a timed-out run keeps 124, because it was stopped and nothing was published.
+    if [ "$status" = blocked ]; then code=3; fi
   fi
   if [ "$publish_failed" = 1 ]; then code=6; fi
   exit "$code"
