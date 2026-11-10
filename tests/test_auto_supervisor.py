@@ -6,6 +6,7 @@ reset time, fails, or tampers with the repo during a "pause". git is real, on a 
 
 Run: python3 -m unittest tests/test_auto_supervisor.py
 """
+import datetime as dt
 import importlib.util
 import json
 import os
@@ -458,10 +459,24 @@ class TestParseReset(unittest.TestCase):
     def test_relative_form(self):
         self.assertEqual(self.m.parse_reset("Your limit resets in 2 hours 30 minutes", self.now), self.now + 9000)
 
-    def test_clock_form_is_in_the_future(self):
-        got = self.m.parse_reset("limit reached, resets at 3pm", self.now)
+    def test_clock_form_with_an_explicit_timezone_is_in_the_future(self):
+        got = self.m.parse_reset("limit reached, resets at 3pm (UTC)", self.now)
         self.assertGreater(got, self.now)
         self.assertLessEqual(got - self.now, 86400)
+        self.assertEqual(dt.datetime.fromtimestamp(got, dt.timezone.utc).hour, 15)
+
+    def test_clock_form_uses_the_zone_named_in_the_message(self):
+        try:
+            from zoneinfo import ZoneInfo
+            zone = ZoneInfo("America/Los_Angeles")
+        except Exception:
+            self.skipTest("no tz database")
+        got = self.m.parse_reset("limit reached, resets 3pm (America/Los_Angeles)", self.now)
+        self.assertEqual(dt.datetime.fromtimestamp(got, zone).hour, 15)
+        self.assertLessEqual(got - self.now, 86400)
+
+    def test_clock_form_without_a_timezone_is_not_trusted(self):
+        self.assertIsNone(self.m.parse_reset("limit reached, resets at 3pm", self.now))
 
     def test_a_duration_is_not_a_clock_time(self):
         self.assertIsNone(self.m.parse_reset("Resets 3 hours after your first message.", self.now))
@@ -477,6 +492,11 @@ class TestParseReset(unittest.TestCase):
 
     def test_unreadable_is_none(self):
         self.assertIsNone(self.m.parse_reset("limit reached, try later", self.now))
+
+    def test_classify_tolerates_an_error_prefix_and_the_dot_separator(self):
+        self.assertIsNotNone(self.m.classify("Error: Claude usage limit reached|1800003600"))
+        info = self.m.classify("5-hour limit reached \u2219 resets 3pm (UTC)")
+        self.assertEqual(info["window"], "5h")
 
     def test_classify_requires_the_limit_sentence_at_the_start_of_the_last_line(self):
         self.assertIsNone(self.m.classify("Added usage limit reached detection; PR opened."))

@@ -46,11 +46,11 @@ RESULT_RE = re.compile(r"^AUTO-STAGE-RESULT:\s*(ok|blocked)\b\s*(.*)$", re.M)
 # The CLI's limit sentence, anchored at the start of the last line: prose that merely mentions
 # "usage limit reached" (a commit summary, a quoted test failure) must not pause the run.
 # the sentence ends there: end of line or punctuation, so "limit reached handling is ..." is prose
-END = r"(?=\s*(?:$|[.|,;:!\u00b7]))"
+END = r"(?=\s*(?:$|[.|,;:!\u00b7\u2219\u2022]))"
 LIMIT_RE = re.compile((
-    r"^\W*(?:claude(?:\s+ai)?\s+)?(?:(?:(?:weekly|session|opus|5-hour)\s+)+(?:usage\s+)?|usage\s+)limit\s+(?:reached|hit)\b{END}"
-    r"|^\W*(?:claude(?:\s+ai)?\s+)?limit\s+reached\s*\|\s*\d{9,}"
-    r"|^\W*you(?:'ve|\s+have)\s+(?:hit|reached)\s+your\s+.{0,30}limit\b{END}").replace("{END}", END), re.I)
+    r"^\W*(?:error:\s*)?(?:claude(?:\s+ai)?\s+)?(?:(?:(?:weekly|session|opus|5-hour)\s+)+(?:usage\s+)?|usage\s+)limit\s+(?:reached|hit)\b{END}"
+    r"|^\W*(?:error:\s*)?(?:claude(?:\s+ai)?\s+)?limit\s+reached\s*\|\s*\d{9,}"
+    r"|^\W*(?:error:\s*)?you(?:'ve|\s+have)\s+(?:hit|reached)\s+your\s+.{0,30}limit\b{END}").replace("{END}", END), re.I)
 WEEKLY_RE = re.compile(r"week", re.I)
 FIVE_RE = re.compile(r"5-hour|5 hour|five-hour|session", re.I)
 
@@ -84,6 +84,20 @@ def state_dir(repo):
     return common / "auto"  # inside .git: never tracked, never committed
 
 
+def _zone(tail):
+    """The timezone the message names right after a clock time: UTC/GMT or an IANA name, else None."""
+    m = re.search(r"\(?\b(UTC|GMT|Z|[A-Za-z]+/[A-Za-z_]+(?:/[A-Za-z_]+)?)\b\)?", tail)
+    if not m:
+        return None
+    if m.group(1) in ("UTC", "GMT", "Z"):
+        return dt.timezone.utc
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(m.group(1))
+    except Exception:
+        return None
+
+
 def parse_reset(text, now):
     """Return the reset time as epoch seconds, or None when the message does not say."""
     m = re.search(r"limit reached\s*\|\s*(\d{9,11})\b", text, re.I) or re.search(r"reset[s]?[^0-9\n]{0,20}(\d{10})\b", text, re.I)
@@ -102,7 +116,10 @@ def parse_reset(text, now):
             hour = 0
         if hour > 23 or minute > 59:
             return None
-        base = dt.datetime.fromtimestamp(now)
+        zone = _zone(text[m.end():m.end() + 60])
+        if zone is None:
+            return None  # a clock time without a stated zone is not trusted: the caller falls back or stops
+        base = dt.datetime.fromtimestamp(now, zone)
         cand = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
         if cand.timestamp() <= now:
             cand += dt.timedelta(days=1)

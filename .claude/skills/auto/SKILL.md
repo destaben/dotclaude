@@ -54,7 +54,7 @@ A limit is a pause, not a failure: it does not count toward the escalation rule.
   A stage also stops the run unless its output has an `AUTO-STAGE-RESULT: ok` line (the prompt asks
   for one; `blocked <reason>` or no line is a stop), so a stage that exits 0 without succeeding is
   never recorded as complete.
-- **Reset time:** parsed from that same line and the hint lines after it only (epoch, "in N hours", "at 3pm"). If unreadable, a 5-hour
+- **Reset time:** parsed from that same line and the hint lines after it only (epoch, "in N hours", or a clock time such as "3pm" only when the message names its zone, UTC or an IANA name; a clock time without one is not trusted and takes the unreadable-reset path). If unreadable, a 5-hour
   limit falls back to 330 minutes; a weekly limit stops, because a guess could be days wrong.
 - **Wait:** until reset plus a 120 s margin, only if that is within the maximum wait (default 6 h)
   and automatic resumes so far are under the maximum (default 3). Otherwise stop with the

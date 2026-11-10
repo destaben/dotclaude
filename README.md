@@ -134,7 +134,8 @@ boxes.
 `/council` is the decision step: a quick council (contrarian, outsider, chair)
 by default, or a full one (adding first principles, visionary, executor),
 whose chair's verdict settles the choice (except the escalation cases in the
-`council-policy` skill). Other entry points sit outside the diagram: `/pr`
+`council-policy` skill). `/auto` runs the same stages unattended after one plan approval and pauses across usage-limit resets (see the
+`auto` skill). Other entry points sit outside the diagram: `/pr`
 runs the `commit-and-pr` skill directly, for a change you've already verified
 yourself and don't want the full `/release` pipeline for, and the `worker` skill,
 which you start yourself and which publishes its result as a draft pull request for you
