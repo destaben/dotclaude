@@ -40,7 +40,8 @@ PROMPT_RULES = (
     "description. Severe findings follow release-policy; if they cannot be auto-fixed, stop and report."
 )
 
-LIMIT_RE = re.compile(r"usage limit|limit reached|hit your .*limit|reached your .*limit", re.I)
+LIMIT_RE = re.compile(r"(?:usage|session|weekly|opus|5-hour) limit (?:reached|hit)|limit reached\s*\|\s*\d{9,}|"
+                      r"(?:hit|reached) your .{0,30}limit", re.I)
 WEEKLY_RE = re.compile(r"week", re.I)
 
 
@@ -81,7 +82,7 @@ def parse_reset(text, now):
     if m and any(m.groups()):
         h, mi, s = (int(g or 0) for g in m.groups())
         return now + h * 3600 + mi * 60 + s
-    m = re.search(r"reset[s]?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?", text, re.I)
+    m = re.search(r"reset[s]?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?(?!\s*(?:h|m|d|s)\w*\b)\s*(am|pm)?", text, re.I)
     if m:
         hour, minute, ap = int(m.group(1)), int(m.group(2) or 0), (m.group(3) or "").lower()
         if ap == "pm" and hour < 12:
@@ -156,7 +157,10 @@ def run_claude(cp, stage):
     budget = os.environ.get("AUTO_MAX_BUDGET_USD", "").strip()
     if budget:
         cmd += ["--max-budget-usd", budget]
-    p = subprocess.run(cmd, cwd=cp["repo"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    try:
+        p = subprocess.run(cmd, cwd=cp["repo"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    except OSError as e:
+        raise Stop(f"cannot run claude ({e})")
     return p.returncode, (p.stdout or "") + "\n" + (p.stderr or "")
 
 
@@ -189,7 +193,7 @@ def execute(cp, limits):
         save(cp)
         code, output = run_claude(cp, stage)
         # a limit message is usually a failure exit; accept exit 0 only for a short, message-only output
-        info = classify(output) if (code != 0 or len(output.strip()) < 500) else None
+        info = classify(output) if (code != 0 or len(output.strip().splitlines()) <= 3) else None
         if info:
             if cp["resumes"] >= limits["max_resumes"]:
                 record(cp)

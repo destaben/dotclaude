@@ -163,6 +163,18 @@ class TestLimits(Base):
         self.assertEqual(r.returncode, 2)  # 400 min > 6h cap
         self.assertIn("maximum wait", r.stdout)
 
+    def test_five_hour_fallback_is_used_when_within_cap(self):
+        self.script(["limit:Session limit reached.", "ok", "ok", "ok"])
+        r = self.start("--fallback-wait-minutes", "0.01", "--max-wait-hours", "6")
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertEqual(self.checkpoint()["reset_source"], "fallback")
+
+    def test_missing_claude_binary_stops_cleanly_with_resume_hint(self):
+        self.env["AUTO_CLAUDE_BIN"] = "/nonexistent/claude"
+        r = self.start()
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("resume with", r.stdout)
+
 
 class TestReverify(Base):
     def test_branch_change_during_pause_stops_the_run(self):
@@ -267,12 +279,17 @@ class TestParseReset(unittest.TestCase):
         self.assertGreater(got, self.now)
         self.assertLessEqual(got - self.now, 86400)
 
+    def test_a_duration_is_not_a_clock_time(self):
+        self.assertIsNone(self.m.parse_reset("Resets 3 hours after your first message.", self.now))
+
     def test_unreadable_is_none(self):
         self.assertIsNone(self.m.parse_reset("limit reached, try later", self.now))
 
     def test_classify(self):
         self.assertIsNone(self.m.classify("error: AssertionError"))
         self.assertIsNone(self.m.classify("FAILED test_api - expected rate limit handling, got 500"))
+        self.assertIsNone(self.m.classify("FAILED test_retry - expected 'limit reached' message"))
+        self.assertIsNone(self.m.classify("Added usage limit handling to the retry code."))
         self.assertEqual(self.m.classify("usage limit reached")["window"], "5h")
         self.assertEqual(self.m.classify("weekly usage limit reached")["window"], "weekly")
 

@@ -113,3 +113,14 @@
    So worker pull requests stay drafts until read, and the skill tells the owner to use
    the worker only on repositories whose `push` and `pull_request` workflows hold no
    secrets or wait for an approval (the skill's wording).
+
+11. **`/auto`: a foreground supervisor, no self-approval (2026-11-10).** Autonomous mode
+    (issue 12) runs the stages after the owner approves the plan once. A quick council chose
+    an owner-started foreground supervisor around the unmodified `claude -p` over cron or a
+    scheduled restart, because an unattended relaunch loop drifts toward the always-on use
+    that the subscription constraints in issue 15 rule out. The issue's self-approval by a
+    council or checklist was dropped: a checklist is gameable and the owner's approval gate
+    stays. A usage limit is a pause, not a failure; the reset is parsed from the message,
+    and a weekly limit with no readable reset stops rather than guessing. The hard budget cap
+    is opt-in (`AUTO_MAX_BUDGET_USD`). Unverified: the real limit wording and `claude -p
+    --resume` after a limit, so resume re-sends the prompt at stage boundaries.

@@ -19,7 +19,8 @@ Everything else: style inconsistencies, missed opportunities for reuse,
 non-breaking API additions, documentation gaps that don't affect behavior.
 
 **Non-severe findings are listed, and the user is asked before any change is
-made.** Never auto-fix non-severe findings.
+made.** Never auto-fix non-severe findings. (`/auto` is the owner-invoked exception: nobody
+can be asked mid-run, so it lists them in the PR description and applies none; see the `auto` skill.)
 
 ## None
 No findings. `/release` proceeds straight to the documenter step.

@@ -15,7 +15,7 @@ is gameable and a council does not replace the owner's approval gate. A limit pa
 run without counting as a failure; the reset time is parsed from the message, a weekly
 limit with no readable reset stops instead of guessing, and the wait and the number of
 automatic resumes are capped (6 h, 3). Resume re-verifies branch, HEAD and the working tree
-contents. The checkpoint lives under `.git/` so it cannot be committed. Resume is at stage
+contents (except after a killed supervisor, where unrecorded partial edits are accepted). The checkpoint lives under `.git/` so it cannot be committed. Resume is at stage
 boundaries and re-sends the prompt: the real limit wording and `claude -p --resume` after
 a limit are unverified, so the tests use fixture messages.
 
