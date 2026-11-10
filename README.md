@@ -33,7 +33,7 @@ python3 scripts/install.py --uninstall      # remove what a prior run installed
   into one specific project. Use project scope for a project where you want a
   GitHub Actions workflow (like `claude-pr-review.yml`) to see these agents — a
   CI runner only checks out that project, not your `~/.claude/`. The workflow and
-  its `.github/scripts/check_review.py` are copied by hand, not by `install.py`.
+  its `.github/scripts/check_review.py` and `review_context.py` are copied by hand, not by `install.py`.
 - **`claudio` and `ceo-call` need the user-scope install**: a project-level copy
   takes precedence over it and can change or drop its shell-guard hook (see
   "Agent safety" in the `ceo-call` skill). Project-scope `install.py` still
@@ -90,8 +90,9 @@ It runs automatically on every non-draft, same-repo PR (`opened`/`synchronize`/`
 `docs/decisions/0002-cost-and-quota.md` for why. Waiting on that review from a session
 is described in `docs/pipeline.md`. The workflow posts only a finished review (it
 validates the agent's message with `.github/scripts/check_review.py`, retries
-once, then fails the run). `install.py` does not copy it: put that script in the
-project together with the workflow file.
+once, then fails the run). Reviews carry a ledger of findings between pushes (see
+`docs/pipeline.md`). `install.py` does not copy the scripts: put `check_review.py` and
+`review_context.py` in the project together with the workflow file.
 
 The PR/issue templates are different: they're personal defaults, installed
 to `~/.claude/templates/` and used by `commit-and-pr`/`github-ops` in *any*

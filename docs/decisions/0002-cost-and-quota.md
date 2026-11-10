@@ -168,6 +168,34 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   retry, raise `--effort` for this workflow only and weigh
   the cost then; the failed runs are visible as red checks with a warning line.
 
+## Review convergence (2026-11-10, issue #11)
+- **What changed:** the prompt is structured and asks for a checklist first pass, stable finding ids, a
+  ledger, incremental later passes and respect for the author's justifications; `review_context.py` supplies
+  the previous ledger, last reviewed commit, incremental diff and notes (the reviewed commit is stored as a
+  hidden marker in the posted comment); `check_review.py` checks that a summary line, when present, agrees
+  with the `Result:` line, and logs how many findings are tagged `pre-existing (missed earlier)`.
+  Cost: the context step makes no model call; the longer ledger and diff add input tokens on later passes
+  only, and a first pass reads more files, so expect a somewhat larger run, not a different tier.
+- **Not done, owner's decision: model and effort.** The issue proposes `claude-sonnet-5-5` at medium for
+  the first pass only. That is a tier change and spends more quota (decision 1 and 5), so it is not adopted
+  here. Trying it would be new work: `REVIEW_ARGS` is static today, so a step
+  would have to choose the model when the context step finds no previous review. Measure on the PR #9
+  replay before keeping it.
+- **Not done: running ShellCheck or the tests in the review job.** The agent has no tool to run them
+  (that would widen the allowlist), so it reads the repo's CI results from `statusCheckRollup`; repos that want
+  ShellCheck should add it as its own CI job.
+- **Not verified:** the issue's acceptance numbers (80% of the findings on a PR #9 replay in the first
+  pass, at most one `pre-existing` tag later, 80% id overlap across reruns) need real model runs and have
+  not been measured. Ids are written by the model from file, rule and symbol, not hashed, so overlap
+  depends on it naming them consistently.
+- **Accepted limits:** the `Result:` line is the last line of the validated message; after validation the post step
+  appends a hidden `<!-- claude-pr-review sha=... -->` marker, so the posted comment ends with the marker. The
+  ledger is written by the bot itself, so a `justified` entry is the bot's record, not proof that a trusted author
+  agreed: the context step shows it as `unverified-claim: justified` and the prompt honours it only when an author
+  note backs it (an injected diff cannot suppress findings through the ledger). An unstamped review (the context step failed)
+  is not used as a baseline, so the next pass falls back to the last stamped one. the summary line and the ledger are asked
+  for by the prompt but a missing one does not fail the gate, to avoid red jobs over format.
+
 ## The `claudio` agent (phone calls for escalated decisions) (2026-11-07)
 - `claudio` runs on Sonnet at `effort: medium`, only when a council verdict escalates to the owner or the
   owner asks to be called; it is outside the change pipeline, so it adds no cost to ordinary changes.

@@ -3,6 +3,29 @@
 All notable changes to this repo are recorded here. Entries explain why a
 change was made, not just what changed — the diff already shows what.
 
+## 2026-11-10 — PR review ledger: a bot-written "justified" is not a justification
+
+The review's carried ledger comes from the bot's own previous comment, so an injected diff could make the
+agent write `justified` for a real finding and suppress it on later passes. The context step now shows such
+entries as `unverified-claim: justified` and the prompt honours them only when a trusted author note backs
+them. Found by the review of this PR; the ADR had listed it as an accepted limit.
+
+## 2026-11-10 — PR review remembers what it already said (issue #11)
+
+On PR #9 five reviews in a row raised new severe findings, many about code that had not
+changed since the first one, and a justification in the PR was re-opened from another
+angle. The review prompt is now short and structured (role, inputs, passes, checklist,
+findings, rules, output). The first pass reads every changed file against a fixed
+checklist with a "Checked, no finding" line per category; each finding has a stable id and
+the comment carries a ledger before the `Result:` line (the stamped comment ends with a hidden marker) (open, fixed, justified, withdrawn). A new step
+(`.github/scripts/review_context.py`) hands the agent the previous ledger, the commit that
+review covered, the diff since then and the author's justifications (PR description, if its author is trusted, and
+comments and review bodies from owner, members and collaborators); later passes review that diff and tag new
+findings `introduced-by <sha>` or `pre-existing (missed earlier)`, and the gate logs how many
+of the second kind a review has, so the convergence problem is measurable. The agent also
+reads the repo's own CI results through `gh pr view --json statusCheckRollup`. Model and
+effort are unchanged: a stronger first pass costs quota and is left to the owner (ADR 0002).
+
 ## 2026-11-10 — Autonomous mode that waits out usage limits
 
 Added `/auto` and an `auto` skill so a task can run from an approved plan to an open PR
