@@ -60,8 +60,8 @@ back to the user; the confirmations under "What it never overrides" still do.
 Ask the user directly: the question and the real options, numbered (the `AskUserQuestion` tool), with the
 council's positions in one line each. If the user may be away from the terminal, also send a push
 notification (`PushNotification`) so the question reaches the Claude app on their phone. The user's
-answer is final. If they do not answer, the decision stays pending: stop the work that depends on it,
-say so and wait.
+answer is final. If they do not answer, or they cannot be asked (an unattended run), the decision stays
+pending: stop the work that depends on it, say so and wait.
 
 ## Model and effort
 The contrarian, first principles, and the chair run on Sonnet at medium

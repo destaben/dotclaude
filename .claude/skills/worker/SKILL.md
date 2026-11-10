@@ -313,7 +313,7 @@ path of `HANDOFF-OUT.md` as the last two arguments. The hook is how the owner ro
 the question onward, for example to a notification. The script does not decide anything itself.
 
 The last resort is a notification to the owner, sent from the owner's machine by the
-`on_blocked` command the owner chose. The container has no way to contact anyone, and the
+`on_blocked` command the owner chose. The container has no channel to the owner, and the
 worker never contacts anyone itself.
 
 A run that failed (claude exited nonzero, or the login check failed) is always

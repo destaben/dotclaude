@@ -61,7 +61,7 @@
    host's sudoers file is the gate, not the vault text, and the skill adds a rule
    that reading state never means dumping secrets. If the whitelist ever needs write
    entries, revisit this item.
-9. **`claudio` phones the user; keypad answers, quiet hours, a chat fallback
+9. **(Superseded by item 12, 2026-11-10.) `claudio` phones the user; keypad answers, quiet hours, a chat fallback
    (2026-11-07).** An unresolved decision goes to the user by phone instead of
    waiting in a terminal. Answers are keypad digits confirmed by a second press,
    not speech recognition: telephone audio is least reliable on exactly the
@@ -158,5 +158,5 @@
     directly with numbered options (`AskUserQuestion`) and, if the user may be away, send a push
     notification (`PushNotification`) that reaches the Claude app. Nothing runs in between and no
     credential or open port is involved. The repo has no hooks again (the `claudio` guard was the
-    one exception). The removed code stays in git history (see issue 13) if a phone channel is
-    ever wanted again; the deferred speech-recognition conditions in item 9 then still apply.
+    one exception). The removed code stays in git history (the last commit that has it is `f1d9034`) if a
+    phone channel is ever wanted again; the deferred speech-recognition conditions in item 9 then still apply.
