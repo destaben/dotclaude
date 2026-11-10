@@ -3,6 +3,22 @@
 All notable changes to this repo are recorded here. Entries explain why a
 change was made, not just what changed — the diff already shows what.
 
+## 2026-11-10 — Autonomous mode that waits out usage limits
+
+Added `/auto` and an `auto` skill so a task can run from an approved plan to an open PR
+while the owner is away, including across the 5-hour and weekly usage limits. The council
+(quick) chose a foreground supervisor script around the unmodified `claude -p` over a
+cron or scheduled restart, because an unattended relaunch loop would drift toward the
+always-on use the subscription terms constraints recorded in issue 15 rules out. For the same reason the plan
+is still approved by the owner: the issue's "self-approve" was dropped, since a checklist
+is gameable and a council does not replace the owner's approval gate. A limit pauses the
+run without counting as a failure; the reset time is parsed from the message, a weekly
+limit with no readable reset stops instead of guessing, and the wait and the number of
+automatic resumes are capped (6 h, 3). Resume re-verifies branch, HEAD and the working tree
+contents. The checkpoint lives under `.git/` so it cannot be committed. Resume is at stage
+boundaries and re-sends the prompt: the real limit wording and `claude -p --resume` after
+a limit are unverified, so the tests use fixture messages.
+
 ## 2026-11-09 — PR review loop stops at no severe findings
 
 The `github-ops` recipe for iterating on a PR's automated review aimed at zero

@@ -1,0 +1,17 @@
+---
+description: Autonomous mode for one task. You approve the plan once, then the pipeline runs unattended to an open PR and survives usage-limit resets.
+argument-hint: <task> | --resume
+---
+
+Start autonomous mode for this task: $ARGUMENTS
+
+Follow the `auto` skill; it owns the rules, the guardrails and the resume behavior. If
+$ARGUMENTS is empty, ask what task to run instead of guessing.
+
+1. If $ARGUMENTS is `--resume`, run the skill's `resume` step and report; skip the rest.
+2. **Plan, approved by you.** Invoke the `planner` agent as `/plan` does, convening `/council` for
+   real design choices per `council-policy`. Show the plan and wait for explicit approval. This is
+   the only point where autonomous mode asks you anything; it never approves a plan itself.
+3. **Branch.** If the current branch is `main`, create a feature branch first.
+4. **Hand over.** Save the approved plan to a file outside the repo and start
+   `auto_supervisor.py start` as the skill describes. Report its final summary.

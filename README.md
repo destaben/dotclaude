@@ -67,9 +67,10 @@ Personal overrides (API keys, local-only permissions) go in that project's
 | Agent | `claudio` | The CEO, above the council: phones the user for a decision the council cannot resolve (Sonnet, medium) |
 | Command | `/plan` | Entry point: planner → plan for approval |
 | Command | `/council` | Decision council: quick by default, `full` on request |
+| Command | `/auto` | Autonomous mode: you approve the plan once, then it runs unattended to an open PR and waits out usage-limit resets (see the `auto` skill) |
 | Command | `/release` | Full pipeline: tests → bug-hunter → docs → PR |
 | Command | `/pr` | Commit and open a PR without the full pipeline |
-| Skill | `commit-and-pr`, `github-ops`, `testing-mindset`, `release-policy`, `council-policy`, `token-budget`, `session-cost-report`, `remote-hosts`, `worker` (needs an owner-listed SSH host with Docker: see "What the owner's host must provide" in its SKILL.md), `ceo-call` (inert until set up: see its "What it needs" and "Is it set up?" sections), `mcp-gmail-ops`, `mcp-drive-ops`, `mcp-calendar-ops`, `mcp-docs-ops`, `browser-ops`, `codebase-memory-ops` | See `.claude/skills/*/SKILL.md` |
+| Skill | `commit-and-pr`, `github-ops`, `testing-mindset`, `release-policy`, `council-policy`, `token-budget`, `session-cost-report`, `remote-hosts`, `auto`, `worker` (needs an owner-listed SSH host with Docker: see "What the owner's host must provide" in its SKILL.md), `ceo-call` (inert until set up: see its "What it needs" and "Is it set up?" sections), `mcp-gmail-ops`, `mcp-drive-ops`, `mcp-calendar-ops`, `mcp-docs-ops`, `browser-ops`, `codebase-memory-ops` | See `.claude/skills/*/SKILL.md` |
 
 See `docs/pipeline.md` for the prose walkthrough and `docs/references.md` for
 what was adapted from [awesome-copilot](https://github.com/github/awesome-copilot).
@@ -135,7 +136,8 @@ by default, or a full one (adding first principles, visionary, executor),
 whose chair's verdict settles the choice (except the escalation cases in the
 `council-policy` skill). Other entry points sit outside the diagram: `/pr`
 runs the `commit-and-pr` skill directly, for a change you've already verified
-yourself and don't want the full `/release` pipeline for, and the `worker` skill,
+yourself and don't want the full `/release` pipeline for, the `auto` skill (`/auto`, which runs the stages after you approve the plan),
+and the `worker` skill,
 which you start yourself and which publishes its result as a draft pull request for you
 to review (the outcomes are in the skill's *Running it* exit codes and its *Publishing* section). The
 `token-auditor` agent runs on demand (not part of this diagram) to report context bloat

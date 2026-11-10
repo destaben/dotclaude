@@ -57,6 +57,10 @@ back to the user: see "When the council cannot resolve it" there, and the `ceo-c
 - `ceo-call` and `claudio`: reached from `/council` (above) when the chair's verdict goes back to the user under
   `council-policy`, or when you ask to be called; an escalation path outside the change pipeline, see `council-policy` and
   `docs/decisions/0004-tooling-choices.md`, item 9.
+- `/auto` (command) and `auto` (skill): the same stages after you approve the plan once,
+  run unattended by a foreground supervisor that pauses across usage-limit resets and
+  resumes from a checkpoint kept under `.git/`. It ends at an open PR or a stop and
+  never approves a plan itself; the rules live in the skill.
 - `worker` (skill): a one-shot, owner-triggered Claude Code run in a container on
   an owner-listed SSH host, outside the change pipeline; see
   `docs/decisions/0004-tooling-choices.md`, item 10. The owner's machine publishes the
