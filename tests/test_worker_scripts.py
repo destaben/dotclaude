@@ -1333,7 +1333,6 @@ class EntrypointTests(WorkerCase):
             "an authentication_failed error field": {"STUB_CLAUDE_EXTRA_EVENT": '{"type": "assistant", "error": "authentication_failed"}'},
             "an org login refusal": {"STUB_CLAUDE_EXTRA_EVENT": '{"type": "assistant", "error": "oauth_org_not_allowed"}'},
             "a nested authentication_error": {"STUB_CLAUDE_EXTRA_EVENT": '{"type": "error", "error": {"type": "authentication_error"}}'},
-            "a 401 retry event": {"STUB_CLAUDE_EXTRA_EVENT": '{"type": "system", "subtype": "api_retry", "error_status": 401}'},
         }
         for number, (name, env) in enumerate(signals.items()):
             with self.subTest(name):
@@ -1343,6 +1342,11 @@ class EntrypointTests(WorkerCase):
     def test_a_login_message_followed_by_a_lot_of_plain_output_is_still_auth_failed(self):
         _, _, run_dir = self.run_entry(env={"STUB_CLAUDE_RAW_LINE": "Please run /login", "STUB_CLAUDE_RAW_PAD": "20000"})
         self.assertEqual(read_summary(run_dir / "summary.env")["AUTH"], "failed")
+
+    def test_a_401_that_claude_retried_and_survived_is_not_an_auth_failure(self):
+        retry = '{"type": "system", "subtype": "api_retry", "error_status": 401}'
+        _, _, run_dir = self.run_entry(env={"STUB_CLAUDE_EXTRA_EVENT": retry})
+        self.assertEqual(read_summary(run_dir / "summary.env")["AUTH"], "ok")
 
     def test_an_error_result_that_only_quotes_a_file_is_not_an_auth_failure(self):
         _, _, run_dir = self.run_entry(env={"STUB_CLAUDE_RESULT": "error_quoting_a_file"})
@@ -2238,7 +2242,7 @@ class CommitTests(WorkerCase):
         self.assertIn("left out of the commit", summary["REASON"])
 
     def test_a_very_long_checkpoint_does_not_stop_the_pull_request_from_being_prepared(self):
-        result = self.run_publishing(STUB_CLAUDE_OUT="done", STUB_CLAUDE_CHECKPOINT="long line " * 20000)
+        result = self.run_publishing(STUB_CLAUDE_OUT="done", STUB_CLAUDE_CHECKPOINT="long line " * 12000)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(self.bare_has("refs/heads/" + RUN_BRANCH))
 

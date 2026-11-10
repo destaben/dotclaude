@@ -509,9 +509,13 @@ starts a run by itself, and the worker's words stay data until the owner decides
    (a plain `git clone` of the bundle fails: it holds only the run's commits, on top of the base).
    Review `git diff <base>..<local-name>`.
 3. **Choose, with the owner:**
-   - *Finish locally*: continue on the fetched branch in the owner's session, through the normal
-     pipeline (`/plan`, tests, `/release`). Nothing was published, so this is an ordinary branch.
-   - *Publish*: only through the scripted publish step (*Publishing*), which holds the gates
+   - *Finish locally*: continue in the owner's session, through the normal pipeline (`/plan`,
+     tests, `/release`). A default run already published its branch and draft pull request: check
+     that branch out (`gh pr checkout`) and work on it as any other pull request, never pushing over
+     it with a different history. After a `--no-publish` run nothing is on origin: continue on the
+     fetched branch, which is an ordinary local branch, and open its pull request through
+     `commit-and-pr`, never by pushing the worker's bundle as is.
+   - *Publish* (a `--no-publish` run only; a default run already did): only through the scripted publish step (*Publishing*), which holds the gates
      (existing-branch check, secret scan, PR-text scan, refusal of changes under `.github/`). No flag
      publishes a saved bundle, so this repeats the run without `--no-publish`: the worker redoes the
      work and the new bundle is a different result to review again. Never push the fetched branch by
@@ -562,8 +566,10 @@ is written only with `status: blocked`. Template: `templates/handoff.md`.
 - **Refresh**: `CREDS_CHANGED=yes` means the credentials file's modification time or
   size changed during the run, so the login token was refreshed. Only those two facts
   are recorded, never the content.
-- **Auth**: `AUTH=failed` means a 401 or a login prompt was seen, and the run is reported
-  as `blocked`. Do not retry blindly; the owner repeats the one-time login.
+- **Auth**: `AUTH=failed` means claude itself reported a login problem (a stderr line such as
+  "Please run /login", a top-level 401 or `authentication_failed`/`oauth_org_not_allowed` field, a nested
+  `authentication_error`, or an error result whose `errors[]` says so), and the run is reported
+  as `blocked`. Text the worker read or wrote never counts, and a 401 that claude retried and survived does not. Do not retry blindly; the owner repeats the one-time login.
 
 ## Known residual risk
 Stated plainly, as the owner accepted it for the spike:

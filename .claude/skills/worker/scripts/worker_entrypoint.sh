@@ -665,7 +665,7 @@ run_claude() {
     local raw_hits json_hit
     raw_hits=$(grep -Ei "$auth_re" "$LOG" | grep -v '^[[:space:]]*{' || true)
     json_hit=$(jq -cR --arg re "$auth_re" 'fromjson? | select(type == "object") | select(
-        (.api_error_status? == 401) or (.error_status? == 401)
+        ((.api_error_status? | tostring) == "401")
         or (.error? == "authentication_failed") or (.error? == "oauth_org_not_allowed")
         or (((.error? | objects | .type?) // "") == "authentication_error")
         or (.type? == "result" and .is_error? == true and ((.errors? | tostring) | test($re; "i"))))' "$LOG" 2>/dev/null | head -n 1 || true)

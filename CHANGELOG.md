@@ -14,8 +14,9 @@ and a fetched branch is never pushed by hand, because a pushed workflow file can
 secrets. Found by the first exploratory run: the entrypoint decided `AUTH=failed` by searching the whole
 log for login phrases, so a worker that merely read this skill's docs or scripts (which contain them)
 was marked blocked even though claude had run fine. It now looks only at claude's own signals (non-JSON
-stderr lines, a top-level 401 or `authentication_failed` field, or an error result whose errors name a
-login problem), with a regression test.
+stderr lines, a top-level 401, `authentication_failed` or `oauth_org_not_allowed` field, a nested
+`authentication_error`, or an error result whose `errors[]` names a login problem; a 401 that claude
+retried and survived does not count), with a regression test.
 
 ## 2026-11-09 — PR review loop stops at no severe findings
 
