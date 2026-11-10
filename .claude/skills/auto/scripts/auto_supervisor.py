@@ -3,10 +3,10 @@
 across usage-limit resets. Owner-launched and foreground: it ends at an open PR, a stop, or the
 resume limit, and it never daemonizes or schedules itself.
 
-    auto_supervisor.py start --task TEXT --plan-file FILE [limits]
-    auto_supervisor.py resume [--state FILE] [limits]
+    auto_supervisor.py start --repo DIR --task TEXT --plan-file FILE [limits]
+    auto_supervisor.py resume (--repo DIR | --state FILE) [limits]
 
-Exit codes: 0 finished, 2 stopped with the checkpoint saved (resume with `resume`), 3 refused to start.
+Exit codes: 0 finished, 2 stopped with the checkpoint saved (resume with `resume`), 3 refused to start or resume.
 Environment: AUTO_CLAUDE_BIN (default `claude`), AUTO_NOTIFY_CMD (unset = notifications are a no-op),
 AUTO_MAX_BUDGET_USD (optional hard cap passed to claude as --max-budget-usd).
 """

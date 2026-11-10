@@ -3,6 +3,15 @@
 All notable changes to this repo are recorded here. Entries explain why a
 change was made, not just what changed — the diff already shows what.
 
+## 2026-11-10 — Corrections to the `/auto` docs after review
+
+The review of the `auto` PR left three inaccuracies: `--repo` is required only for `start` and for
+`resume` without `--state`; a stage that exits 0 with `AUTO-STAGE-RESULT: ok` as its last result is a success
+even if its output also holds a limit-looking line; and the `--resume` step did not say where `--repo` comes
+from. The `--help` text now shows `--repo` and says exit 3 also covers a refused resume. Two tests cover
+`resume` without `--repo`. The task was first given to the bmax worker, which could not write under `.claude/`
+(see issue 15), so it was done by hand.
+
 ## 2026-11-10 — Cheap non-severe findings may be fixed when the owner delegates the PR
 
 `release-policy` always listed non-severe findings and asked before changing anything, which stalls a

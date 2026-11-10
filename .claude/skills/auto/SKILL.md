@@ -37,7 +37,7 @@ Autonomous mode adds:
 
 ## Running it
 `scripts/auto_supervisor.py start --repo DIR --task TEXT --plan-file FILE` on a feature branch (`--repo`
-is required, so the script can never act on the repository that merely holds the skill) (it refuses
+is required for `start`, and for `resume` without `--state`, so the script can never act on the repository that merely holds the skill) (it refuses
 `main`, `master`, a detached HEAD and a dirty tree), then `resume --repo DIR` (or `resume --state FILE`) after a stop. A manual resume gives a fresh budget of
 automatic resumes. Stages run in order; each is one `claude -p`
 call whose prompt carries the task and approved plan, so any stage can be re-run from the
@@ -51,9 +51,11 @@ A limit is a pause, not a failure: it does not count toward the escalation rule.
 - **Detect:** a stage whose last three stdout lines or last three stderr lines include a line that starts with the CLI's usage-limit sentence (5-hour or
   weekly window), at any exit code. Prose that only mentions the wording, or a failure that quotes it
   mid-output, is not a limit. Any other failure stops the run, unretried.
-  A stage also stops the run unless its output has an `AUTO-STAGE-RESULT: ok` line (the prompt asks
+  A stage also stops the run unless the last `AUTO-STAGE-RESULT` line in its output is `ok` (the prompt asks
   for one; `blocked <reason>` or no line is a stop), so a stage that exits 0 without succeeding is
-  never recorded as complete.
+  never recorded as complete. The reverse holds too: a stage that exits 0 with `AUTO-STAGE-RESULT: ok` as its last
+  reported result is a success even if its output also contains a line that looks like a limit, because a limit line is read only
+  when the stage did not report success.
 - **Reset time:** parsed from that same line and the hint lines after it only (epoch, "in N hours", or a clock time such as "3pm" only when the message names its zone, UTC or an IANA name; a clock time without one is not trusted and takes the unreadable-reset path). If unreadable, a 5-hour
   limit falls back to 330 minutes; a weekly limit stops, because a guess could be days wrong.
 - **Wait:** until reset plus a 120 s margin, only if that is within the maximum wait (default 6 h)
