@@ -67,7 +67,7 @@ Personal overrides (API keys, local-only permissions) go in that project's
 | Agent | `claudio` | The CEO, above the council: phones the user for a decision the council cannot resolve (Sonnet, medium) |
 | Command | `/plan` | Entry point: planner → plan for approval |
 | Command | `/council` | Decision council: quick by default, `full` on request |
-| Command | `/auto` | Autonomous mode: you approve the plan once, then it runs unattended to an open PR and pauses across usage-limit resets (up to 6 h of waiting and 3 automatic resumes by default, then it stops with a resume command; see the `auto` skill) |
+| Command | `/auto` | Autonomous mode: you approve the plan once, then it runs unattended to an open PR and pauses across usage-limit resets (each wait capped at 6 h and at most 3 automatic resumes by default, then it stops with a resume command; see the `auto` skill) |
 | Command | `/release` | Full pipeline: tests → bug-hunter → docs → PR |
 | Command | `/pr` | Commit and open a PR without the full pipeline |
 | Skill | `commit-and-pr`, `github-ops`, `testing-mindset`, `release-policy`, `council-policy`, `token-budget`, `session-cost-report`, `remote-hosts`, `auto`, `worker` (needs an owner-listed SSH host with Docker: see "What the owner's host must provide" in its SKILL.md), `ceo-call` (inert until set up: see its "What it needs" and "Is it set up?" sections), `mcp-gmail-ops`, `mcp-drive-ops`, `mcp-calendar-ops`, `mcp-docs-ops`, `browser-ops`, `codebase-memory-ops` | See `.claude/skills/*/SKILL.md` |

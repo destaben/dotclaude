@@ -22,9 +22,8 @@ implementer makes the change → scoped tests → `/release` (full suite,
 bug-hunter, documenter, commit-and-pr). No hooks are used for this: the
 pipeline is a sequence of steps inside the commands and skills themselves, not
 something attached to the tool-call event system. `/auto` runs the same steps
-unattended after that one approval, stopping at an open PR and listing non-severe findings instead
-of asking (see the `auto` skill and `release-policy`). The one hook in this config is the `claudio` agent's own shell guard, which sits outside the pipeline (see
-the `ceo-call` skill).
+unattended after one plan approval (see the `auto` skill). The one hook in this config
+is the `claudio` agent's own shell guard, which sits outside the pipeline (see the `ceo-call` skill).
 
 Changes made by the `worker` skill are outside this pipeline: the owner reviews each
 draft pull request it opens.

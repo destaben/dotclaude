@@ -50,7 +50,7 @@ if act.startswith("limittail:"):  # the limit sentence, then a trailing hint lin
     print("Run /usage for details.")
     sys.exit(0)
 if act.startswith("prose0:"):  # a successful stage whose last line is prose that merely mentions the wording
-    print(act[7:]); sys.exit(0)
+    print("AUTO-STAGE-RESULT: ok"); print(act[7:]); sys.exit(0)
 if act.startswith("limit0:"):
     print(act[7:].replace("{reset}", str(int(time.time()) + 2)))
     sys.exit(0)
@@ -59,7 +59,12 @@ if act == "tamper":  # limit now; the notifier switches branches while the run w
     print("Claude usage limit reached|%d" % (int(time.time()) + 1)); sys.exit(1)
 if act == "fail":
     print("error: tests do not pass"); sys.exit(1)
+if act == "silent":  # exits 0 but never reports success
+    print("I stopped as instructed."); sys.exit(0)
+if act.startswith("blocked:"):
+    print("AUTO-STAGE-RESULT: blocked " + act[8:]); sys.exit(0)
 open(stage + ".txt", "w").write("x")
+print("done.\nAUTO-STAGE-RESULT: ok")
 '''
 
 
@@ -167,6 +172,12 @@ class TestLimits(Base):
         self.assertIn("maximum", r.stdout)
         self.assertEqual(len(self.calls()), 3)  # first try plus two resumes, then stop
         self.assertEqual(self.checkpoint()["resumes"], 2)
+
+    def test_limit_with_unknown_window_and_no_reset_stops(self):
+        self.script(["limit:You've hit your limit, resets Fri 9am"])
+        r = self.start()
+        self.assertEqual(r.returncode, 2)
+        self.assertEqual(len(self.calls()), 1)
 
     def test_weekly_limit_without_readable_reset_stops(self):
         self.script(["limit:You have hit your weekly limit."])
@@ -294,6 +305,28 @@ class TestInvocationAndNotify(Base):
         self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
         self.assertEqual(self.checkpoint()["resumes"], 1)
         self.assertEqual(self.calls()[0]["stage"], self.calls()[1]["stage"])
+
+    def test_exit_zero_without_the_success_marker_stops_the_run(self):
+        self.script(["ok", "silent"])
+        r = self.start()
+        self.assertEqual(r.returncode, 2)
+        self.assertEqual([c["stage"] for c in self.calls()], ["implement", "scoped-tests"])
+        self.assertEqual(self.checkpoint()["completed"], ["implement"])
+        self.assertIn("did not report success", r.stdout)
+
+    def test_a_blocked_stage_report_stops_the_run_and_shows_the_reason(self):
+        self.script(["ok", "blocked:2 tests still fail"])
+        r = self.start()
+        self.assertEqual(r.returncode, 2)
+        self.assertEqual(self.checkpoint()["completed"], ["implement"])
+        self.assertIn("2 tests still fail", r.stdout)
+
+    def test_corrupt_checkpoint_is_a_refusal(self):
+        self.script([])
+        d = self.repo / ".git" / "auto"
+        d.mkdir(parents=True)
+        (d / "auto-bad.json").write_text('{"version": 1}')
+        self.assertEqual(self.sup("resume").returncode, 3)
 
     def test_limit_sentence_followed_by_a_hint_line_is_still_a_pause(self):
         self.script(["limittail:Claude usage limit reached|{reset}", "ok", "ok", "ok"])
@@ -423,7 +456,9 @@ class TestParseReset(unittest.TestCase):
         self.assertIsNone(self.m.classify("FAILED test_api - expected rate limit handling, got 500"))
         self.assertIsNone(self.m.classify("FAILED test_retry - expected 'limit reached' message"))
         self.assertIsNone(self.m.classify("Added usage limit handling to the retry code."))
-        self.assertEqual(self.m.classify("usage limit reached")["window"], "5h")
+        self.assertEqual(self.m.classify("Session limit reached.")["window"], "5h")
+        self.assertEqual(self.m.classify("usage limit reached")["window"], "unknown")
+        self.assertIsNone(self.m.classify("Usage limit reached - PR 12 opened"))
         self.assertEqual(self.m.classify("weekly usage limit reached")["window"], "weekly")
 
 
