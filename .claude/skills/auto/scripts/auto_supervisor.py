@@ -42,9 +42,11 @@ PROMPT_RULES = (
 
 # The CLI's limit sentence, anchored at the start of the last line: prose that merely mentions
 # "usage limit reached" (a commit summary, a quoted test failure) must not pause the run.
-LIMIT_RE = re.compile(
-    r"^\W*(?:claude(?:\s+ai)?\s+)?(?:(?:weekly|session|opus|5-hour)\s+)*(?:usage\s+)?limit\s+(?:reached|hit)\b"
-    r"|^\W*(?:you(?:'ve|\s+have)\s+)?(?:hit|reached)\s+your\s+.{0,30}limit\b", re.I)
+# the sentence ends there: end of line or punctuation, so "limit reached handling is ..." is prose
+END = r"(?=\s*(?:$|[.|,;:!\u00b7\u2014-]))"
+LIMIT_RE = re.compile((
+    r"^\W*(?:claude(?:\s+ai)?\s+)?(?:(?:weekly|session|opus|5-hour)\s+)*(?:usage\s+)?limit\s+(?:reached|hit)\b{END}"
+    r"|^\W*(?:you(?:'ve|\s+have)\s+)?(?:hit|reached)\s+your\s+.{0,30}limit\b{END}").replace("{END}", END), re.I)
 WEEKLY_RE = re.compile(r"week", re.I)
 
 
@@ -165,10 +167,11 @@ def run_claude(cp, stage):
     if budget:
         cmd += ["--max-budget-usd", budget]
     try:
-        p = subprocess.run(cmd, cwd=cp["repo"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        p = subprocess.run(cmd, cwd=cp["repo"], capture_output=True, text=True, errors="replace",
+                           stdin=subprocess.DEVNULL)
     except OSError as e:
         raise Stop(f"cannot run claude ({e})")
-    return p.returncode, (p.stdout or "") + "\n" + (p.stderr or "")
+    return p.returncode, [p.stdout or "", p.stderr or ""]  # each stream is judged on its own last line
 
 
 def wait_seconds(cp, info, limits, now):
@@ -198,8 +201,8 @@ def execute(cp, limits):
         reverify(cp)
         cp.update(stage=stage, status="running")
         save(cp)
-        code, output = run_claude(cp, stage)
-        info = classify(output)
+        code, streams = run_claude(cp, stage)
+        info = next((i for i in map(classify, streams) if i), None)
         if info:
             if cp["resumes"] >= limits["max_resumes"]:
                 record(cp)
@@ -290,6 +293,8 @@ def main(argv=None):
             path = args.state
             if not path:
                 files = sorted(state_dir(repo).glob("auto-*.json"), key=lambda f: f.stat().st_mtime)
+                open_runs = [f for f in files if json.loads(f.read_text()).get("status") != "done"]
+                files = open_runs or files  # a finished run must not shadow an unfinished one
                 if not files:
                     raise Stop("no checkpoint found")
                 path = files[-1]

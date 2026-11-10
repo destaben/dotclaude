@@ -45,7 +45,7 @@ never skips them.
 
 ## Usage limits
 A limit is a pause, not a failure: it does not count toward the escalation rule.
-- **Detect:** a stage whose last output line starts with the CLI's usage-limit sentence (5-hour or
+- **Detect:** a stage whose last stdout line or last stderr line starts with the CLI's usage-limit sentence (5-hour or
   weekly window), at any exit code. Prose that only mentions the wording, or a failure that quotes it
   mid-output, is not a limit. Any other failure stops the run, unretried.
 - **Reset time:** parsed from that same last line only (epoch, "in N hours", "at 3pm"). If unreadable, a 5-hour

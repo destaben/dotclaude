@@ -41,6 +41,10 @@ if act.startswith("longlimit0:"):  # exit 0, a long progress summary, then the l
     print("\n".join("progress line %d" % i for i in range(8)))
     print(act[11:].replace("{reset}", str(int(time.time()) + 2)))
     sys.exit(0)
+if act.startswith("limiterr:"):  # the limit sentence on stdout, then unrelated noise on stderr, exit 0
+    print(act[9:].replace("{reset}", str(int(time.time()) + 2)))
+    sys.stderr.write("(node) ExperimentalWarning: something unrelated\n")
+    sys.exit(0)
 if act.startswith("prose0:"):  # a successful stage whose last line is prose that merely mentions the wording
     print(act[7:]); sys.exit(0)
 if act.startswith("limit0:"):
@@ -280,6 +284,31 @@ class TestInvocationAndNotify(Base):
         self.assertEqual(self.checkpoint()["resumes"], 0)
         self.assertEqual(len(self.calls()), 3)
 
+    def test_limit_on_stdout_followed_by_stderr_noise_is_still_a_pause(self):
+        self.script(["limiterr:Claude usage limit reached|{reset}", "ok", "ok", "ok"])
+        r = self.start()
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertEqual(self.checkpoint()["resumes"], 1)
+        self.assertEqual(self.calls()[0]["stage"], self.calls()[1]["stage"])
+
+    def test_prose_that_starts_with_the_limit_words_is_not_a_pause(self):
+        self.script(["prose0:Usage limit reached handling is now in place.", "ok", "ok"])
+        r = self.start()
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertEqual(self.checkpoint()["resumes"], 0)
+
+    def test_resume_without_state_prefers_an_unfinished_run_over_a_newer_finished_one(self):
+        self.script(["limit:Claude usage limit reached|{reset}"])
+        self.assertEqual(self.start("--max-wait-hours", "0").returncode, 2)
+        d = self.repo / ".git" / "auto"
+        stopped = next(d.glob("auto-*.json"))
+        done = json.loads(stopped.read_text())
+        done.update(status="done", state_file=str(d / "auto-zzzzzzzz.json"))
+        (d / "auto-zzzzzzzz.json").write_text(json.dumps(done))  # newer mtime
+        r = self.sup("resume", "--margin-seconds", "0")
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertEqual(json.loads(stopped.read_text())["status"], "done")
+
     def test_budget_cap_is_passed_only_when_configured(self):
         self.env["AUTO_MAX_BUDGET_USD"] = "5"
         self.script(["ok", "ok", "ok"])
@@ -363,6 +392,7 @@ class TestParseReset(unittest.TestCase):
 
     def test_classify_requires_the_limit_sentence_at_the_start_of_the_last_line(self):
         self.assertIsNone(self.m.classify("Added usage limit reached detection; PR opened."))
+        self.assertIsNone(self.m.classify("Usage limit reached handling is now in place."))
         self.assertIsNotNone(self.m.classify("noise\nClaude AI usage limit reached|1800003600"))
         self.assertIsNotNone(self.m.classify("You've hit your weekly limit. Resets Fri 9am"))
         self.assertIsNotNone(self.m.classify("Session limit reached. Your limit will reset at 3pm."))
