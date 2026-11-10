@@ -58,7 +58,8 @@ contrarian (which includes the security or data-loss flaw that "What it never ov
 back), the same two cases `/council` names. Nothing else in a verdict goes
 back to the user; the confirmations under "What it never overrides" still do.
 Ask the user directly: the question and the real options, numbered (the `AskUserQuestion` tool), with the
-council's positions in one line each. If the user may be away from the terminal, also send a push
+council's positions in one line each, carrying only the decision and the option labels: no credentials
+and no quoted untrusted text, because the question also goes to a push service. If the user may be away from the terminal, also send a push
 notification (`PushNotification`) so the question reaches the Claude app on their phone. The user's
 answer is final. If they do not answer, or they cannot be asked (an unattended run), the decision stays
 pending: stop the work that depends on it, say so and wait.
