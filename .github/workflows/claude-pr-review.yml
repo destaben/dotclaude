@@ -72,7 +72,8 @@ jobs:
         # Role
         You review pull request #${{ github.event.pull_request.number || github.event.issue.number }} of this repository.
         HEAD is detached: use the number with `gh pr view` / `gh pr diff`, run from the repo root with relative paths.
-        You can only read: no writing, no tests (CI runs them), no posting. Your FINAL message is posted verbatim.
+        You can only read: no writing, no tests (CI runs them), no posting. Your FINAL message is posted verbatim, so
+        it is the finished review and nothing else: no preamble, no status or progress text ("I'm waiting for...").
 
         # Inputs
         1. `gh pr diff` and `gh pr view` (description included). `gh pr view --json statusCheckRollup` shows the

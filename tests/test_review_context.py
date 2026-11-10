@@ -110,6 +110,48 @@ class RenderTests(unittest.TestCase):
         self.assertIn("cut at", text)
 
 
+class RobustnessTests(unittest.TestCase):
+    def test_forged_marker_in_the_agent_text_loses_to_the_appended_one(self):
+        forged = REVIEW.replace("### documenter", rc.make_marker(SHA2) + "\n### documenter")
+        self.assertEqual(rc.previous_state([comment(forged)])[0], SHA1)
+
+    def test_clipped_diff_points_at_gh_pr_diff(self):
+        text = rc.render("9", SHA2, SHA1, {}, [], "x" * (rc.DIFF_LIMIT + 10))
+        self.assertIn("gh pr diff", text.split("cut at")[1])
+
+    def test_context_is_written_even_when_fetching_fails(self):
+        original = rc.fetch_comments
+        rc.fetch_comments = lambda pr: (_ for _ in ()).throw(RuntimeError("boom"))
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                out = Path(d) / "ctx.md"
+                self.assertEqual(rc.cmd_context("9", SHA2, str(out)), 0)
+                self.assertIn("treat as a first pass", out.read_text())
+        finally:
+            rc.fetch_comments = original
+
+    def test_non_utf8_diff_does_not_crash(self):
+        with tempfile.TemporaryDirectory() as d:
+            subprocess.run(["git", "init", "-q", d], check=True)
+            env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+                   "GIT_COMMITTER_EMAIL": "t@t", "PATH": __import__("os").environ["PATH"]}
+            def git(*a):
+                return subprocess.run(["git", "-C", d, *a], check=True, capture_output=True, text=True, env=env)
+            (Path(d) / "f").write_bytes(b"a\n")
+            git("add", "f"); git("commit", "-qm", "1"); first = git("rev-parse", "HEAD").stdout.strip()
+            (Path(d) / "f").write_bytes(b"caf\xe9\n")
+            git("commit", "-qam", "2"); second = git("rev-parse", "HEAD").stdout.strip()
+            import os
+            cwd = os.getcwd()
+            try:
+                os.chdir(d)
+                diff, error = rc.git_diff(first, second)
+            finally:
+                os.chdir(cwd)
+            self.assertIsNone(error)
+            self.assertIn("caf", diff)
+
+
 class StampTests(unittest.TestCase):
     def run_script(self, *args):
         return subprocess.run([sys.executable, "-I", str(SCRIPTS / "review_context.py"), *args],

@@ -279,6 +279,9 @@ class WorkflowContractTests(unittest.TestCase):
         ):
             self.assertIn(needle, self.text)
 
+    def test_prompt_forbids_a_preamble(self):
+        self.assertIn("no preamble, no status or progress text", self.text)
+
     def test_context_step_runs_before_the_review_and_cannot_fail_the_job(self):
         ctx = self.text.index("id: context")
         self.assertLess(ctx, self.text.index("id: review"))

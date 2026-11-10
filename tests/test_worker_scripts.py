@@ -2196,7 +2196,9 @@ class CommitTests(WorkerCase):
         self.assertIn("left out of the commit", summary["REASON"])
 
     def test_a_very_long_checkpoint_does_not_stop_the_pull_request_from_being_prepared(self):
-        result = self.run_publishing(STUB_CLAUDE_OUT="done", STUB_CLAUDE_CHECKPOINT="long line " * 20000)
+        # 100 KB: far above the 6000-byte cap, and below Linux's 128 KiB limit for one
+        # environment string (a larger value makes the test's own exec fail with E2BIG).
+        result = self.run_publishing(STUB_CLAUDE_OUT="done", STUB_CLAUDE_CHECKPOINT="long line " * 10000)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(self.bare_has("refs/heads/" + RUN_BRANCH))
 

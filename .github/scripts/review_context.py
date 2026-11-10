@@ -60,6 +60,11 @@ def review_comments(comments):
     return found
 
 
+def last_marker(body):
+    """The reviewed sha of the LAST marker: the real one is appended after any text of the agent's."""
+    return MARKER_RE.findall(body)[-1]
+
+
 def parse_ledger(text):
     """{id: (status, rest of the line)} from a review's ledger lines."""
     ledger = {}
@@ -76,7 +81,7 @@ def previous_state(comments):
     if not reviews:
         return None, {}
     body = reviews[-1].get("body") or ""
-    return MARKER_RE.search(body).group(1), parse_ledger(body)
+    return last_marker(body), parse_ledger(body)
 
 
 def author_notes(pr_body, comments):
@@ -97,7 +102,7 @@ def author_notes(pr_body, comments):
 def clip(text, limit):
     if len(text) <= limit:
         return text
-    return text[:limit] + f"\n[... cut at {limit} characters]"
+    return text[:limit] + f"\n[... cut at {limit} characters; read the rest with `gh pr diff`]"
 
 
 def render(pr_number, head_sha, last_sha, ledger, notes, diff, diff_error=None):
@@ -133,7 +138,8 @@ def render(pr_number, head_sha, last_sha, ledger, notes, diff, diff_error=None):
     elif not diff.strip():
         out.append("(no changes since that commit)")
     else:
-        out += [FENCE + "diff", clip(diff, DIFF_LIMIT), FENCE]
+        out += ["(a two-dot diff: changes merged in from the base branch since then may appear; they are not the author's)",
+                FENCE + "diff", clip(diff, DIFF_LIMIT), FENCE]
     return "\n".join(out) + "\n"
 
 
@@ -145,16 +151,22 @@ def gh_json(*args):
 def fetch_comments(pr_number):
     repo = os.environ["GITHUB_REPOSITORY"]
     pages = gh_json("api", "--paginate", "--slurp", f"repos/{repo}/issues/{pr_number}/comments")
-    return [c for page in pages for c in (page if isinstance(page, list) else [page])]
+    comments = [c for page in pages for c in (page if isinstance(page, list) else [page])]
+    try:  # inline review-thread comments carry justifications too; best effort
+        inline = gh_json("api", "--paginate", "--slurp", f"repos/{repo}/pulls/{pr_number}/comments")
+        comments += [c for page in inline for c in (page if isinstance(page, list) else [page])]
+    except Exception:  # noqa: BLE001
+        pass
+    return comments
 
 
 def git_diff(last_sha, head_sha):
     proc = subprocess.run(
-        ["git", "diff", "--no-color", f"{last_sha}..{head_sha}"], capture_output=True, text=True
+        ["git", "diff", "--no-color", f"{last_sha}..{head_sha}"], capture_output=True
     )
     if proc.returncode != 0:
         return None, "the previously reviewed commit is not in the history (force-push?)"
-    return proc.stdout, None
+    return proc.stdout.decode("utf-8", errors="replace"), None
 
 
 def cmd_context(pr_number, head_sha, output):
@@ -171,7 +183,10 @@ def cmd_context(pr_number, head_sha, output):
     last_sha, ledger = previous_state(comments)
     diff, error = (None, None)
     if last_sha:
-        diff, error = git_diff(last_sha, head_sha)
+        try:
+            diff, error = git_diff(last_sha, head_sha)
+        except Exception as exc:  # noqa: BLE001
+            diff, error = None, type(exc).__name__
     notes = author_notes((pr or {}).get("body"), comments)
     Path(output).write_text(
         render(pr_number, head_sha, last_sha, ledger, notes, diff, error), encoding="utf-8"

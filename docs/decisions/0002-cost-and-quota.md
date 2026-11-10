@@ -178,8 +178,9 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   only, and a first pass reads more files, so expect a somewhat larger run, not a different tier.
 - **Not done, owner's decision: model and effort.** The issue proposes `claude-sonnet-5-5` at medium for
   the first pass only. That is a tier change and spends more quota (decision 1 and 5), so it is not adopted
-  here. To try it, pick the model in `REVIEW_ARGS` by whether `.review-context.md` reports a first pass,
-  and measure on the PR #9 replay before keeping it.
+  here. Trying it would be new work: `REVIEW_ARGS` is static today, so a step
+  would have to choose the model when the context step finds no previous review. Measure on the PR #9
+  replay before keeping it.
 - **Not done: running ShellCheck or the tests in the review job.** The agent has no tool to run them
   (that would widen the allowlist), so it reads the repo's CI results from `statusCheckRollup`; repos that want
   ShellCheck should add it as its own CI job.
@@ -187,7 +188,11 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   pass, at most one `pre-existing` tag later, 80% id overlap across reruns) need real model runs and have
   not been measured. Ids are written by the model from file, rule and symbol, not hashed, so overlap
   depends on it naming them consistently.
-- **Accepted limits:** the `Result:` line stays the contract; the summary line and the ledger are asked
+- **Accepted limits:** the `Result:` line is the last line of the validated message; after validation the post step
+  appends a hidden `<!-- claude-pr-review sha=... -->` marker, so the posted comment ends with the marker. The
+  ledger is written by the bot itself, so a `justified` entry is the bot's record, not proof that a trusted author
+  agreed; telling them apart is a design choice left to the owner. An unstamped review (the context step failed)
+  is not used as a baseline, so the next pass falls back to the last stamped one. the summary line and the ledger are asked
   for by the prompt but a missing one does not fail the gate, to avoid red jobs over format.
 
 ## The `claudio` agent (phone calls for escalated decisions) (2026-11-07)

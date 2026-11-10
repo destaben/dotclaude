@@ -33,7 +33,7 @@ python3 scripts/install.py --uninstall      # remove what a prior run installed
   into one specific project. Use project scope for a project where you want a
   GitHub Actions workflow (like `claude-pr-review.yml`) to see these agents — a
   CI runner only checks out that project, not your `~/.claude/`. The workflow and
-  its `.github/scripts/check_review.py` are copied by hand, not by `install.py`.
+  its `.github/scripts/check_review.py` and `review_context.py` are copied by hand, not by `install.py`.
 - **`claudio` and `ceo-call` need the user-scope install**: a project-level copy
   takes precedence over it and can change or drop its shell-guard hook (see
   "Agent safety" in the `ceo-call` skill). Project-scope `install.py` still
