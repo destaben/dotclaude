@@ -132,3 +132,20 @@ redact() {
     s{(?i)([?&](?:key|api_?key|access_?token|token|auth|password|passwd|secret|sig|signature)=)[^&\s"\x27]+}{$1REDACTED}g;
     s{(?i)((?:(?:password|passwd|passphrase|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|credentials?)(?:[_-][A-Za-z0-9_-]*)?|pass|pwd|auth|cookie|session(?:[_-]?(?:id|token|key))?|(?<![A-Za-z0-9])[A-Za-z0-9]+[_-]key)["\x27]?\s*[=:]\s*)(?:"[^"]*"|\x27[^\x27]*\x27|[^\s"\x27]+)}{$1REDACTED}g'
 }
+
+# conf_file <name> <override-var-name>: print the path of a vault-side config file. Location, first
+# match wins: the file named by the override variable, $REMOTE_HOSTS_VAULT/config/<name>, then
+# ${XDG_CONFIG_HOME:-~/.config}/remote-hosts/<name>. The path is printed even if the file is missing.
+conf_file() {
+  eval "_ov=\${$2:-}"
+  if [ -n "$_ov" ]; then printf '%s\n' "$_ov"
+  elif [ -n "${REMOTE_HOSTS_VAULT:-}" ]; then printf '%s\n' "$REMOTE_HOSTS_VAULT/config/$1"
+  else printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/remote-hosts/$1"
+  fi
+}
+
+# conf_get <file> <key>: print the value of the first "<key> <value>" line (whitespace separated,
+# '#' starts a comment line). Config is parsed, never sourced, so a value cannot run code.
+conf_get() {
+  awk -v k="$2" '$1==k { sub(/^[^ \t]+[ \t]+/, ""); sub(/[ \t]+$/, ""); print; exit }' "$1"
+}

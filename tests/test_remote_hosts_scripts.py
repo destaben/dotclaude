@@ -844,6 +844,338 @@ class PrintStateTests(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
 
 
+class HaCase(unittest.TestCase):
+    """Home Assistant scripts run against stubbed curl and security: no network, no real Keychain."""
+
+    TOKEN = "tok_ABCdef123456"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        t = Path(self.tmp.name)
+        self.t = t
+        (t / "bin").mkdir()
+        (t / "home").mkdir()
+        self.curl_log, self.curl_in, self.sec_log = t / "curl.args", t / "curl.stdin", t / "security.args"
+        # curl stub: record argv and, when asked for headers on stdin (-H @-), the stdin; serve Moonraker or HA.
+        self.stub("curl",
+                  'printf "%s\\n" "$*" >> "$CURL_LOG"\n'
+                  'case "$*" in *"-H @-"*) cat >> "$CURL_IN" ;; esac\n'
+                  '[ -z "$CURL_FAIL" ] || exit 22\n'    # like curl -f: fail with no body
+                  'case "$*" in\n'
+                  '  *printer/objects/query*) printf \'{"result":{"status":{"print_stats":{"state":"%s"},"display_status":{"progress":0}}}}\' "${PRINT_STATE:-standby}" ;;\n'
+                  '  *api/v1/query*) printf \'{"status":"success","data":{"result":%s}}\' "${PROM_RESULT:-[]}" ;;\n'
+                  '  *error_log*) printf "boom password=hunter2 \\033[31mred\\n" ;;\n'
+                  '  *) printf \'{"ok":true}\' ;;\n'
+                  'esac\n'
+                  )
+        self.stub("security", 'printf "%s\\n" "$*" >> "$SEC_LOG"\n[ -z "$NO_TOKEN" ] || exit 44\nprintf "%s\\n" "$TOKEN"\n')
+        self.conf = t / "ha.conf"
+        self.conf.write_text("# generic test config\nurl http://ha.test:8123\nkeychain_service svc-test\n"
+                             "printer_power_entity switch.printer_power\nprinter_moonraker printer.test:80\n")
+        self.env = {**os.environ, "HOME": str(t / "home"), "USER": "tester", "PATH": f"{t / 'bin'}:{os.environ['PATH']}",
+                    "REMOTE_HOSTS_HA_CONF": str(self.conf), "CURL_LOG": str(self.curl_log), "CURL_IN": str(self.curl_in),
+                    "SEC_LOG": str(self.sec_log), "TOKEN": self.TOKEN}
+        self.env.pop("REMOTE_HOSTS_VAULT", None)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def stub(self, name, body):
+        p = self.t / "bin" / name
+        p.write_text("#!/bin/sh\n" + body)
+        p.chmod(0o755)
+
+    def run_script(self, name, *args, **env):
+        return subprocess.run([str(SCRIPTS / name), *args], env={**self.env, **env}, capture_output=True,
+                              text=True, timeout=60)
+
+    def curl_calls(self):
+        return self.curl_log.read_text().splitlines() if self.curl_log.exists() else []
+
+
+class HaReadTests(HaCase):
+    def test_allowlisted_reads_are_plain_gets_with_the_token_on_stdin_only(self):
+        cases = {
+            ("states",): "http://ha.test:8123/api/states",
+            ("states", "sensor.temp_1"): "http://ha.test:8123/api/states/sensor.temp_1",
+            ("/api/states/light.kitchen",): "http://ha.test:8123/api/states/light.kitchen",
+            ("config",): "http://ha.test:8123/api/config",
+            ("logbook",): "http://ha.test:8123/api/logbook",
+            ("logbook/2026-01-02T03:04:05+00:00",): "http://ha.test:8123/api/logbook/2026-01-02T03:04:05+00:00",
+            ("history/period/2026-01-02T03:04:05+00:00?filter_entity_id=sensor.a&minimal_response",):
+                "http://ha.test:8123/api/history/period/2026-01-02T03:04:05+00:00?filter_entity_id=sensor.a&minimal_response",
+        }
+        for args, url in cases.items():
+            with self.subTest(args=args):
+                self.curl_log.unlink(missing_ok=True)
+                self.curl_in.unlink(missing_ok=True)
+                r = self.run_script("ha-read.sh", *args)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                (call,) = self.curl_calls()
+                self.assertTrue(call.endswith(f"-- {url}"), call)
+                self.assertIn("-X GET", call)
+                self.assertNotIn("POST", call)
+                self.assertNotIn(self.TOKEN, call)                       # never on argv
+                self.assertIn(f"Authorization: Bearer {self.TOKEN}", self.curl_in.read_text())
+                self.assertNotIn(self.TOKEN, r.stdout + r.stderr)
+        self.assertIn("-s svc-test", self.sec_log.read_text())
+
+    def test_everything_else_is_refused_before_curl_or_keychain(self):
+        bad = [("-X", "POST"), ("-X",), ("POST", "states"), ("--data", "x"), ("states", "sensor.a", "x"), ("-H", "x"),
+               ("services/light/turn_on",), ("/api/services/light/turn_on",), ("template",), ("webhook/abc",), ("stream",),
+               ("states/../config",), ("states/Sensor.A",), ("states/all",), ("states/a.b.c",), ("states/sensor.",),
+               ("config/extra",), ("camera_proxy/camera.x",), ("logbook/../x",), ("logbook/a b",), ("history/period/x/y",),
+               ("states?a=$(id)",), ("http://evil.test/api/states",), ("states", "sensor.a;id"), ("",), (), ("config;id",)]
+        for args in bad:
+            with self.subTest(args=args):
+                r = self.run_script("ha-read.sh", *args)
+                self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertEqual(self.curl_calls(), [])
+        self.assertFalse(self.sec_log.exists())
+
+    def test_setup_problems_exit_4_without_calling_curl(self):
+        self.assertEqual(self.run_script("ha-read.sh", "states", REMOTE_HOSTS_HA_CONF=str(self.t / "none")).returncode, 4)
+        for line in ("url ftp://ha.test", "url http://user:pw@ha.test", "url http://ha.test/path", "url"):
+            with self.subTest(line=line):
+                self.conf.write_text(line + "\n")
+                self.assertEqual(self.run_script("ha-read.sh", "config").returncode, 4)
+        self.conf.write_text("url http://ha.test:8123\n")
+        self.assertEqual(self.run_script("ha-read.sh", "config", NO_TOKEN="1").returncode, 4)
+        self.assertEqual(self.curl_calls(), [])
+
+    def test_conf_is_parsed_not_executed(self):
+        marker = self.t / "pwned"
+        self.conf.write_text(f"url http://ha.test:8123\nkeychain_service $(touch {marker})\n")
+        self.assertEqual(self.run_script("ha-read.sh", "config").returncode, 4)
+        self.assertFalse(marker.exists())
+
+    def test_request_failure_is_exit_1(self):
+        self.assertEqual(self.run_script("ha-read.sh", "config", CURL_FAIL="1").returncode, 1)
+
+    def test_error_log_is_sanitized_and_redacted(self):
+        r = self.run_script("ha-read.sh", "error_log")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("hunter2", r.stdout)
+        self.assertNotIn("\x1b", r.stdout)
+
+    def test_script_contains_no_write_method(self):
+        text = (SCRIPTS / "ha-read.sh").read_text()
+        self.assertNotIn("POST", text.replace("POST/PUT", ""))
+        for m in ("-X PUT", "-X DELETE", "--data", "-d "):
+            self.assertNotIn(m, text)
+
+
+class HaCallTests(HaCase):
+    def test_dry_run_is_the_default_and_sends_nothing(self):
+        r = self.run_script("ha-call.sh", "light", "turn_on", "light.kitchen")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("dry run", r.stdout)
+        self.assertIn("/api/services/light/turn_on", r.stdout)
+        self.assertEqual(self.curl_calls(), [])
+        self.assertFalse(self.sec_log.exists())
+
+    def test_yes_posts_one_service_call_with_the_token_on_stdin(self):
+        r = self.run_script("ha-call.sh", "light", "turn_on", "light.kitchen", "--yes")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        (call,) = self.curl_calls()
+        self.assertIn("-X POST", call)
+        self.assertIn('{"entity_id": "light.kitchen"}', call)
+        self.assertTrue(call.endswith("-- http://ha.test:8123/api/services/light/turn_on"), call)
+        self.assertNotIn(self.TOKEN, call)
+        self.assertIn(self.TOKEN, self.curl_in.read_text())
+
+    def test_bad_arguments_are_refused(self):
+        bad = [(), ("light", "turn_on"), ("light", "turn_on", "all"), ("light", "turn_on", "light.a,light.b"),
+               ("light", "turn_on", "light.a.b"), ("light", "turn_on", ".a"), ("Light", "turn_on", "light.a"),
+               ("light", "turn_on;id", "light.a"), ("light", "turn_on", "light.a", "--force"),
+               ("light", "turn_on", "light.a", "--yes", "x"), ("-x", "turn_on", "light.a"), ("light/x", "turn_on", "light.a")]
+        for args in bad:
+            with self.subTest(args=args):
+                self.assertEqual(self.run_script("ha-call.sh", *args).returncode, 2)
+        self.assertEqual(self.curl_calls(), [])
+
+    def test_printer_power_entity_is_refused_unless_print_state_is_idle(self):
+        for state in ("printing", "paused", "error", "bogus"):
+            for flags in ((), ("--yes",)):
+                with self.subTest(state=state, flags=flags):
+                    self.curl_log.unlink(missing_ok=True)
+                    r = self.run_script("ha-call.sh", "switch", "turn_off", "switch.printer_power", *flags, PRINT_STATE=state)
+                    self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+                    self.assertFalse(any("services" in c for c in self.curl_calls()))
+
+    def test_printer_power_entity_proceeds_when_idle(self):
+        r = self.run_script("ha-call.sh", "switch", "turn_off", "switch.printer_power", "--yes", PRINT_STATE="standby")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertTrue(any("-X POST" in c for c in self.curl_calls()))
+
+    def test_unreachable_printer_state_fails_closed(self):
+        self.stub("curl", 'exit 7\n')
+        self.assertEqual(self.run_script("ha-call.sh", "switch", "turn_off", "switch.printer_power", "--yes").returncode, 3)
+
+    def test_printer_entity_without_moonraker_address_is_refused(self):
+        self.conf.write_text("url http://ha.test:8123\nprinter_power_entity switch.printer_power\n")
+        self.assertEqual(self.run_script("ha-call.sh", "switch", "turn_off", "switch.printer_power").returncode, 3)
+
+    def test_other_entities_do_not_consult_the_printer(self):
+        self.run_script("ha-call.sh", "light", "turn_on", "light.kitchen", "--yes", PRINT_STATE="printing")
+        self.assertFalse(any("printer/objects" in c for c in self.curl_calls()))
+
+
+class HealthcheckTests(HaCase):
+    def setUp(self):
+        super().setUp()
+        t = self.t
+        (t / "home" / ".ssh").mkdir()
+        (t / "home" / ".ssh" / "config").write_text("Host box\n  HostName 192.0.2.9\nHost prn\n  HostName 192.0.2.10\n")
+        self.vault = t / "vault"
+        (self.vault / "config").mkdir(parents=True)
+        self.ssh_log, self.nc_log, self.notify_log = t / "ssh.args", t / "nc.args", t / "notify"
+        self.stub("ssh", 'printf "%s\\n" "$*" >> "$SSH_LOG"\n'
+                         'case "$*" in *-G*) printf "hostname 192.0.2.9\\nport 22\\n"; exit 0 ;; esac\nexit 99\n')
+        self.stub("ping", '[ -z "$PING_FAIL" ]\n')
+        self.stub("nc", 'printf "%s\\n" "$*" >> "$NC_LOG"\n[ -z "$NC_FAIL" ]\n')
+        self.stub("osascript", 'printf "%s\\n" "$*" >> "$NOTIFY_LOG"\n')
+        (self.vault / "config" / "healthcheck.conf").write_text("# test\nhost box\n")
+        self.env.update(REMOTE_HOSTS_VAULT=str(self.vault), SSH_LOG=str(self.ssh_log), NC_LOG=str(self.nc_log),
+                        NOTIFY_LOG=str(self.notify_log), XDG_CONFIG_HOME=str(t / "xdg"))
+        self.env.pop("REMOTE_HOSTS_HA_CONF", None)
+        self.env.pop("REMOTE_HOSTS_PRINTERS", None)
+
+    def run_hc(self, **env):
+        return self.run_script("healthcheck.sh", "--quiet", **env)
+
+    def notifications(self):
+        return self.notify_log.read_text().splitlines() if self.notify_log.exists() else []
+
+    def test_healthy_run_exits_0_and_stays_quiet(self):
+        r = self.run_hc()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.notifications(), [])
+        self.assertTrue((self.vault / "healthcheck" / "healthcheck.log").exists())
+
+    def test_notifies_on_change_only_and_on_recovery(self):
+        self.assertEqual(self.run_hc(NC_FAIL="1", PING_FAIL="1").returncode, 1)
+        self.assertEqual(len(self.notifications()), 1)
+        self.assertEqual(self.run_hc(NC_FAIL="1", PING_FAIL="1").returncode, 1)
+        self.assertEqual(len(self.notifications()), 1)            # same problem: no second notification
+        self.assertEqual(self.run_hc().returncode, 0)
+        self.assertEqual(len(self.notifications()), 2)            # recovery
+        self.assertIn("ok again", self.notifications()[1])
+        self.assertEqual(self.run_hc().returncode, 0)
+        self.assertEqual(len(self.notifications()), 2)
+
+    def test_message_is_passed_as_an_argument_not_spliced_into_the_script(self):
+        self.run_hc(NC_FAIL="1", PING_FAIL="1")
+        line = self.notifications()[0]
+        self.assertIn("box: unreachable", line)
+        self.assertIn("-- ", line)
+
+    def test_never_opens_an_ssh_login(self):
+        self.run_hc()
+        calls = self.ssh_log.read_text().splitlines()
+        self.assertTrue(calls and all("-G" in c for c in calls), calls)
+
+    def test_printing_printer_is_reported_but_not_probed(self):
+        (self.vault / "config" / "printers.conf").write_text("prn printer.test:80\n")
+        (self.vault / "config" / "healthcheck.conf").write_text("host prn\n")
+        r = self.run_hc(PRINT_STATE="printing")
+        self.assertEqual(r.returncode, 1)
+        self.assertFalse(self.nc_log.exists())
+        self.assertIn("not probed", (self.vault / "healthcheck" / "last.txt").read_text())
+        self.assertEqual(self.run_hc(PRINT_STATE="standby").returncode, 0)
+        self.assertTrue(self.nc_log.exists())
+
+    def test_option_like_alias_in_config_is_a_problem_and_never_reaches_ssh(self):
+        (self.vault / "config" / "healthcheck.conf").write_text("host -oProxyCommand=id\nhost box\n")
+        self.assertEqual(self.run_hc().returncode, 1)
+        self.assertNotIn("ProxyCommand", self.ssh_log.read_text())
+
+    def test_prometheus_counts_alerts_and_down_targets(self):
+        (self.vault / "config" / "healthcheck.conf").write_text("prometheus http://prom.test:9090\n")
+        self.assertEqual(self.run_hc(PROM_RESULT="[]").returncode, 0)
+        r = self.run_hc(PROM_RESULT='[{"metric":{}},{"metric":{}}]')
+        self.assertEqual(r.returncode, 1)
+        last = (self.vault / "healthcheck" / "last.txt").read_text()
+        self.assertIn("2 alerts firing", last)
+        self.assertIn("2 targets down", last)
+        self.assertEqual(self.run_hc(CURL_FAIL="1").returncode, 1)     # unreachable Prometheus is a problem too
+
+    def test_state_directory_is_private_and_git_ignored(self):
+        self.run_hc()
+        d = self.vault / "healthcheck"
+        self.assertEqual(d.stat().st_mode & 0o777, 0o700)
+        self.assertEqual((d / ".gitignore").read_text().strip(), "*")
+
+    def test_setup_problems_exit_2(self):
+        self.assertEqual(self.run_hc(REMOTE_HOSTS_HEALTHCHECK_CONF=str(self.t / "none")).returncode, 2)
+        self.assertEqual(self.run_script("healthcheck.sh", "--bogus").returncode, 2)
+        env = {k: v for k, v in self.env.items() if k != "REMOTE_HOSTS_VAULT"}
+        r = subprocess.run([str(SCRIPTS / "healthcheck.sh")], env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 2)
+
+
+class InstallHealthcheckTests(HaCase):
+    def setUp(self):
+        super().setUp()
+        self.vault = self.t / "vault & <x>"
+        self.vault.mkdir()
+        self.launchctl_log = self.t / "launchctl"
+        self.stub("launchctl", f'echo "$*" >> {self.launchctl_log}\n')
+        self.env["REMOTE_HOSTS_VAULT"] = str(self.vault)
+
+    def test_renders_the_plist_and_only_prints_the_launchctl_command(self):
+        r = self.run_script("install-healthcheck.sh")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        plist = next((self.vault / "healthcheck").glob("*.plist"))
+        text = plist.read_text()
+        self.assertIn("<integer>1800</integer>", text)                 # default: every 30 minutes
+        self.assertIn("&amp; &lt;x&gt;", text)                         # XML-escaped path
+        self.assertNotIn("__", text)
+        self.assertEqual(plist.stat().st_mode & 0o777, 0o600)
+        self.assertIn("launchctl bootstrap gui/", r.stdout)
+        self.assertIn(plist.name, r.stdout)
+        self.assertFalse(self.launchctl_log.exists())                  # never executed
+        lint = shutil.which("plutil")
+        if lint:
+            self.assertEqual(subprocess.run([lint, "-lint", str(plist)], capture_output=True).returncode, 0)
+
+    def test_interval_and_label_are_validated(self):
+        for args in (("--interval", "10"), ("--interval", "x"), ("--interval",), ("--label", "a b"), ("--label", "-x"), ("--bogus",),
+                     ("--interval", "999999")):
+            with self.subTest(args=args):
+                self.assertEqual(self.run_script("install-healthcheck.sh", *args).returncode, 2)
+        r = self.run_script("install-healthcheck.sh", "--interval", "600", "--label", "my.label")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("<integer>600</integer>", (self.vault / "healthcheck" / "my.label.plist").read_text())
+
+    def test_missing_vault_is_a_setup_error(self):
+        env = {k: v for k, v in self.env.items() if k != "REMOTE_HOSTS_VAULT"}
+        r = subprocess.run([str(SCRIPTS / "install-healthcheck.sh")], env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 2)
+
+
+class PublicHygieneTests(unittest.TestCase):
+    """The new public files carry no instance data: addresses, host names, user names, tokens."""
+
+    FILES = ("ha-read.sh", "ha-call.sh", "healthcheck.sh", "install-healthcheck.sh", "healthcheck.plist.template")
+
+    def test_no_ips_hostnames_home_paths_emails_or_tokens(self):
+        import re
+        pats = {
+            "ipv4": re.compile(r"\b(?!192\.0\.2\.|198\.51\.100\.|203\.0\.113\.)\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"),   # documentation ranges are fine
+            "home path": re.compile(r"/Users/[A-Za-z0-9_.-]+|/home/[A-Za-z0-9_.-]+"),
+            "email": re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
+            "token": re.compile(r"\b(?:ghp_|github_pat_|sk-|eyJ)[A-Za-z0-9_-]{8,}|[A-Za-z0-9_-]{40,}"),
+            "lan host": re.compile(r"\b[A-Za-z0-9-]+\.(?:local|lan|home|internal)\b"),
+        }
+        files = [SCRIPTS / f for f in self.FILES] + [SCRIPTS.parent / "SKILL.md"]
+        for f in files:
+            text = f.read_text()
+            for name, pat in pats.items():
+                with self.subTest(file=f.name, kind=name):
+                    self.assertIsNone(pat.search(text), pat.search(text))
+
+
 class ShellcheckTests(unittest.TestCase):
     def test_scripts_are_shellcheck_clean(self):
         if not shutil.which("shellcheck"):
