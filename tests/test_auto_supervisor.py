@@ -33,6 +33,14 @@ if act.startswith("limit:"):
     open("partial.txt", "w").write("half done")
     print(act[6:].replace("{reset}", str(int(time.time()) + 2)))
     sys.exit(1)
+if act.startswith("quote:"):  # a failing stage that merely quotes limit wording, then the usual failure summary
+    print("AssertionError: expected %r" % act[6:].replace("{reset}", str(int(time.time()) + 2)))
+    print("1 failed, 3 passed")
+    sys.exit(1)
+if act.startswith("longlimit0:"):  # exit 0, a long progress summary, then the limit line last
+    print("\n".join("progress line %d" % i for i in range(8)))
+    print(act[11:].replace("{reset}", str(int(time.time()) + 2)))
+    sys.exit(0)
 if act.startswith("limit0:"):
     print(act[7:].replace("{reset}", str(int(time.time()) + 2)))
     sys.exit(0)
@@ -163,11 +171,13 @@ class TestLimits(Base):
         self.assertEqual(r.returncode, 2)  # 400 min > 6h cap
         self.assertIn("maximum wait", r.stdout)
 
-    def test_five_hour_fallback_is_used_when_within_cap(self):
+    def test_five_hour_fallback_wait_is_used_when_within_cap(self):
         self.script(["limit:Session limit reached.", "ok", "ok", "ok"])
-        r = self.start("--fallback-wait-minutes", "0.01", "--max-wait-hours", "6")
+        r = self.start("--fallback-wait-minutes", "0.05", "--max-wait-hours", "6")
         self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
-        self.assertEqual(self.checkpoint()["reset_source"], "fallback")
+        cp = self.checkpoint()
+        self.assertEqual(cp["reset_source"], "fallback")
+        self.assertEqual(cp["pauses"][0]["wait_seconds"], 3)  # 0.05 min, no margin
 
     def test_missing_claude_binary_stops_cleanly_with_resume_hint(self):
         self.env["AUTO_CLAUDE_BIN"] = "/nonexistent/claude"
@@ -245,6 +255,21 @@ class TestInvocationAndNotify(Base):
                 self.assertNotIn(bad, c["args"])
             self.assertNotIn("--max-budget-usd", c["args"])
             self.assertEqual(c["args"][0], "-p")
+
+    def test_failure_that_quotes_limit_wording_is_not_a_pause(self):
+        self.script(["quote:Claude usage limit reached|{reset}"])
+        r = self.start()
+        self.assertEqual(r.returncode, 2)
+        self.assertEqual(len(self.calls()), 1)
+        cp = self.checkpoint()
+        self.assertEqual((cp["resumes"], cp["pauses"]), (0, []))
+
+    def test_limit_line_after_long_output_with_exit_zero_is_a_pause(self):
+        self.script(["longlimit0:Claude usage limit reached|{reset}", "ok", "ok", "ok"])
+        r = self.start()
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertEqual(self.checkpoint()["resumes"], 1)
+        self.assertEqual(self.calls()[0]["stage"], self.calls()[1]["stage"])  # same stage re-run, not skipped
 
     def test_budget_cap_is_passed_only_when_configured(self):
         self.env["AUTO_MAX_BUDGET_USD"] = "5"

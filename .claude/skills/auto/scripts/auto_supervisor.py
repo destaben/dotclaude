@@ -100,8 +100,10 @@ def parse_reset(text, now):
 
 
 def classify(output):
-    """None when the output is not a usage limit, else {'window': '5h'|'weekly'}."""
-    if not LIMIT_RE.search(output):
+    """None when the output does not end in a usage-limit message, else {'window': '5h'|'weekly'}."""
+    lines = [x.strip() for x in output.splitlines() if x.strip()]
+    # the limit message is claude's last word; output that only quotes it mid-stream is an ordinary failure
+    if not lines or len(lines[-1]) > 300 or not LIMIT_RE.search(lines[-1]):
         return None
     return {"window": "weekly" if WEEKLY_RE.search(output) else "5h"}
 
@@ -192,8 +194,7 @@ def execute(cp, limits):
         cp.update(stage=stage, status="running")
         save(cp)
         code, output = run_claude(cp, stage)
-        # a limit message is usually a failure exit; accept exit 0 only for a short, message-only output
-        info = classify(output) if (code != 0 or len(output.strip().splitlines()) <= 3) else None
+        info = classify(output)
         if info:
             if cp["resumes"] >= limits["max_resumes"]:
                 record(cp)

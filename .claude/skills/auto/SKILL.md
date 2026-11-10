@@ -44,8 +44,9 @@ never skips them.
 
 ## Usage limits
 A limit is a pause, not a failure: it does not count toward the escalation rule.
-- **Detect:** a failed stage whose output matches a usage-limit message (5-hour or weekly window).
-  Any other failure stops the run, unretried.
+- **Detect:** a stage whose output ends in a usage-limit message (5-hour or weekly window), at
+  any exit code. A failure that only quotes that wording mid-output is an ordinary failure. Any
+  other failure stops the run, unretried.
 - **Reset time:** parsed from the message (epoch, "in N hours", "at 3pm"). If unreadable, a 5-hour
   limit falls back to 330 minutes; a weekly limit stops, because a guess could be days wrong.
 - **Wait:** until reset plus a 120 s margin, only if that is within the maximum wait (default 6 h)
