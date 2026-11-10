@@ -50,7 +50,7 @@ END = r"(?=\s*(?:$|[.|,;:!\u00b7]))"
 LIMIT_RE = re.compile((
     r"^\W*(?:claude(?:\s+ai)?\s+)?(?:(?:(?:weekly|session|opus|5-hour)\s+)+(?:usage\s+)?|usage\s+)limit\s+(?:reached|hit)\b{END}"
     r"|^\W*(?:claude(?:\s+ai)?\s+)?limit\s+reached\s*\|\s*\d{9,}"
-    r"|^\W*(?:you(?:'ve|\s+have)\s+)?(?:hit|reached)\s+your\s+.{0,30}limit\b{END}").replace("{END}", END), re.I)
+    r"|^\W*you(?:'ve|\s+have)\s+(?:hit|reached)\s+your\s+.{0,30}limit\b{END}").replace("{END}", END), re.I)
 WEEKLY_RE = re.compile(r"week", re.I)
 FIVE_RE = re.compile(r"5-hour|5 hour|five-hour|session", re.I)
 
@@ -122,6 +122,13 @@ def classify(output):
             window = "weekly" if WEEKLY_RE.search(block) else "5h" if FIVE_RE.search(block) else "unknown"
             return {"window": window, "block": block}
     return None
+
+
+def _status(path):
+    try:
+        return json.loads(Path(path).read_text()).get("status")
+    except (OSError, ValueError):
+        return None  # a corrupt checkpoint is skipped when picking one
 
 
 def load(path):
@@ -211,7 +218,9 @@ def execute(cp, limits):
         cp.update(stage=stage, status="running")
         save(cp)
         code, streams = run_claude(cp, stage)
-        info = next((i for i in map(classify, streams) if i), None)
+        reported = RESULT_RE.findall("\n".join(streams))
+        succeeded = code == 0 and bool(reported) and reported[-1][0] == "ok"
+        info = None if succeeded else next((i for i in map(classify, streams) if i), None)
         if info:
             if cp["resumes"] >= limits["max_resumes"]:
                 record(cp)
@@ -231,8 +240,7 @@ def execute(cp, limits):
         if code != 0:
             record(cp)
             raise Stop(f"stage {stage} failed with exit code {code}; a failure is reported, not retried here")
-        reported = RESULT_RE.findall("\n".join(streams))
-        if not reported or reported[-1][0] != "ok":
+        if not succeeded:
             record(cp)
             why = reported[-1][1] if reported else "no AUTO-STAGE-RESULT line"
             raise Stop(f"stage {stage} did not report success ({why or 'blocked'})")
@@ -257,7 +265,8 @@ def run(cp, limits):
         cp["status"] = "stopped"
         cp["stop_reason"] = str(e)
         save(cp)
-        notify("give-up", f"{e}. Checkpoint saved: {cp['state_file']}")
+        # the stop reason can hold the model's own words; the notification carries only the stage
+        notify("give-up", f"stopped at stage {cp.get('stage')}. Checkpoint saved: {cp['state_file']}")
         finish(cp, str(e))
         return 2
     notify("done", f"all stages completed on {cp['branch']}")
@@ -274,7 +283,7 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name in ("start", "resume"):
         sp = sub.add_parser(name)
-        sp.add_argument("--repo", default=".")
+        sp.add_argument("--repo", help="the task repository (required for start; for resume only without --state)")
         sp.add_argument("--max-wait-hours", dest="max_wait_hours", type=float)
         sp.add_argument("--max-resumes", dest="max_resumes", type=int)
         sp.add_argument("--margin-seconds", dest="margin_seconds", type=float)
@@ -287,7 +296,9 @@ def main(argv=None):
     args = ap.parse_args(argv)
     limits = limits_from(args)
     try:
-        repo = Path(git(args.repo, "rev-parse", "--show-toplevel"))
+        if not args.repo and (args.cmd == "start" or not args.state):
+            raise Stop("--repo is required: pass the task repository explicitly, never the current directory")
+        repo = Path(git(args.repo, "rev-parse", "--show-toplevel")) if args.repo else None
         if args.cmd == "start":
             snap = snapshot(repo)
             if snap["branch"] in PROTECTED or snap["branch"] == "HEAD":
@@ -307,12 +318,13 @@ def main(argv=None):
             path = args.state
             if not path:
                 files = sorted(state_dir(repo).glob("auto-*.json"), key=lambda f: f.stat().st_mtime)
-                open_runs = [f for f in files if json.loads(f.read_text()).get("status") != "done"]
+                open_runs = [f for f in files if _status(f) not in ("done", None)]
                 files = open_runs or files  # a finished run must not shadow an unfinished one
                 if not files:
                     raise Stop("no checkpoint found")
                 path = files[-1]
             cp = load(path)
+            cp["resumes"] = 0  # the owner chose to resume: a fresh budget of automatic resumes
             if cp["status"] == "done":
                 raise Stop("that run is already done")
             if cp["status"] == "running":  # killed mid-stage: partial edits were never recorded

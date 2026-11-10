@@ -83,7 +83,7 @@ class Base(unittest.TestCase):
         self.repo.mkdir(); self.stub.mkdir()
         (self.stub / "claude_stub.py").write_text(STUB)
         (self.stub / "notify.py").write_text(
-            "import sys,os,subprocess\nd=os.environ['STUB_DIR']\nopen(os.path.join(d,'notes.log'),'a').write(sys.argv[1]+'\\n')\n"
+            "import sys,os,subprocess\nd=os.environ['STUB_DIR']\nopen(os.path.join(d,'notes.log'),'a').write(sys.argv[1]+'\\n')\nopen(os.path.join(d,'msgs.log'),'a').write(sys.argv[2]+'\\n')\n"
             "t=os.path.join(d,'tamper')\nif sys.argv[1]=='pause' and os.path.exists(t):\n"
             "    subprocess.run(['git','-C',open(t).read(),'checkout','-q','-b','other'])\n")
         self.plan_file = t / "plan.md"
@@ -320,6 +320,43 @@ class TestInvocationAndNotify(Base):
         self.assertEqual(r.returncode, 2)
         self.assertEqual(self.checkpoint()["completed"], ["implement"])
         self.assertIn("2 tests still fail", r.stdout)
+
+    def test_start_requires_an_explicit_repo(self):
+        self.script([])
+        r = subprocess.run([sys.executable, str(SCRIPT), "start", "--task", "t", "--plan-file", str(self.plan_file)],
+                           capture_output=True, text=True, env=self.env, cwd=str(self.repo), timeout=60)
+        self.assertEqual(r.returncode, 3)
+        self.assertIn("--repo", r.stderr)
+        self.assertEqual(self.calls(), [])
+
+    def test_success_marker_wins_over_limit_looking_prose_on_exit_zero(self):
+        self.script(["prose0:Session limit reached. PR #12 opened.", "ok", "ok"])
+        r = self.start()
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertEqual(self.checkpoint()["resumes"], 0)
+        self.assertEqual(len(self.calls()), 3)
+
+    def test_bare_hit_your_limit_prose_is_not_a_limit(self):
+        self.assertIsNone(load_module().classify("Hit your rate limit."))
+
+    def test_manual_resume_gets_a_fresh_resume_budget(self):
+        self.script(["limit:Claude usage limit reached|{reset}"] * 10)
+        self.assertEqual(self.start("--max-resumes", "1").returncode, 2)
+        self.assertEqual(self.checkpoint()["resumes"], 1)
+        (self.stub / "plan.json").write_text(json.dumps(["ok", "ok", "limit:Claude usage limit reached|{reset}"]))
+        self.assertEqual(self.sup("resume", "--max-resumes", "1", "--margin-seconds", "0").returncode, 0)
+        self.assertEqual(self.checkpoint()["resumes"], 1)  # a new budget: the limit hit again was resumed
+
+    def test_one_corrupt_checkpoint_does_not_block_auto_selection(self):
+        self.script(["limit:Claude usage limit reached|{reset}"])
+        self.assertEqual(self.start("--max-wait-hours", "0").returncode, 2)
+        (self.repo / ".git" / "auto" / "auto-aaaa.json").write_text("not json")
+        self.assertEqual(self.sup("resume", "--margin-seconds", "0").returncode, 0)
+
+    def test_notification_does_not_carry_the_models_reason_text(self):
+        self.script(["ok", "blocked:SECRET-REASON-TEXT"])
+        self.assertEqual(self.start(notify=True).returncode, 2)
+        self.assertNotIn("SECRET-REASON-TEXT", (self.stub / "msgs.log").read_text())
 
     def test_corrupt_checkpoint_is_a_refusal(self):
         self.script([])

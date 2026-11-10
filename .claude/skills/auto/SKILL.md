@@ -36,8 +36,10 @@ Autonomous mode adds:
   run; hitting a usage limit pauses it. They are different events.
 
 ## Running it
-`scripts/auto_supervisor.py start --task TEXT --plan-file FILE` on a feature branch (it refuses
-`main`, `master`, a detached HEAD and a dirty tree), then `resume [--state FILE]` after a stop. Stages run in order; each is one `claude -p`
+`scripts/auto_supervisor.py start --repo DIR --task TEXT --plan-file FILE` on a feature branch (`--repo`
+is required, so the script can never act on the repository that merely holds the skill) (it refuses
+`main`, `master`, a detached HEAD and a dirty tree), then `resume --repo DIR` (or `resume --state FILE`) after a stop. A manual resume gives a fresh budget of
+automatic resumes. Stages run in order; each is one `claude -p`
 call whose prompt carries the task and approved plan, so any stage can be re-run from the
 checkpoint alone. Resume is at stage boundaries only: an interrupted stage restarts and is told
 to continue from the workspace. Exit codes: 0 finished, 2 stopped with the checkpoint saved, 3 refused to start or resume.
