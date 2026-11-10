@@ -11,7 +11,8 @@ don't reach for it as a general shell substitute.
 
 ## Recipes (keep results short)
 - **Open a PR:** this is `commit-and-pr`'s job — see that skill for the PR
-  template lookup order. Don't open a PR from this skill directly.
+  template lookup order. Don't open a PR from this skill directly (the one other path
+  is the `worker` skill's publish step).
 - **Open an issue:** look for a template, in this order, before writing a
   body from scratch:
   1. The *current project's* own `.github/ISSUE_TEMPLATE/` — if it has bug

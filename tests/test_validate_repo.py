@@ -168,6 +168,28 @@ class ValidateRepoTest(unittest.TestCase):
             errors = validate_repo.run_all_checks(root)
             self.assertTrue(any("repo-specific reference" in e for e in errors))
 
+    def test_a_repo_specific_reference_in_a_skill_template_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            build_minimal_valid_repo(root)
+            templates = root / ".claude" / "skills" / "demo" / "templates"
+            templates.mkdir(parents=True, exist_ok=True)
+            (templates / "handoff.md").write_text("This repo keeps plans in docs/plans/.\n")
+            errors = validate_repo.run_all_checks(root)
+            self.assertTrue(any("templates/handoff.md" in e and "repo-specific reference" in e for e in errors), errors)
+
+    def test_a_mention_of_the_repos_own_ci_job_in_a_skill_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            build_minimal_valid_repo(root)
+            skill = root / ".claude" / "skills" / "demo"
+            skill.mkdir(parents=True, exist_ok=True)
+            (skill / "SKILL.md").write_text(
+                "---\nname: demo\ndescription: a demo skill\n---\nThe docs-check job runs this.\n"
+            )
+            errors = validate_repo.run_all_checks(root)
+            self.assertTrue(any("repo-specific reference 'docs-check'" in e for e in errors), errors)
+
     def test_docs_decisions_reference_in_skill_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

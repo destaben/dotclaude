@@ -24,6 +24,36 @@ of them lints YAML at 150 columns, so two long lines made its Lint check fail
 after every sync. The lines are wrapped without changing what they do; keep new
 lines in this file under 150 columns.
 
+## 2026-11-09 — Background worker container on a remote Docker host
+
+Added a `worker` skill for one-shot, owner-triggered Claude Code runs in a
+container on an SSH host the owner controls, so a bounded task can run unattended
+without anything being scheduled. The container holds no GitHub credential: it
+clones a public repo anonymously, and the worker edits files on a new `worker/`
+branch under a tool allowlist with no bare shell, no GitHub CLI, no git history
+and no push. The entrypoint makes the commit itself, with a fixed author and
+message, so the worker never controls commit metadata.
+
+Publishing stays on the owner's machine. It verifies a bundle that holds only the
+run's branch, scans that branch and the pull request text for credential-shaped
+text, and pushes exactly that branch as a draft pull request. Keeping the token
+out of the container means a misbehaving run cannot push or open pull requests.
+`--issue` accepts only issues the owner authored, and issue text is quoted as
+data, not instructions. The container's claude process runs with a scrubbed
+environment. The residual risk is stated in the skill: an allowed test runner
+executes code the worker wrote, so tasks must come only from owner-authored input.
+The mechanisms are in the skill's SKILL.md. The decision record (ADR 0004, item 10) holds the
+judgment calls: a container with no GitHub credential, publishing from the owner's machine,
+the `.github/` refusal, the CI workflows a pushed branch starts, and the accepted test-runner risk.
+The CI job that runs a branch's own scripts and tests (`docs-check`) now declares a read-only
+token (`contents: read`), with a test, because a worker branch's code runs there as soon as
+its draft pull request opens.
+`validate_repo.py` now also rejects a mention of the `docs-check` job in shipped files.
+Before committing, the entrypoint checks the staged changes against the login values (the value,
+16-character windows of it, its base64 and hex forms), because the host scan matches only
+literal token shapes.
+The decision is recorded in `docs/decisions/0004-tooling-choices.md`, item 10.
+
 ## 2026-11-08 — PR review only posts finished reviews
 
 The `claude-pr-review` workflow could post an interim message ("waiting for the

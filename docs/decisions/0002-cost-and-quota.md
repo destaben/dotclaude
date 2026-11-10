@@ -176,5 +176,10 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   to the previous one (see the `ceo-call` skill). The speech synthesis is local (Piper), so a call adds no
   paid API usage beyond the agent's own turns.
 
+## The `worker` skill (2026-11-09)
+- A worker run spends the owner's own subscription quota, on a host the owner chose. It is started by hand,
+  one run at a time, and nothing schedules it, so it adds no cost to ordinary changes.
+- A run is bounded by `--max-turns` (default 40) and `--timeout` (default 90 minutes), not by the model.
+
 ## Follow-ups (not yet done)
 - Log escalations and missed defects per role.

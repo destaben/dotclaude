@@ -14,7 +14,10 @@
    `README.md`, `CHANGELOG.md`, `.github/workflows/*`. The test for a shipped
    file: would it make sense read from `~/.claude/` in an unrelated project?
    `scripts/validate_repo.py` rejects dotclaude-specific strings in shipped
-   files, and shipped files name skills rather than `.claude/skills/` paths.
+   files (skill `SKILL.md` and `templates/*.md` included, and the name of this
+   repository's own CI job, `docs-check`), and shipped files name skills rather
+   than `.claude/skills/` paths. Scripts under a skill are not scanned: they
+   legitimately talk about the repository they run in.
    That catches literal strings only; assumptions like a named test framework
    still need manual review. `scripts/install.py` does the install: symlinks
    by default so edits here apply at once, with `--copy`, `--dry-run`,

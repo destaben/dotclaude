@@ -24,7 +24,7 @@ REPO_SPECIFIC_PATTERNS = (
     "docs/decisions/",
     "docs/plans/",
     "scripts/validate_repo.py",
-    "docs-check.yml",
+    "docs-check",
 )
 
 
@@ -209,7 +209,7 @@ def check_no_secrets(errors: list, repo_root: Path) -> None:
 
 
 def check_shipped_files_are_repo_agnostic(errors: list, repo_root: Path) -> None:
-    """CLAUDE.md, agents, commands, and skills get installed elsewhere by
+    """CLAUDE.md, agents, commands, and skills (SKILL.md and templates/*.md) get installed elsewhere by
     install.py — they must not assume dotclaude's own repo layout exists
     wherever they end up installed."""
     shipped_files = []
@@ -219,6 +219,7 @@ def check_shipped_files_are_repo_agnostic(errors: list, repo_root: Path) -> None
     for subdir in ("agents", "commands"):
         shipped_files.extend(sorted((repo_root / ".claude" / subdir).glob("*.md")))
     shipped_files.extend(sorted((repo_root / ".claude" / "skills").glob("*/SKILL.md")))
+    shipped_files.extend(sorted((repo_root / ".claude" / "skills").glob("*/templates/*.md")))
     pr_template = repo_root / ".github" / "pull_request_template.md"
     if pr_template.is_file():
         shipped_files.append(pr_template)

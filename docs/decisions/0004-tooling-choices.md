@@ -1,6 +1,6 @@
 # 0004 — Tooling choices
 
-- Date: 2026-10-25 (consolidates the former 0003, 0004, and 0006); items 5, 6, 7 and 9 added 2026-11-01, 2026-11-07, 2026-11-07 and 2026-11-07 respectively; item 8 added 2026-11-08
+- Date: 2026-10-25 (consolidates the former 0003, 0004, and 0006); items 5, 6, 7 and 9 added 2026-11-01, 2026-11-07, 2026-11-07 and 2026-11-07 respectively; item 8 added 2026-11-08 and item 10 added 2026-11-09
 - Status: accepted; the license awaits your final confirmation
 
 1. **GitHub MCP connector by default, not `gh`.** Per your instruction, as
@@ -89,3 +89,27 @@
    repeated briefly in CLAUDE.md, the README, `docs/pipeline.md` and the ADRs, and the
    two escalation cases in the README, `docs/pipeline.md`, `council-policy` and
    `council.md`, because each file is read on its own.
+10. **`worker` container holds no GitHub credential; publishing happens on the owner's
+   machine (2026-11-09).** An unattended run that could push would be able to push
+   anywhere its token reaches, including after a prompt injection. So the container
+   clones public repos anonymously and only edits files. The owner's machine fetches
+   the bundle, checks that it holds exactly one ref, the run's own `worker/` branch, scans the branch and
+   the pull request text, refuses a branch that changes anything under `.github/` (a
+   pushed workflow file runs with the repository's secrets before anyone reads the
+   draft), then pushes that branch and opens a draft pull request with
+   the owner's own `gh`. The cost is that nothing is published until the owner's
+   machine picks the run up, and private repos are out of scope for this version.
+   The residual risks are listed in the skill's own section. The one the owner accepted
+   for the spike: the allowed test runners execute code the worker wrote, with network
+   access and read access to the login, so tasks come only from owner-authored input and
+   the login stays revocable; a network allow-list is the future hardening. A related
+   judgment call: a pushed branch opens the repository's `pull_request` workflows on its
+   own code. Two workflows here run on `pull_request`: `docs-check` runs the branch's
+   scripts and tests and declares a read-only token (`permissions: contents: read`);
+   `claude-pr-review` holds `CLAUDE_CODE_OAUTH_TOKEN` and keeps write permission on pull
+   requests and issues (unlike `docs-check`, so draft-until-read is its only guard), skips
+   drafts, and runs for a draft only on an `@claude review` comment from the owner, a
+   member or a collaborator.
+   So worker pull requests stay drafts until read, and the skill tells the owner to use
+   the worker only on repositories whose `push` and `pull_request` workflows hold no
+   secrets or wait for an approval (the skill's wording).
