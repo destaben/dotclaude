@@ -26,7 +26,8 @@ is the `claudio` agent's own shell guard, which sits outside the pipeline (see
 the `ceo-call` skill).
 
 Changes made by the `worker` skill are outside this pipeline: the owner reviews each
-draft pull request it opens.
+draft pull request it opens. Work the owner then continues in their own session on such a
+branch goes through the pipeline as usual.
 
 ## Decisions
 Put real design choices to the council via `/council`; follow the

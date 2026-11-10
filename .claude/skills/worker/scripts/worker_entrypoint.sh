@@ -657,7 +657,19 @@ run_claude() {
     log_ok=0
   fi
   if [ -s "$LOG" ] && [ "$log_ok" = 1 ]; then
-    if grep -Eiq '"api_error_status":[[:space:]]*401|"error":[[:space:]]*"authentication_failed"|please run /login|invalid api key|oauth token has expired' "$LOG"; then
+    # Only claude's own signals count: a non-JSON line (its stderr), or a structured error field, or an error result
+    # whose errors[] says so. Tool results, assistant text and an error result's own text are skipped, because the
+    # worker may read or quote files that contain these phrases (this skill's own docs and scripts do). Filters are
+    # chained, never `grep -q` in a pipe: with pipefail an early exit would turn a match into SIGPIPE and a silent "ok".
+    local auth_re='please run /login|invalid api key|oauth token has expired'
+    local raw_hits json_hit
+    raw_hits=$(grep -Ei "$auth_re" "$LOG" | grep -v '^[[:space:]]*{' || true)
+    json_hit=$(jq -cR --arg re "$auth_re" 'fromjson? | select(type == "object") | select(
+        ((.api_error_status? | tostring) == "401")
+        or (.error? == "authentication_failed") or (.error? == "oauth_org_not_allowed")
+        or (((.error? | objects | .type?) // "") == "authentication_error")
+        or (.type? == "result" and .is_error? == true and ((.errors? | tostring) | test($re; "i"))))' "$LOG" 2>/dev/null | head -n 1 || true)
+    if [ -n "$raw_hits" ] || [ -n "$json_hit" ]; then
       AUTH=failed
     else
       AUTH=ok
