@@ -54,17 +54,17 @@ class Stop(Exception):
     """The run must stop with the checkpoint saved; str() is the reason."""
 
 
-def git(repo, *args, check=True):
+def git(repo, *args, check=True, raw=False):
     p = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
     if check and p.returncode != 0:
         raise Stop(f"git {' '.join(args)} failed: {p.stderr.strip()}")
-    return p.stdout.strip()
+    return p.stdout if raw else p.stdout.strip()  # raw keeps NUL-separated names exact
 
 
 def snapshot(repo):
     """Branch, HEAD and a hash of the working tree state, for re-verification."""
     status = git(repo, "status", "--porcelain=v1", "--untracked-files=all") + "\n" + git(repo, "diff", "HEAD", "--binary")
-    for name in git(repo, "ls-files", "-z", "--others", "--exclude-standard").split("\0"):
+    for name in git(repo, "ls-files", "-z", "--others", "--exclude-standard", raw=True).split("\0"):
         if name:  # content, not just the name; a file that cannot be hashed fails closed
             status += f"\n{name} {git(repo, 'hash-object', '--', name)}"
     return {

@@ -338,6 +338,13 @@ class TestSnapshot(Base):
         f.write_text("two")
         self.assertNotEqual(before, self.m.snapshot(self.repo)["tree"])
 
+    def test_untracked_file_with_a_leading_space_can_be_fingerprinted(self):
+        f = self.repo / " lead.txt"
+        f.write_text("one")
+        before = self.m.snapshot(self.repo)["tree"]
+        f.write_text("two")
+        self.assertNotEqual(before, self.m.snapshot(self.repo)["tree"])
+
     def test_replaced_tracked_binary_changes_the_fingerprint(self):
         b = self.repo / "logo.bin"
         b.write_bytes(b"\x00\x01")

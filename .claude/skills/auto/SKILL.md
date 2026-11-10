@@ -31,7 +31,7 @@ Autonomous mode adds:
 - No merging, no deleting branches or repos, no other repos, no external sends.
 - Stop and report, never guess, on repeated failure, a severe finding that cannot be auto-fixed,
   or the budget cap. The `token-budget` warnings stay advisory; the hard cap is
-  `AUTO_MAX_BUDGET_USD` (unset by default, so a run is bounded only by the plan's own usage limits), passed to `claude --max-budget-usd` when set. Hitting the cap stops the
+  `AUTO_MAX_BUDGET_USD` (unset by default, so a run is bounded only by the plan's own usage limits), passed to `claude --max-budget-usd` when set. It caps each stage call, not the whole run, so a resumed stage gets a fresh cap. Hitting the cap stops the
   run; hitting a usage limit pauses it. They are different events.
 
 ## Running it
