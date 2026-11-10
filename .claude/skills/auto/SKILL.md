@@ -51,7 +51,7 @@ A limit is a pause, not a failure: it does not count toward the escalation rule.
 - **Detect:** a stage whose last three stdout lines or last three stderr lines include a line that starts with the CLI's usage-limit sentence (5-hour or
   weekly window), at any exit code. Prose that only mentions the wording, or a failure that quotes it
   mid-output, is not a limit. Any other failure stops the run, unretried.
-  A stage also stops the run unless its output has an `AUTO-STAGE-RESULT: ok` line (the prompt asks
+  A stage also stops the run unless the last `AUTO-STAGE-RESULT` line in its output is `ok` (the prompt asks
   for one; `blocked <reason>` or no line is a stop), so a stage that exits 0 without succeeding is
   never recorded as complete. The reverse holds too: a stage that exits 0 with `AUTO-STAGE-RESULT: ok` as its last
   reported result is a success even if its output also contains a line that looks like a limit, because a limit line is read only

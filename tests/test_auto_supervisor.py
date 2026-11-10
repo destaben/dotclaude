@@ -345,6 +345,23 @@ class TestInvocationAndNotify(Base):
         self.assertIn("--repo", r.stderr)
         self.assertEqual(self.calls(), [])
 
+    def test_bare_resume_needs_a_repo_or_a_state_file(self):
+        self.script([])
+        r = subprocess.run([sys.executable, str(SCRIPT), "resume"], capture_output=True, text=True, env=self.env,
+                           cwd=str(self.repo), timeout=60)
+        self.assertEqual(r.returncode, 3)
+        self.assertIn("--repo is required", r.stderr)
+
+    def test_resume_with_a_state_file_does_not_need_a_repo(self):
+        self.script(["ok", "ok", "ok"])
+        self.assertEqual(self.start().returncode, 0)
+        state = next((self.repo / ".git" / "auto").glob("auto-*.json"))
+        r = subprocess.run([sys.executable, str(SCRIPT), "resume", "--state", str(state)], capture_output=True, text=True,
+                           env=self.env, cwd=str(self.repo.parent), timeout=60)
+        self.assertEqual(r.returncode, 3)  # the run is already done: refused for that reason, not for a missing repo
+        self.assertIn("already done", r.stderr)
+        self.assertNotIn("--repo is required", r.stderr)
+
     def test_success_marker_wins_over_limit_looking_prose_on_exit_zero(self):
         self.script(["prose0:Session limit reached. PR #12 opened.", "ok", "ok"])
         r = self.start()
