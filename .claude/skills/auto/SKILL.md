@@ -39,15 +39,16 @@ Autonomous mode adds:
 `main` and a dirty tree), then `resume [--state FILE]` after a stop. Stages run in order; each is one `claude -p`
 call whose prompt carries the task and approved plan, so any stage can be re-run from the
 checkpoint alone. Resume is at stage boundaries only: an interrupted stage restarts and is told
-to continue from the workspace. Permissions are the owner's normal settings; the supervisor
+to continue from the workspace. Exit codes: 0 finished, 2 stopped with the checkpoint saved, 3 refused to start or resume.
+Permissions are the owner's normal settings; the supervisor
 never skips them.
 
 ## Usage limits
 A limit is a pause, not a failure: it does not count toward the escalation rule.
-- **Detect:** a stage whose output ends in a usage-limit message (5-hour or weekly window), at
-  any exit code. A failure that only quotes that wording mid-output is an ordinary failure. Any
-  other failure stops the run, unretried.
-- **Reset time:** parsed from the message (epoch, "in N hours", "at 3pm"). If unreadable, a 5-hour
+- **Detect:** a stage whose last output line starts with the CLI's usage-limit sentence (5-hour or
+  weekly window), at any exit code. Prose that only mentions the wording, or a failure that quotes it
+  mid-output, is not a limit. Any other failure stops the run, unretried.
+- **Reset time:** parsed from that same last line only (epoch, "in N hours", "at 3pm"). If unreadable, a 5-hour
   limit falls back to 330 minutes; a weekly limit stops, because a guess could be days wrong.
 - **Wait:** until reset plus a 120 s margin, only if that is within the maximum wait (default 6 h)
   and automatic resumes so far are under the maximum (default 3). Otherwise stop with the

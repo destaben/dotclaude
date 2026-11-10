@@ -41,6 +41,8 @@ if act.startswith("longlimit0:"):  # exit 0, a long progress summary, then the l
     print("\n".join("progress line %d" % i for i in range(8)))
     print(act[11:].replace("{reset}", str(int(time.time()) + 2)))
     sys.exit(0)
+if act.startswith("prose0:"):  # a successful stage whose last line is prose that merely mentions the wording
+    print(act[7:]); sys.exit(0)
 if act.startswith("limit0:"):
     print(act[7:].replace("{reset}", str(int(time.time()) + 2)))
     sys.exit(0)
@@ -271,6 +273,13 @@ class TestInvocationAndNotify(Base):
         self.assertEqual(self.checkpoint()["resumes"], 1)
         self.assertEqual(self.calls()[0]["stage"], self.calls()[1]["stage"])  # same stage re-run, not skipped
 
+    def test_successful_stage_ending_in_prose_about_limits_is_not_a_pause(self):
+        self.script(["prose0:Added usage limit reached detection; PR opened.", "ok", "ok"])
+        r = self.start()
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertEqual(self.checkpoint()["resumes"], 0)
+        self.assertEqual(len(self.calls()), 3)
+
     def test_budget_cap_is_passed_only_when_configured(self):
         self.env["AUTO_MAX_BUDGET_USD"] = "5"
         self.script(["ok", "ok", "ok"])
@@ -286,6 +295,39 @@ class TestInvocationAndNotify(Base):
         self.env["AUTO_NOTIFY_CMD"] = "/nonexistent/notifier"
         self.script(["ok", "ok", "ok"])
         self.assertEqual(self.start().returncode, 0)
+
+
+class TestSnapshot(Base):
+    def setUp(self):
+        super().setUp()
+        self.m = load_module()
+
+    def test_edit_to_non_ascii_untracked_file_changes_the_fingerprint(self):
+        f = self.repo / "notes-\u00e9.txt"
+        f.write_text("one")
+        before = self.m.snapshot(self.repo)["tree"]
+        f.write_text("two")
+        self.assertNotEqual(before, self.m.snapshot(self.repo)["tree"])
+
+    def test_replaced_tracked_binary_changes_the_fingerprint(self):
+        b = self.repo / "logo.bin"
+        b.write_bytes(b"\x00\x01")
+        subprocess.run(["git", "-C", str(self.repo), "add", "logo.bin"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "commit", "-q", "-m", "bin"], check=True)
+        before = self.m.snapshot(self.repo)["tree"]
+        b.write_bytes(b"\x00\x02")
+        self.assertNotEqual(before, self.m.snapshot(self.repo)["tree"])
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root can read anything")
+    def test_unhashable_file_fails_closed(self):
+        f = self.repo / "secret.txt"
+        f.write_text("x")
+        f.chmod(0)
+        try:
+            with self.assertRaises(self.m.Stop):
+                self.m.snapshot(self.repo)
+        finally:
+            f.chmod(0o600)
 
 
 class TestParseReset(unittest.TestCase):
@@ -307,8 +349,23 @@ class TestParseReset(unittest.TestCase):
     def test_a_duration_is_not_a_clock_time(self):
         self.assertIsNone(self.m.parse_reset("Resets 3 hours after your first message.", self.now))
 
+    def test_two_digit_duration_is_not_a_clock_time(self):
+        self.assertIsNone(self.m.parse_reset("Resets 12 hours after your first message.", self.now))
+
+    def test_reset_is_read_from_the_limit_block_only(self):
+        out = "your plan resets in 3 hours\nworking...\nSession limit reached."
+        info = self.m.classify(out)
+        self.assertEqual(info["block"], "Session limit reached.")
+        self.assertIsNone(self.m.parse_reset(info["block"], self.now))  # the earlier line must not leak in
+
     def test_unreadable_is_none(self):
         self.assertIsNone(self.m.parse_reset("limit reached, try later", self.now))
+
+    def test_classify_requires_the_limit_sentence_at_the_start_of_the_last_line(self):
+        self.assertIsNone(self.m.classify("Added usage limit reached detection; PR opened."))
+        self.assertIsNotNone(self.m.classify("noise\nClaude AI usage limit reached|1800003600"))
+        self.assertIsNotNone(self.m.classify("You've hit your weekly limit. Resets Fri 9am"))
+        self.assertIsNotNone(self.m.classify("Session limit reached. Your limit will reset at 3pm."))
 
     def test_classify(self):
         self.assertIsNone(self.m.classify("error: AssertionError"))

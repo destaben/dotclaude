@@ -40,8 +40,11 @@ PROMPT_RULES = (
     "description. Severe findings follow release-policy; if they cannot be auto-fixed, stop and report."
 )
 
-LIMIT_RE = re.compile(r"(?:usage|session|weekly|opus|5-hour) limit (?:reached|hit)|limit reached\s*\|\s*\d{9,}|"
-                      r"(?:hit|reached) your .{0,30}limit", re.I)
+# The CLI's limit sentence, anchored at the start of the last line: prose that merely mentions
+# "usage limit reached" (a commit summary, a quoted test failure) must not pause the run.
+LIMIT_RE = re.compile(
+    r"^\W*(?:claude(?:\s+ai)?\s+)?(?:(?:weekly|session|opus|5-hour)\s+)*(?:usage\s+)?limit\s+(?:reached|hit)\b"
+    r"|^\W*(?:you(?:'ve|\s+have)\s+)?(?:hit|reached)\s+your\s+.{0,30}limit\b", re.I)
 WEEKLY_RE = re.compile(r"week", re.I)
 
 
@@ -58,9 +61,10 @@ def git(repo, *args, check=True):
 
 def snapshot(repo):
     """Branch, HEAD and a hash of the working tree state, for re-verification."""
-    status = git(repo, "status", "--porcelain=v1", "--untracked-files=all") + "\n" + git(repo, "diff", "HEAD")
-    for name in git(repo, "ls-files", "--others", "--exclude-standard").splitlines():
-        status += f"\n{name} {git(repo, 'hash-object', '--', name, check=False)}"  # content, not just the name
+    status = git(repo, "status", "--porcelain=v1", "--untracked-files=all") + "\n" + git(repo, "diff", "HEAD", "--binary")
+    for name in git(repo, "ls-files", "-z", "--others", "--exclude-standard").split("\0"):
+        if name:  # content, not just the name; a file that cannot be hashed fails closed
+            status += f"\n{name} {git(repo, 'hash-object', '--', name)}"
     return {
         "branch": git(repo, "rev-parse", "--abbrev-ref", "HEAD"),
         "head": git(repo, "rev-parse", "HEAD"),
@@ -82,7 +86,7 @@ def parse_reset(text, now):
     if m and any(m.groups()):
         h, mi, s = (int(g or 0) for g in m.groups())
         return now + h * 3600 + mi * 60 + s
-    m = re.search(r"reset[s]?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?(?!\s*(?:h|m|d|s)\w*\b)\s*(am|pm)?", text, re.I)
+    m = re.search(r"reset[s]?\s+(?:at\s+)?(\d{1,2})(?!\d)(?::(\d{2}))?(?!\s*(?:h|m|d|s)\w*\b)\s*(am|pm)?", text, re.I)
     if m:
         hour, minute, ap = int(m.group(1)), int(m.group(2) or 0), (m.group(3) or "").lower()
         if ap == "pm" and hour < 12:
@@ -100,12 +104,13 @@ def parse_reset(text, now):
 
 
 def classify(output):
-    """None when the output does not end in a usage-limit message, else {'window': '5h'|'weekly'}."""
+    """None when the output does not end in a usage-limit sentence, else the window ('5h' or
+    'weekly') and the block (the last line) that the reset time must be read from."""
     lines = [x.strip() for x in output.splitlines() if x.strip()]
     # the limit message is claude's last word; output that only quotes it mid-stream is an ordinary failure
     if not lines or len(lines[-1]) > 300 or not LIMIT_RE.search(lines[-1]):
         return None
-    return {"window": "weekly" if WEEKLY_RE.search(output) else "5h"}
+    return {"window": "weekly" if WEEKLY_RE.search(lines[-1]) else "5h", "block": lines[-1]}
 
 
 def load(path):
@@ -166,8 +171,8 @@ def run_claude(cp, stage):
     return p.returncode, (p.stdout or "") + "\n" + (p.stderr or "")
 
 
-def wait_seconds(cp, info, output, limits, now):
-    reset = parse_reset(output, now)
+def wait_seconds(cp, info, limits, now):
+    reset = parse_reset(info["block"], now)
     if reset is None:
         if info["window"] != "5h":
             raise Stop("weekly limit hit and its reset time could not be read; not guessing a wait")
@@ -200,7 +205,7 @@ def execute(cp, limits):
                 record(cp)
                 raise Stop(f"usage limit hit again after {cp['resumes']} automatic resumes (maximum)")
             record(cp)  # the partial work of this stage is what resume must find, even if we stop below
-            wait = wait_seconds(cp, info, output, limits, time.time())
+            wait = wait_seconds(cp, info, limits, time.time())
             cp.update(status="paused")
             cp["pauses"].append({"stage": stage, "window": info["window"], "wait_seconds": round(wait)})
             save(cp)
@@ -297,7 +302,7 @@ def main(argv=None):
                     raise Stop("branch or HEAD differs from the checkpoint")
                 cp["tree"] = snap["tree"]
             notify("resume", f"manual resume of {cp['branch']} at stage {cp['stage']}")
-    except Stop as e:
+    except (Stop, OSError, ValueError) as e:  # a missing file or corrupt checkpoint is a refusal, not a traceback
         print(f"refused: {e}", file=sys.stderr)
         return 3
     return run(cp, limits)

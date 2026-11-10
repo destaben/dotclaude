@@ -121,6 +121,9 @@
     that the subscription constraints in issue 15 rule out. The issue's self-approval by a
     council or checklist was dropped: a checklist is gameable and the owner's approval gate
     stays. A usage limit is a pause, not a failure; the reset is parsed from the message,
-    and a weekly limit with no readable reset stops rather than guessing. The hard budget cap
-    is opt-in (`AUTO_MAX_BUDGET_USD`). Unverified: the real limit wording and `claude -p
-    --resume` after a limit, so resume re-sends the prompt at stage boundaries.
+    and a weekly limit with no readable reset stops rather than guessing. Defaults: 6 h
+    maximum wait, 3 automatic resumes, 330 min fallback for an unreadable 5-hour reset.
+    Unattended, non-severe review findings are listed in the PR description and not applied
+    (the one deviation from `release-policy`). The hard budget cap is opt-in
+    (`AUTO_MAX_BUDGET_USD`). Unverified: the real limit wording and `claude -p --resume`
+    after a limit, so resume re-sends the prompt at stage boundaries.
