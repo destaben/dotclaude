@@ -52,7 +52,8 @@ back to the user: see "When the council cannot resolve it" there, and the `ceo-c
 - `/pr`: skips the test/review/doc steps for a change you've already verified
   yourself.
 - `remote-hosts` (skill): administering the user's own LAN devices over ssh,
-  read-only by default. It is not part of the change pipeline; see
+  read-only by default, plus guarded Home Assistant reads and calls and an
+  optional scheduled health check (details in its `SKILL.md`). It is not part of the change pipeline; see
   `docs/decisions/0004-tooling-choices.md`, item 7.
 - `ceo-call` and `claudio`: reached from `/council` (above) when the chair's verdict goes back to the user under
   `council-policy`, or when you ask to be called; an escalation path outside the change pipeline, see `council-policy` and

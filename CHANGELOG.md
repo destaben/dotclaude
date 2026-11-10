@@ -20,6 +20,17 @@ accepted). The checkpoint lives under `.git/` so it cannot be committed. Resume 
 stage boundaries and re-sends the prompt: the real limit wording and `claude -p --resume`
 after a limit are unverified, so the tests use fixture messages.
 
+## 2026-11-10 — Home Assistant access and a health check for the remote-hosts skill
+
+Diagnosing the home setup meant ssh-ing into hosts for things Home Assistant and
+Prometheus already know. The skill gains `ha-read.sh` (one allowlisted GET, token from
+the Keychain on curl's stdin), `ha-call.sh` (dry run by default, `--yes` to act, and the
+printer power entity is refused unless `print-state.sh` says idle), and `healthcheck.sh`
+with a generic launchd template. The health check opens no ssh login, skips printers
+that are busy, and notifies only when the set of problems changes. The install helper
+only prints the `launchctl` command: loading a job stays the owner's decision. Tested
+with stubbed curl, security, ssh and ping; no real Home Assistant token was available.
+
 ## 2026-11-10 — Worker: take over a run's result, and a false auth failure
 
 Added a *Taking over a run's result* section to the `worker` skill: how the agent in the owner's
