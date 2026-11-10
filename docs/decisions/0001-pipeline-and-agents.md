@@ -55,6 +55,8 @@ was wrong.
 ## Amendment (2026-11-07): one scoped hook
 Decision 2 stands for the pipeline. The one exception in the repo is the shell guard in the `claudio`
 agent's own frontmatter, scoped to that agent and outside the pipeline (`0004-tooling-choices.md`, item 9).
+**Superseded 2026-11-10:** `claudio` and its guard were removed (`0004-tooling-choices.md`, item 12), so the
+repo has no hooks again and Decision 2 has no exception.
 
 Decision 4's "settles the choice" has two exceptions since 2026-11-07: a low-confidence verdict on a
 costly-to-reverse choice, or an unanswered fatal flaw from the contrarian, goes back to the user (see

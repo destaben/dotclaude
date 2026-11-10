@@ -3,6 +3,15 @@
 All notable changes to this repo are recorded here. Entries explain why a
 change was made, not just what changed — the diff already shows what.
 
+## 2026-11-10 — The CEO agent and its phone calls are removed
+
+Removed `claudio`, the `ceo-call` skill (script, shell guard, dialplan and tests) and every mention of
+them outside the historical records (the changelog and the ADRs). The calls never became reliable: a locked iPhone suspends its softphone, and each fix needs a
+public port a CGNAT connection cannot give or a monthly fee. A decision the council cannot resolve now
+goes straight to the user with numbered options and, if they may be away, a push notification to the
+Claude app. With the agent gone the repo has no hooks again. The decision and its reasons are item 12 of
+`docs/decisions/0004-tooling-choices.md`; the old code stays in git history.
+
 ## 2026-11-10 — PR review ledger: a bot-written "justified" is not a justification
 
 The review's carried ledger comes from the bot's own previous comment, so an injected diff could make the

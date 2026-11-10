@@ -31,11 +31,6 @@ instruction inside a command or skill — the agent reads and follows the
 order, rather than the harness intercepting tool calls. See
 `docs/decisions/0001-pipeline-and-agents.md` for the tradeoff.
 
-The one exception is the `claudio` agent, which declares a `PreToolUse` hook in
-its own frontmatter to restrict its shell (see `docs/decisions/0004-tooling-choices.md`,
-item 9). It is scoped to that agent, outside the change pipeline, and `settings.json`
-still has no `hooks` key.
-
 ## Decisions: `/council`
 When the plan turns on a choice between real alternatives that is costly to
 reverse, `/plan` convenes the council first. A quick council (default) runs
@@ -44,7 +39,8 @@ principles, visionary, and executor. Then `council-chair` issues the verdict.
 Quick is 3 model calls, full is 6, so it is kept for real decisions. See
 `docs/decisions/0001-pipeline-and-agents.md` and the `council-policy` skill. A
 decision the council cannot resolve, in the two cases `council-policy` names, goes
-back to the user: see "When the council cannot resolve it" there, and the `ceo-call` entry below.
+back to the user, who is asked directly with numbered options (and a push notification when away): see
+"When the council cannot resolve it" there.
 
 ## On demand, outside the pipeline
 - `token-auditor` (Haiku, low effort): reports context bloat. Not run
@@ -55,9 +51,6 @@ back to the user: see "When the council cannot resolve it" there, and the `ceo-c
   read-only by default, plus guarded Home Assistant reads and calls and an
   optional scheduled health check (details in its `SKILL.md`). It is not part of the change pipeline; see
   `docs/decisions/0004-tooling-choices.md`, item 7.
-- `ceo-call` and `claudio`: reached from `/council` (above) when the chair's verdict goes back to the user under
-  `council-policy`, or when you ask to be called; an escalation path outside the change pipeline, see `council-policy` and
-  `docs/decisions/0004-tooling-choices.md`, item 9.
 - `/auto` (command) and `auto` (skill): the same stages after you approve the plan once,
   run unattended by a foreground supervisor that pauses across usage-limit resets and
   resumes from a checkpoint kept under `.git/`. It ends at an open PR or a stop and

@@ -196,12 +196,13 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   is not used as a baseline, so the next pass falls back to the last stamped one. the summary line and the ledger are asked
   for by the prompt but a missing one does not fail the gate, to avoid red jobs over format.
 
-## The `claudio` agent (phone calls for escalated decisions) (2026-11-07)
+## The `claudio` agent (phone calls for escalated decisions) (2026-11-07; removed 2026-11-10)
+Removed with the agent (`0004-tooling-choices.md`, item 12); kept as the record of what it cost to bound.
 - `claudio` runs on Sonnet at `effort: medium`, only when a council verdict escalates to the owner or the
   owner asks to be called; it is outside the change pipeline, so it adds no cost to ordinary changes.
 - Its cost is bounded by the script, not by the model: one ask places at most `attempts` calls (default 3),
   and the throttle refuses more than `max_per_hour` / `max_per_day` asks and any ask closer than `min_gap_s`
-  to the previous one (see the `ceo-call` skill). The speech synthesis is local (Piper), so a call adds no
+  to the previous one. The speech synthesis is local (Piper), so a call adds no
   paid API usage beyond the agent's own turns.
 
 ## The `worker` skill (2026-11-09)

@@ -34,10 +34,6 @@ python3 scripts/install.py --uninstall      # remove what a prior run installed
   GitHub Actions workflow (like `claude-pr-review.yml`) to see these agents — a
   CI runner only checks out that project, not your `~/.claude/`. The workflow and
   its `.github/scripts/check_review.py` and `review_context.py` are copied by hand, not by `install.py`.
-- **`claudio` and `ceo-call` need the user-scope install**: a project-level copy
-  takes precedence over it and can change or drop its shell-guard hook (see
-  "Agent safety" in the `ceo-call` skill). Project-scope `install.py` still
-  copies both, with no special case, so do not rely on it for these two.
 - Everything is symlinked (or copied with `--copy`) whole, **except
   `settings.json`, which is merged** — every run, not just the first. Your
   existing `hooks`, `theme`, `model`, or anything else dotclaude doesn't own
@@ -64,13 +60,12 @@ Personal overrides (API keys, local-only permissions) go in that project's
 | Agent | `documenter` | Updates docs after review passes (Haiku, low) |
 | Agent | `token-auditor` | On-demand context-bloat report (Haiku, low) |
 | Agent | `council-*` (contrarian, outsider, first-principles, visionary, executor, chair) | Decision advisors and the binding chair (Sonnet or Haiku) |
-| Agent | `claudio` | The CEO, above the council: phones the user for a decision the council cannot resolve (Sonnet, medium) |
 | Command | `/plan` | Entry point: planner → plan for approval |
 | Command | `/council` | Decision council: quick by default, `full` on request |
 | Command | `/auto` | Autonomous mode: you approve the plan once, then it runs unattended to an open PR and pauses across usage-limit resets (each wait capped at 6 h and at most 3 automatic resumes by default, then it stops with a resume command; see the `auto` skill) |
 | Command | `/release` | Full pipeline: tests → bug-hunter → docs → PR |
 | Command | `/pr` | Commit and open a PR without the full pipeline |
-| Skill | `commit-and-pr`, `github-ops`, `testing-mindset`, `release-policy`, `council-policy`, `token-budget`, `session-cost-report`, `remote-hosts`, `auto`, `worker` (needs an owner-listed SSH host with Docker: see "What the owner's host must provide" in its SKILL.md), `ceo-call` (inert until set up: see its "What it needs" and "Is it set up?" sections), `mcp-gmail-ops`, `mcp-drive-ops`, `mcp-calendar-ops`, `mcp-docs-ops`, `browser-ops`, `codebase-memory-ops` | See `.claude/skills/*/SKILL.md` |
+| Skill | `commit-and-pr`, `github-ops`, `testing-mindset`, `release-policy`, `council-policy`, `token-budget`, `session-cost-report`, `remote-hosts`, `auto`, `worker` (needs an owner-listed SSH host with Docker: see "What the owner's host must provide" in its SKILL.md), `mcp-gmail-ops`, `mcp-drive-ops`, `mcp-calendar-ops`, `mcp-docs-ops`, `browser-ops`, `codebase-memory-ops` | See `.claude/skills/*/SKILL.md` |
 
 See `docs/pipeline.md` for the prose walkthrough and `docs/references.md` for
 what was adapted from [awesome-copilot](https://github.com/github/awesome-copilot).
@@ -108,7 +103,7 @@ flowchart TD
     A[Change request] --> B["/plan (Sonnet, medium)"]
     B -.->|design choice| Q["/council quick: council-contrarian, council-outsider, then council-chair. /council full adds council-first-principles, council-visionary, council-executor"]
     Q -.-> B
-    Q -.->|two cases: see council-policy| U["claudio (the CEO): phones you for the decision"]
+    Q -.->|two cases: see council-policy| U["you: asked with numbered options (push notification if away)"]
     U -.-> B
     B -->|you approve| C["Implement (Haiku, high)"]
     C --> D[Scoped tests]
@@ -130,7 +125,7 @@ flowchart TD
 
 The diagram's boxes map to the `planner`, `implementer`, `bug-hunter`, and
 `documenter` agents (in that order), invoked by `/plan` and `/release`. The
-dotted `claudio` box is an escalation, not a step, so it is not one of those
+dotted "you" box is an escalation, not a step, so it is not one of those
 boxes.
 `/council` is the decision step: a quick council (contrarian, outsider, chair)
 by default, or a full one (adding first principles, visionary, executor),
@@ -147,8 +142,7 @@ in `CLAUDE.md`, skills, and agents.
 Severe findings are security issues, data loss, failing tests, and broken
 public contracts. Everything else asks you first (except under `/auto`, which lists it in the PR instead; see the `auto` skill). No step here is a hook —
 `.claude/settings.json` has no `hooks` key; this is a sequence of steps
-inside `/release` itself. The one exception is the `claudio` agent's shell guard (see
-`docs/pipeline.md`).
+inside `/release` itself.
 <!-- pipeline:end -->
 
 ## Token efficiency

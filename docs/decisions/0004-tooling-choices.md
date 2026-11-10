@@ -1,6 +1,6 @@
 # 0004 — Tooling choices
 
-- Date: 2026-10-25 (consolidates the former 0003, 0004, and 0006); items 5, 6, 7 and 9 added 2026-11-01, 2026-11-07, 2026-11-07 and 2026-11-07 respectively; item 8 added 2026-11-08, item 10 added 2026-11-09 and item 11 added 2026-11-10
+- Date: 2026-10-25 (consolidates the former 0003, 0004, and 0006); items 5, 6, 7 and 9 added 2026-11-01, 2026-11-07, 2026-11-07 and 2026-11-07 respectively; item 8 added 2026-11-08, item 10 added 2026-11-09 and item 11 added 2026-11-10 and item 12 added 2026-11-10
 - Status: accepted; the license awaits your final confirmation
 
 1. **GitHub MCP connector by default, not `gh`.** Per your instruction, as
@@ -61,7 +61,7 @@
    host's sudoers file is the gate, not the vault text, and the skill adds a rule
    that reading state never means dumping secrets. If the whitelist ever needs write
    entries, revisit this item.
-9. **`claudio` phones the user; keypad answers, quiet hours, a chat fallback
+9. **(Superseded by item 12, 2026-11-10.) `claudio` phones the user; keypad answers, quiet hours, a chat fallback
    (2026-11-07).** An unresolved decision goes to the user by phone instead of
    waiting in a terminal. Answers are keypad digits confirmed by a second press,
    not speech recognition: telephone audio is least reliable on exactly the
@@ -146,3 +146,17 @@
     The hard budget cap is opt-in (`AUTO_MAX_BUDGET_USD`). Unverified: the real limit
     wording and `claude -p --resume` after a limit, so resume re-sends the prompt at stage
     boundaries.
+12. **The CEO agent, the phone calls and their telephony stack are removed (2026-11-10).**
+    `claudio`, the `ceo-call` skill, its shell guard and the Asterisk and Piper stacks in the
+    homelab infrastructure repo are gone; this supersedes item 9. Why: the calls could not be made
+    reliable. A locked iPhone suspends its softphone, and every route that fixes that needs a
+    cost or a public port the owner does not have or want: Siperb's push proxy has to register
+    into the PBX from the internet, which a CGNAT connection cannot allow; a SIP trunk to the
+    owner's mobile number adds a monthly fee. A Telegram bot was built as a fallback and then
+    judged unnecessary: the owner already has the Claude app on the phone. What replaces it: when
+    a decision goes back to the user (`council-policy`, "When the council cannot resolve it"), ask
+    directly with numbered options (`AskUserQuestion`) and, if the user may be away, send a push
+    notification (`PushNotification`) that reaches the Claude app. Nothing runs in between and no
+    credential or open port is involved. The repo has no hooks again (the `claudio` guard was the
+    one exception). The removed code stays in git history (the last commit that has it is `f1d9034`) if a
+    phone channel is ever wanted again; the deferred speech-recognition conditions in item 9 then still apply.
