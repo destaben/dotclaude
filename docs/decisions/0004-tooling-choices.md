@@ -1,6 +1,6 @@
 # 0004 — Tooling choices
 
-- Date: 2026-10-25 (consolidates the former 0003, 0004, and 0006); items 5, 6, 7 and 9 added 2026-11-01, 2026-11-07, 2026-11-07 and 2026-11-07 respectively; item 8 added 2026-11-08 and item 10 added 2026-11-09
+- Date: 2026-10-25 (consolidates the former 0003, 0004, and 0006); items 5, 6, 7 and 9 added 2026-11-01, 2026-11-07, 2026-11-07 and 2026-11-07 respectively; item 8 added 2026-11-08, item 10 added 2026-11-09 and item 11 added 2026-11-10
 - Status: accepted; the license awaits your final confirmation
 
 1. **GitHub MCP connector by default, not `gh`.** Per your instruction, as
@@ -115,3 +115,20 @@
    So worker pull requests stay drafts until read, and the skill tells the owner to use
    the worker only on repositories whose `push` and `pull_request` workflows hold no
    secrets or wait for an approval (the skill's wording).
+
+11. **`/auto`: a foreground supervisor, no self-approval (2026-11-10).** Autonomous mode
+    (issue 12) runs the stages after the owner approves the plan once. A quick council chose
+    an owner-started foreground supervisor around the unmodified `claude -p` over cron or a
+    scheduled restart, because an unattended relaunch loop drifts toward the always-on use
+    that the subscription constraints rule out: only the unmodified `claude` binary on the
+    owner's own subscription, own repositories only, owner-triggered runs, nothing shared or
+    served to others, small and finite use rather than continuous self-directed operation
+    (recorded in issue 15). The issue's self-approval by a council or checklist was dropped:
+    a checklist is gameable and the owner's approval gate stays. A usage limit is a pause,
+    not a failure; the reset is parsed from the message, and a weekly limit with no readable
+    reset stops rather than guessing. Defaults: 6 h maximum wait, 3 automatic resumes, 330
+    min fallback for an unreadable 5-hour reset. Unattended, non-severe review findings are
+    listed in the PR description and not applied (the one deviation from `release-policy`).
+    The hard budget cap is opt-in (`AUTO_MAX_BUDGET_USD`). Unverified: the real limit
+    wording and `claude -p --resume` after a limit, so resume re-sends the prompt at stage
+    boundaries.
