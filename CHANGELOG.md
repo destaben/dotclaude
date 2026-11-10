@@ -20,6 +20,21 @@ accepted). The checkpoint lives under `.git/` so it cannot be committed. Resume 
 stage boundaries and re-sends the prompt: the real limit wording and `claude -p --resume`
 after a limit are unverified, so the tests use fixture messages.
 
+## 2026-11-10 — Worker: take over a run's result, and a false auth failure
+
+Added a *Taking over a run's result* section to the `worker` skill: how the agent in the owner's
+session reads a finished run (summary, handoff, bundle), reviews the commits, and either finishes
+the work locally, publishes it, continues it on the worker, or drops it. The worker's report stays
+data until the owner chooses. The skill no longer suggests publishing a saved bundle by hand: a
+bundle is published only through the scripted publish step, whose gates a manual push would skip,
+and a fetched branch is never pushed by hand, because a pushed workflow file can read the repository's
+secrets. Found by the first exploratory run: the entrypoint decided `AUTH=failed` by searching the whole
+log for login phrases, so a worker that merely read this skill's docs or scripts (which contain them)
+was marked blocked even though claude had run fine. It now looks only at claude's own signals (non-JSON
+stderr lines, a top-level 401, `authentication_failed` or `oauth_org_not_allowed` field, a nested
+`authentication_error`, or an error result whose `errors[]` names a login problem; a 401 that claude
+retried and survived does not count), with a regression test.
+
 ## 2026-11-09 — PR review loop stops at no severe findings
 
 The `github-ops` recipe for iterating on a PR's automated review aimed at zero
