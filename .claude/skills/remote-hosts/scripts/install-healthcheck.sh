@@ -37,6 +37,6 @@ sed -e "s|__LABEL__|$(esc "$label")|g" -e "s|__SCRIPT__|$(esc "$script")|g" \
     "$here/healthcheck.plist.template" > "$out" || exit 2
 chmod 600 "$out"
 echo "wrote $out (every $interval s). Nothing was loaded. To start it, run:"
-echo "  launchctl bootstrap gui/\$(id -u) '$out'"
+echo "  launchctl bootstrap gui/\$(id -u) $(shell_quote "$out")"
 echo "To stop it later:"
 echo "  launchctl bootout gui/\$(id -u)/$label"

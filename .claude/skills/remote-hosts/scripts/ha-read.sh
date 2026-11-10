@@ -31,9 +31,6 @@ query=""; [ "$path" = "$p" ] || query=${p#*\?}
 case "$path" in
   states|config|error_log|logbook|history|history/period|logbook/*|history/period/*) ;;
   states/*) case "${path#states/}" in
-              *[!a-z0-9_.]*|.*|*.|*.*.*|*[!.]) ;;
-            esac
-            case "${path#states/}" in
               *[!a-z0-9_.]*|.*|*.|*.*.*) echo "refused: not an entity id" >&2; exit 2 ;;
               *.*) ;;
               *) echo "refused: not an entity id" >&2; exit 2 ;;
