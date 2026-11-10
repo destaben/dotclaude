@@ -94,7 +94,11 @@ fails the job instead of being posted as if it were a review. A review that
 contains the value of one of the job's tokens is never posted either (exit 2,
 no retry). The post also requires the action step to have succeeded; if it
 failed, the job fails and nothing is posted or retried. The review is advisory: a
-prompt-injected diff can still influence what it says. Inactive until you
+prompt-injected diff can still influence what it says. Reviews have memory: the first pass
+runs a fixed checklist, every finding has a stable id, and the comment ends with a ledger
+(open, fixed, justified, withdrawn); a hidden marker records the reviewed commit, and
+`.github/scripts/review_context.py` hands the next run that ledger, the diff since then and
+the author's justifications (copy it with the workflow, it is best effort). Inactive until you
 add a `CLAUDE_CODE_OAUTH_TOKEN` repository secret. There is no API-key
 fallback: when the subscription quota runs out, the run fails and posts nothing.
 

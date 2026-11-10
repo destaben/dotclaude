@@ -89,8 +89,9 @@ It runs automatically on every non-draft, same-repo PR (`opened`/`synchronize`/`
 `docs/decisions/0002-cost-and-quota.md` for why. Waiting on that review from a session
 is described in `docs/pipeline.md`. The workflow posts only a finished review (it
 validates the agent's message with `.github/scripts/check_review.py`, retries
-once, then fails the run). `install.py` does not copy it: put that script in the
-project together with the workflow file.
+once, then fails the run). Reviews carry a ledger of findings between pushes (see
+`docs/pipeline.md`). `install.py` does not copy the scripts: put `check_review.py` and
+`review_context.py` in the project together with the workflow file.
 
 The PR/issue templates are different: they're personal defaults, installed
 to `~/.claude/templates/` and used by `commit-and-pr`/`github-ops` in *any*

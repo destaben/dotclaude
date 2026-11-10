@@ -142,6 +142,38 @@ class ValidateTests(unittest.TestCase):
         self.assertIsNone(check_review.validate(text, "9"))
 
 
+class LedgerSummaryTests(unittest.TestCase):
+    SUMMARY = "New: 1 · Open: 1 · Fixed: 3 · Justified: 2 · Withdrawn: 0"
+
+    def with_summary(self, summary, result="Result: 2 findings (1 severe, 1 non-severe)"):
+        return GOOD.replace(
+            "### bug-hunter", summary + "\n\n### bug-hunter"
+        ).replace("Result: 0 findings (0 severe, 0 non-severe)", result)
+
+    def test_summary_matching_the_result_is_accepted(self):
+        self.assertIsNone(check_review.validate(self.with_summary(self.SUMMARY), "9"))
+
+    def test_summary_without_withdrawn_is_accepted(self):
+        text = self.with_summary("New: 1 · Open: 1 · Fixed: 3 · Justified: 2")
+        self.assertIsNone(check_review.validate(text, "9"))
+
+    def test_summary_disagreeing_with_the_result_is_rejected(self):
+        text = self.with_summary("New: 0 · Open: 1 · Fixed: 3 · Justified: 2")
+        self.assertIn("Summary", check_review.validate(text, "9"))
+
+    def test_review_without_a_summary_is_still_accepted(self):
+        self.assertIsNone(check_review.validate(GOOD, "9"))
+
+    def test_missed_earlier_tags_are_counted(self):
+        text = (
+            "- **F-a** severe · a.sh:1 x\n  Origin: pre-existing (missed earlier)\n"
+            "- **F-b** non-severe · b.sh:2 y\n  Origin: introduced-by abc1234\n"
+            "- **F-c** non-severe · c.sh:3 z\n  Origin: Pre-existing (missed earlier)\n"
+        )
+        self.assertEqual(check_review.review_stats(text), 2)
+        self.assertEqual(check_review.review_stats(None), 0)
+
+
 class DocsCheckWorkflowTests(unittest.TestCase):
     def test_docs_check_runs_the_branchs_code_with_a_read_only_token(self):
         text = (REPO_ROOT / ".github" / "workflows" / "docs-check.yml").read_text()
@@ -238,6 +270,28 @@ class WorkflowContractTests(unittest.TestCase):
     def test_prompt_names_both_required_marker_lines(self):
         self.assertIn("## Review of PR #", self.text)
         self.assertIn("Result: <total> findings", self.text)
+
+    def test_prompt_asks_for_checklist_ids_ledger_and_justifications(self):
+        for needle in (
+            "Checked, no finding", "F-<file>-<rule>-<symbol>", "### Ledger", "pre-existing (missed earlier)",
+            "introduced-by", "New: <n> · Open: <n> · Fixed: <n> · Justified: <n>", ".review-context.md",
+            "statusCheckRollup", "justified",
+        ):
+            self.assertIn(needle, self.text)
+
+    def test_context_step_runs_before_the_review_and_cannot_fail_the_job(self):
+        ctx = self.text.index("id: context")
+        self.assertLess(ctx, self.text.index("id: review"))
+        self.assertIn("continue-on-error: true", self.text[ctx : self.text.index("id: review")])
+
+    def test_review_is_stamped_with_the_head_sha_before_it_is_posted(self):
+        stamp = self.text.index(" stamp ")
+        self.assertLess(stamp, self.text.index('gh pr comment "$PR_NUMBER"'))
+        self.assertIn("HEAD_SHA: ${{ steps.context.outputs.head_sha }}", self.text)
+
+    def test_no_line_exceeds_150_columns(self):
+        for number, line in enumerate(self.text.splitlines(), 1):
+            self.assertLessEqual(len(line), 150, f"line {number}")
 
 
 class LeakTests(unittest.TestCase):

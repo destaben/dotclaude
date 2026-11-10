@@ -3,6 +3,22 @@
 All notable changes to this repo are recorded here. Entries explain why a
 change was made, not just what changed — the diff already shows what.
 
+## 2026-11-10 — PR review remembers what it already said (issue #11)
+
+On PR #9 five reviews in a row raised new severe findings, many about code that had not
+changed since the first one, and a justification in the PR was re-opened from another
+angle. The review prompt is now short and structured (role, inputs, passes, checklist,
+findings, rules, output). The first pass reads every changed file against a fixed
+checklist with a "Checked, no finding" line per category; each finding has a stable id and
+the comment ends with a ledger (open, fixed, justified, withdrawn). A new step
+(`.github/scripts/review_context.py`) hands the agent the previous ledger, the commit that
+review covered, the diff since then and the author's justifications (PR description and
+comments from owner, members and collaborators); later passes review that diff and tag new
+findings `introduced-by <sha>` or `pre-existing (missed earlier)`, and the gate logs how many
+of the second kind a review has, so the convergence problem is measurable. The agent also
+reads the repo's own CI results through `gh pr view --json statusCheckRollup`. Model and
+effort are unchanged: a stronger first pass costs quota and is left to the owner (ADR 0002).
+
 ## 2026-11-09 — PR review loop stops at no severe findings
 
 The `github-ops` recipe for iterating on a PR's automated review aimed at zero
