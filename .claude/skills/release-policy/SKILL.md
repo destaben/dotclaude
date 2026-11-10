@@ -27,7 +27,9 @@ away", "merge them after review"), a non-severe finding that is cheap, clearly r
 change already touches is fixed in the same PR, once: no extra review round for it, and a test when
 the fix is testable. Every other non-severe finding is listed with one sentence on why it was left.
 A finding that needs a design choice is never decided here: it is listed for the owner. Severe
-findings keep the rule above. The review-iteration loop in `github-ops` applies this same pass.
+findings keep the rule above. The exception does not apply under `/auto`, which lists non-severe
+findings and applies none. The review-iteration loop in `github-ops` keeps its own precondition (the owner
+asked, in this session, to iterate on the automated review); this exception does not widen it.
 
 ## None
 No findings. `/release` proceeds straight to the documenter step.

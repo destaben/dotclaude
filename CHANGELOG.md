@@ -8,8 +8,9 @@ change was made, not just what changed — the diff already shows what.
 `release-policy` always listed non-severe findings and asked before changing anything, which stalls a
 PR the owner has handed over and is away from. It now allows one pass in the same PR for the findings
 that are cheap, clearly right or in code already touched, and lists the rest with a reason; design
-choices are never decided there and severe findings are unchanged. Interactive `/release` and `/auto`
-behave as before.
+choices are never decided there and severe findings are unchanged. The exception does not apply under
+`/auto` and does not widen the `github-ops` review loop's own precondition; interactive `/release`
+without a delegation behaves as before.
 
 ## 2026-11-10 — The CEO agent and its phone calls are removed
 

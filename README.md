@@ -140,7 +140,7 @@ to review (the outcomes are in the skill's *Running it* exit codes and its *Publ
 in `CLAUDE.md`, skills, and agents.
 
 Severe findings are security issues, data loss, failing tests, and broken
-public contracts. Everything else asks you first (except under `/auto`, which lists it in the PR instead; see the `auto` skill). No step here is a hook —
+public contracts. Everything else asks you first (except under `/auto`, which lists it in the PR instead; see the `auto` skill, and except a PR you have explicitly delegated, where cheap, evident fixes are applied once and the rest listed; see `release-policy`). No step here is a hook —
 `.claude/settings.json` has no `hooks` key; this is a sequence of steps
 inside `/release` itself.
 <!-- pipeline:end -->

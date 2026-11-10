@@ -15,7 +15,8 @@ is a sequence of steps inside this command, not a hook on any tool-call event.
    - Severe: auto-fix, then re-run step 1 and step 2. Cap this loop at 2
      passes. If still severe after 2 passes, stop and ask the user — do not
      keep looping.
-   - Non-severe: list the findings and ask the user before changing anything.
+   - Non-severe: list the findings and ask the user before changing anything, unless the owner has
+     delegated the PR (see "Delegated exception" in `release-policy`).
    - None: continue.
 4. **Documenter.** Invoke the `documenter` agent. It must complete — and any
    structural checks the current project has of its own must still pass —
