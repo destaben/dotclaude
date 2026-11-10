@@ -19,7 +19,7 @@ A fixed sequence, defined in `.claude/commands/release.md`:
 2. `bug-hunter` agent (Haiku, medium effort) reviews the diff and classifies
    findings per the `release-policy` skill.
 3. Severe findings: auto-fixed and re-tested, capped at 2 loops, then escalated
-   to the user if still severe. Non-severe findings: listed, user decides (under `/auto`, listed in the PR description and not applied).
+   to the user if still severe. Non-severe findings: listed, user decides (under `/auto`, listed in the PR description and not applied; on a PR the owner has explicitly delegated, cheap evident fixes are applied once, see `release-policy`).
 4. `documenter` agent (Haiku, low effort) updates docs — this must complete
    before the next step.
 5. `commit-and-pr` skill: stage, commit, push a branch, open a PR, write the
