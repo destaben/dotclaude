@@ -146,3 +146,17 @@
     The hard budget cap is opt-in (`AUTO_MAX_BUDGET_USD`). Unverified: the real limit
     wording and `claude -p --resume` after a limit, so resume re-sends the prompt at stage
     boundaries.
+12. **The CEO agent, the phone calls and their telephony stack are removed (2026-11-10).**
+    `claudio`, the `ceo-call` skill, its shell guard and the Asterisk and Piper stacks in the
+    homelab infrastructure repo are gone; this supersedes item 9. Why: the calls could not be made
+    reliable. A locked iPhone suspends its softphone, and every route that fixes that needs a
+    cost or a public port the owner does not have or want: Siperb's push proxy has to register
+    into the PBX from the internet, which a CGNAT connection cannot allow; a SIP trunk to the
+    owner's mobile number adds a monthly fee. A Telegram bot was built as a fallback and then
+    judged unnecessary: the owner already has the Claude app on the phone. What replaces it: when
+    a decision goes back to the user (`council-policy`, "When the council cannot resolve it"), ask
+    directly with numbered options (`AskUserQuestion`) and, if the user may be away, send a push
+    notification (`PushNotification`) that reaches the Claude app. Nothing runs in between and no
+    credential or open port is involved. The repo has no hooks again (the `claudio` guard was the
+    one exception). The removed code stays in git history (see issue 13) if a phone channel is
+    ever wanted again; the deferred speech-recognition conditions in item 9 then still apply.

@@ -310,12 +310,11 @@ On the owner's machine, `worker_run.sh` then prints that section to stderr and e
 If the config has `on_blocked`, the script runs it once as an argument vector (never
 through a shell, never from the handoff or the issue text), with the run id and the
 path of `HANDOFF-OUT.md` as the last two arguments. The hook is how the owner routes
-the question onward, for example to a call. The script does not decide anything itself.
+the question onward, for example to a notification. The script does not decide anything itself.
 
-The last resort is a phone call to the owner, made from the owner's machine through
-the owner's call skill (`ceo-call`, which is inert until the owner sets it up) via
-`on_blocked`. The
-container has no telephony access. The worker never calls anyone.
+The last resort is a notification to the owner, sent from the owner's machine by the
+`on_blocked` command the owner chose. The container has no way to contact anyone, and the
+worker never contacts anyone itself.
 
 A run that failed (claude exited nonzero, or the login check failed) is always
 `blocked`, whatever status the worker wrote. The worker's text is kept, with a

@@ -57,14 +57,13 @@ low-confidence verdict on something costly to reverse, or an unanswered fatal fl
 contrarian (which includes the security or data-loss flaw that "What it never overrides" already sends
 back), the same two cases `/council` names. Nothing else in a verdict goes
 back to the user; the confirmations under "What it never overrides" still do.
-If the `ceo-call` skill is set up (see its "Is it set up?" section), hand the
-decision to the `claudio` agent (the CEO, above the chair, with the user as its only superior),
-which phones the user. The user's answer is final. If it cannot reach them, the decision
-stays pending: stop the work that depends on it, say so in the terminal and wait for the user. Without
-the `ceo-call` skill, simply ask the user in the terminal.
+Ask the user directly: the question and the real options, numbered (the `AskUserQuestion` tool), with the
+council's positions in one line each. If the user may be away from the terminal, also send a push
+notification (`PushNotification`) so the question reaches the Claude app on their phone. The user's
+answer is final. If they do not answer, the decision stays pending: stop the work that depends on it,
+say so and wait.
 
 ## Model and effort
 The contrarian, first principles, and the chair run on Sonnet at medium
-effort. The rest of the council run on Haiku at low effort. `claudio` is not part
-of the council; it runs on Sonnet at medium effort. Change these in the agents'
-frontmatter, not at call time.
+effort. The rest of the council run on Haiku at low effort. Change these in the
+agents' frontmatter, not at call time.
