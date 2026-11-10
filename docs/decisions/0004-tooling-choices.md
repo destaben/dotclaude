@@ -89,6 +89,20 @@
    repeated briefly in CLAUDE.md, the README, `docs/pipeline.md` and the ADRs, and the
    two escalation cases in the README, `docs/pipeline.md`, `council-policy` and
    `council.md`, because each file is read on its own.
+   **Deferred (2026-11-10): speech recognition (phase 2b) and a warmer voice.** The
+   owner chose to keep keypad answers for now. Speech-to-text, if added, must be local,
+   restricted to a closed grammar (yes/no/option number) with the keypad kept as
+   the fallback, and gated on a benchmark on real 8 kHz telephone audio: at least 95% accuracy
+   on closed answers, under 5 s per turn, and a memory cap of about 1 GiB so it cannot
+   starve the host's other services. Cloud speech is opt-in only. A more natural voice is
+   also deferred (local first, cloud only if local falls short). Tracked in issue #13.
+   **Reaching a locked phone (2026-11-10):** a suspended iPhone softphone cannot be
+   rung by Asterisk alone, so the optional Siperb push bridge (homelab-infra) registers
+   outward and is meant to wake the app; the dial target is the `iphone` endpoint. It was
+   tried first because it needs no inbound port and no monthly fee. Status: the bridge
+   registers and the endpoint exists, but the first test calls to `PJSIP/iphone` ended
+   with `Call Failure` before anything rang, so it is NOT yet shown to work. Until a locked-phone call is
+   confirmed, the SIP trunk to the owner's mobile number remains the fallback option. Tracked in issue #13.
 10. **`worker` container holds no GitHub credential; publishing happens on the owner's
    machine (2026-11-09).** An unattended run that could push would be able to push
    anywhere its token reaches, including after a prompt injection. So the container
