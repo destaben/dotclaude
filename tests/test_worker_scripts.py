@@ -372,6 +372,14 @@ if knobs.get("refresh") == "1":
         creds.write('{"token": "REFRESHED-VALUE", "padding": "xxxxxxxx"}')
     if knobs.get("log_refreshed") == "1":
         emit({"type": "assistant", "message": {"content": [{"type": "text", "text": "new login REFRESHED-VALUE"}]}})
+if knobs.get("raw_line"):
+    print(knobs["raw_line"], flush=True)
+    for number in range(int(knobs.get("raw_pad", "0"))):
+        print("plain stderr line %06d padding padding" % number, flush=True)
+if knobs.get("extra_event"):
+    emit(json.loads(knobs["extra_event"]))
+if knobs.get("tool_text"):
+    emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": knobs["tool_text"]}]}})
 scan("end")
 with open(os.path.join(config_dir, "claude-scans.json"), "w") as handle:
     json.dump(scans, handle)
@@ -379,6 +387,14 @@ result = knobs.get("result", "ok")
 if result == "ok":
     emit({"type": "result", "subtype": "success", "is_error": False, "num_turns": 7,
           "duration_ms": 120000, "total_cost_usd": 0.42})
+elif result == "error_quoting_a_file":
+    emit({"type": "result", "subtype": "error_max_turns", "is_error": True, "api_error_status": None,
+          "result": "The file says: Invalid API key. Please run /login", "num_turns": 40, "duration_ms": 900, "total_cost_usd": 0})
+    sys.exit(1)
+elif result == "errors_array":
+    emit({"type": "result", "subtype": "error_during_execution", "is_error": True, "api_error_status": None,
+          "errors": ["Invalid API key \u00b7 Please run /login"], "num_turns": 1, "duration_ms": 900, "total_cost_usd": 0})
+    sys.exit(1)
 elif result == "401":
     emit({"type": "result", "subtype": "success", "is_error": True, "api_error_status": 401,
           "num_turns": 1, "duration_ms": 900, "total_cost_usd": 0})
@@ -1309,9 +1325,35 @@ class EntrypointTests(WorkerCase):
         self.assertIn("[REDACTED]", log)
         self.assertNotIn(LOGIN_SECRET, (run_dir / "HANDOFF-OUT.md").read_text())
 
-    def test_a_login_prompt_in_the_output_is_reported_as_auth_failed(self):
-        _, _, run_dir = self.run_entry(env={"STUB_CLAUDE_TEXT": "Please run /login", "STUB_CLAUDE_RESULT": "none"})
+    def test_each_kind_of_claude_auth_signal_is_reported_as_auth_failed(self):
+        signals = {
+            "a 401 result": {"STUB_CLAUDE_RESULT": "401"},
+            "an error result with the text in errors[]": {"STUB_CLAUDE_RESULT": "errors_array"},
+            "a plain stderr line": {"STUB_CLAUDE_RAW_LINE": "Invalid API key \u00b7 Please run /login"},
+            "an authentication_failed error field": {"STUB_CLAUDE_EXTRA_EVENT": '{"type": "assistant", "error": "authentication_failed"}'},
+            "an org login refusal": {"STUB_CLAUDE_EXTRA_EVENT": '{"type": "assistant", "error": "oauth_org_not_allowed"}'},
+            "a nested authentication_error": {"STUB_CLAUDE_EXTRA_EVENT": '{"type": "error", "error": {"type": "authentication_error"}}'},
+            "a 401 retry event": {"STUB_CLAUDE_EXTRA_EVENT": '{"type": "system", "subtype": "api_retry", "error_status": 401}'},
+        }
+        for number, (name, env) in enumerate(signals.items()):
+            with self.subTest(name):
+                _, _, run_dir = self.run_entry(run_id="20261108-000000-%d" % (number + 10), env=env)
+                self.assertEqual(read_summary(run_dir / "summary.env")["AUTH"], "failed")
+
+    def test_a_login_message_followed_by_a_lot_of_plain_output_is_still_auth_failed(self):
+        _, _, run_dir = self.run_entry(env={"STUB_CLAUDE_RAW_LINE": "Please run /login", "STUB_CLAUDE_RAW_PAD": "20000"})
         self.assertEqual(read_summary(run_dir / "summary.env")["AUTH"], "failed")
+
+    def test_an_error_result_that_only_quotes_a_file_is_not_an_auth_failure(self):
+        _, _, run_dir = self.run_entry(env={"STUB_CLAUDE_RESULT": "error_quoting_a_file"})
+        self.assertEqual(read_summary(run_dir / "summary.env")["AUTH"], "ok")
+
+    def test_login_phrases_in_files_the_worker_read_do_not_count_as_an_auth_failure(self):
+        phrases = "please run /login; invalid api key; oauth token has expired; \"error\": \"authentication_failed\""
+        event = json.dumps({"type": "user", "tool_use_result": phrases})
+        _, _, run_dir = self.run_entry(env={"STUB_CLAUDE_TEXT": phrases, "STUB_CLAUDE_TOOL_TEXT": phrases,
+                                            "STUB_CLAUDE_EXTRA_EVENT": event})
+        self.assertEqual(read_summary(run_dir / "summary.env")["AUTH"], "ok")
 
     def test_a_clone_failure_is_an_error_not_a_crash(self):
         result, _, run_dir = self.run_entry(repo="owner/absent")
