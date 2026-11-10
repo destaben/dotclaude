@@ -31,6 +31,15 @@ case "$url" in http://*|https://*) ;; *) echo "setup: ha.conf needs 'url http(s)
 case "${url#*://}" in ''|*[!A-Za-z0-9.:_\[\]-]*) echo "setup: ha.conf url must be scheme://host[:port] only" >&2; exit 4 ;; esac
 case "$kcs" in *[!A-Za-z0-9._-]*|-*) echo "setup: bad keychain_service name" >&2; exit 4 ;; esac
 
+# A printer_power_entity line that is present but unusable (empty, not <domain>.<object>) must not
+# silently switch the guard off: refuse everything until the owner fixes the file.
+if conf_has "$conf" printer_power_entity; then
+  case "$pent" in
+    ''|*[!a-z0-9_.]*|.*|*.|*.*.*) echo "refused: printer_power_entity in ha.conf is empty or not an entity id, so the printer guard cannot be evaluated" >&2; exit 3 ;;
+    *.*) ;;
+    *) echo "refused: printer_power_entity in ha.conf is not an entity id" >&2; exit 3 ;;
+  esac
+fi
 if [ -n "$pent" ] && [ "$(printf '%s' "$ent" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$pent" | tr '[:upper:]' '[:lower:]')" ]; then
   if [ -z "$pmr" ]; then echo "refused: $ent is the printer power entity but ha.conf has no printer_moonraker address" >&2; exit 3; fi
   "$(dirname "$0")/print-state.sh" "$pmr" >/dev/null; gs=$?

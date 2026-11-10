@@ -34,7 +34,7 @@ add() { printf '%s %s\n' "$1" "$2" >> "$results"; }
 
 is_darwin=0; [ "$(uname -s)" = Darwin ] && is_darwin=1
 ping_ok() {
-  command -v ping >/dev/null 2>&1 || return 0
+  command -v ping >/dev/null 2>&1 || return 2     # 2: could not be checked
   if [ "$is_darwin" = 1 ]; then ping -c 1 -W 2000 "$1" >/dev/null 2>&1; else ping -c 1 -W 2 "$1" >/dev/null 2>&1; fi
 }
 
@@ -48,11 +48,12 @@ while read -r kind val _ || [ -n "$kind" ]; do
       h=$(printf '%s\n' "$cfg" | awk '$1=="hostname"{print $2; exit}'); p=$(printf '%s\n' "$cfg" | awk '$1=="port"{print $2; exit}')
       case "$h" in ''|-*|*[!A-Za-z0-9.:_-]*) add PROBLEM "$val: unusable host name in ssh config"; continue ;; esac
       case "$p" in ''|*[!0-9]*) add PROBLEM "$val: unusable port in ssh config"; continue ;; esac
-      if ping_ok "$h"; then pr=up; else pr=down; fi
+      ping_ok "$h"; case $? in 0) pr=up ;; 2) pr=unchecked ;; *) pr=down ;; esac
       if command -v nc >/dev/null 2>&1; then
         if nc -z -w 3 "$h" "$p" >/dev/null 2>&1; then pt=open; else pt=closed; fi
       else pt=unchecked; fi
-      if [ "$pt" = closed ] || { [ "$pr" = down ] && [ "$pt" != open ]; }; then add PROBLEM "$val: unreachable (ping $pr, port $pt)"; else add ok "$val: ping $pr, port $pt"; fi ;;
+      if [ "$pr" = unchecked ] && [ "$pt" = unchecked ]; then add PROBLEM "$val: not checked (ping and nc are both missing)"
+      elif [ "$pt" = closed ] || { [ "$pr" = down ] && [ "$pt" != open ]; }; then add PROBLEM "$val: unreachable (ping $pr, port $pt)"; else add ok "$val: ping $pr, port $pt"; fi ;;
     prometheus)
       case "$val" in http://*|https://*) ;; *) add PROBLEM "config: prometheus needs an http(s) url"; continue ;; esac
       case "${val#*://}" in ''|*[!A-Za-z0-9.:_\[\]-]*) add PROBLEM "config: prometheus url must be scheme://host[:port]"; continue ;; esac

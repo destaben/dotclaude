@@ -144,8 +144,16 @@ conf_file() {
   fi
 }
 
-# conf_get <file> <key>: print the value of the first "<key> <value>" line (whitespace separated,
-# '#' starts a comment line). Config is parsed, never sourced, so a value cannot run code.
+# conf_get <file> <key>: print the value of the first "<key> <value>" line (whitespace separated).
+# '#' starts a comment line; a trailing " # comment" after the value is stripped. A line with the key
+# and no value gives an empty value (never the key name). Config is parsed, never sourced, so a value
+# cannot run code.
 conf_get() {
-  awk -v k="$2" '$1==k { sub(/^[^ \t]+[ \t]+/, ""); sub(/[ \t]+$/, ""); print; exit }' "$1"
+  awk -v k="$2" '$1==k { v=$0; sub(/^[^ \t]+/, "", v); sub(/^[ \t]+/, "", v); if (v ~ /^#/) v=""; sub(/[ \t]+#.*$/, "", v); sub(/[ \t]+$/, "", v); print v; exit }' "$1"
+}
+
+# conf_has <file> <key>: succeed if some line starts with the key, whether or not it has a value. Lets a
+# caller tell "not configured" from "configured but unusable" and fail closed on the latter.
+conf_has() {
+  awk -v k="$2" '$1==k { found=1; exit } END { exit !found }' "$1"
 }

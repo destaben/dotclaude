@@ -1016,9 +1016,47 @@ class HaCallTests(HaCase):
         self.conf.write_text("url http://ha.test:8123\nprinter_power_entity switch.printer_power\n")
         self.assertEqual(self.run_script("ha-call.sh", "switch", "turn_off", "switch.printer_power").returncode, 3)
 
+    def test_inline_comment_on_the_printer_entity_line_does_not_disable_the_guard(self):
+        self.conf.write_text("url http://ha.test:8123\nprinter_power_entity switch.printer_power  # the plug\n"
+                             "printer_moonraker printer.test:80   # moonraker\n")
+        for flags in ((), ("--yes",)):
+            r = self.run_script("ha-call.sh", "switch", "turn_off", "switch.printer_power", *flags, PRINT_STATE="printing")
+            self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        self.assertFalse(any("services" in c for c in self.curl_calls()))
+        ok = self.run_script("ha-call.sh", "switch", "turn_off", "switch.printer_power", "--yes", PRINT_STATE="standby")
+        self.assertEqual(ok.returncode, 0, ok.stdout + ok.stderr)
+
+    def test_a_printer_guard_key_without_a_usable_value_fails_closed(self):
+        for line in ("printer_power_entity", "printer_power_entity   ", "printer_power_entity # nothing",
+                     "printer_power_entity Switch.Bad;id", "printer_power_entity light"):
+            with self.subTest(line=line):
+                self.conf.write_text(f"url http://ha.test:8123\n{line}\nprinter_moonraker printer.test:80\n")
+                r = self.run_script("ha-call.sh", "light", "turn_on", "light.kitchen", "--yes", PRINT_STATE="printing")
+                self.assertNotEqual(r.returncode, 0, r.stdout)
+                self.assertFalse(any("services" in c for c in self.curl_calls()))
+
+    def test_a_bare_key_has_no_value_instead_of_taking_the_key_name(self):
+        self.conf.write_text("url http://ha.test:8123\nkeychain_service\n")
+        self.run_script("ha-read.sh", "config")
+        self.assertIn("-s remote-hosts-ha", self.sec_log.read_text())     # the default, not the word "keychain_service"
+
     def test_other_entities_do_not_consult_the_printer(self):
         self.run_script("ha-call.sh", "light", "turn_on", "light.kitchen", "--yes", PRINT_STATE="printing")
         self.assertFalse(any("printer/objects" in c for c in self.curl_calls()))
+
+
+class HaReadFailureTests(HaCase):
+    def test_error_log_without_perl_is_an_error_not_a_silent_empty_success(self):
+        # a PATH without perl: only the stubs plus a minimal toolset
+        tools = self.t / "tools"
+        tools.mkdir()
+        for name in ("sh", "tr", "cut", "awk", "sed", "cat", "id", "printf", "dirname", "grep"):
+            src = shutil.which(name)
+            if src:
+                (tools / name).symlink_to(src)
+        r = self.run_script("ha-read.sh", "error_log", PATH=f"{self.t / 'bin'}:{tools}")
+        self.assertEqual(r.returncode, 4, r.stdout + r.stderr)
+        self.assertIn("perl", r.stderr)
 
 
 class HealthcheckTests(HaCase):
@@ -1069,6 +1107,19 @@ class HealthcheckTests(HaCase):
         line = self.notifications()[0]
         self.assertIn("box: unreachable", line)
         self.assertIn("-- ", line)
+
+    def test_missing_ping_and_nc_cannot_report_a_host_as_ok(self):
+        tools = self.t / "tools"
+        tools.mkdir()
+        for name in ("sh", "tr", "cut", "awk", "sed", "cat", "grep", "sort", "head", "wc", "tail", "mv", "rm", "mkdir", "chmod",
+                     "cmp", "date", "uname", "mktemp", "dirname", "perl", "id", "ssh"):
+            src = shutil.which(name)
+            if src and name != "ssh":
+                (tools / name).symlink_to(src)
+        (tools / "ssh").symlink_to(self.t / "bin" / "ssh")
+        r = self.run_hc(PATH=str(tools))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("not checked", (self.vault / "healthcheck" / "last.txt").read_text())
 
     def test_never_opens_an_ssh_login(self):
         self.run_hc()

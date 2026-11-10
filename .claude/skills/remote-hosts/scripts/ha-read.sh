@@ -66,4 +66,7 @@ out=$(printf 'Authorization: Bearer %s\n' "$token" | curl -g -sS -f -m 20 --max-
 rc=$?
 [ "$rc" -eq 0 ] || { echo "request failed (curl exit $rc)" >&2; exit 1; }
 # The error log is free text from the instance: strip control characters and redact best-effort.
-if [ "$path" = error_log ]; then printf '%s\n' "$out" | sanitize_text 4000 | redact; else printf '%s\n' "$out"; fi
+if [ "$path" = error_log ]; then
+  command -v perl >/dev/null 2>&1 || { echo "setup: perl is needed to redact the error log; not shown" >&2; exit 4; }
+  printf '%s\n' "$out" | sanitize_text 4000 | redact
+else printf '%s\n' "$out"; fi
