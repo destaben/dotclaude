@@ -135,6 +135,8 @@ def render(pr_number, head_sha, last_sha, ledger, notes, diff, diff_error=None):
     out += ["", "## Ledger from the previous review", ""]
     if ledger:
         for fid, (status, rest) in ledger.items():
+            if status.startswith("justified"):  # the bot wrote this itself: a claim, not proof a trusted author agreed
+                status = f"unverified-claim: {status}"
             out.append(f"- {fid} | {status} | {rest}")
     else:
         out.append("(empty)")

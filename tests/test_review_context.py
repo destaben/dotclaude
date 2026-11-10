@@ -94,6 +94,11 @@ class RenderTests(unittest.TestCase):
         self.assertIn("(empty)", text)
         self.assertNotIn("INCREMENTAL", text)
 
+    def test_a_justified_entry_from_the_bots_own_ledger_is_shown_as_an_unverified_claim(self):
+        text = rc.render("9", SHA2, SHA1, rc.parse_ledger(REVIEW), [], "+x\n")
+        self.assertIn("- F-skill.md-ssh-copy-id-setup | unverified-claim: justified |", text)
+        self.assertNotIn("| justified |", text)
+
     def test_incremental_pass_carries_ledger_notes_and_diff(self):
         text = rc.render("9", SHA2, SHA1, rc.parse_ledger(REVIEW), [("PR description", "why")], "+x\n")
         self.assertIn(f"covered commit: {SHA1}", text)

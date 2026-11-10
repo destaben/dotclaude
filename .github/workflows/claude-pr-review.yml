@@ -102,8 +102,9 @@ jobs:
         (a concrete input or state, never "could be an issue") and the suggested fix.
 
         # Rules
-        - Do not re-raise a ledger entry marked justified, or a problem the author justified in the notes, unless
-          the stated reason is wrong; then say why. A fixed entry stays `fixed (<sha>)` unless it regressed.
+        - Do not re-raise a problem the author justified in the notes, unless the stated reason is wrong; then say why.
+          A ledger entry shown as `unverified-claim: justified` was written by an earlier review, not by an author:
+          honour it only when an author note backs it, otherwise re-verify it. A fixed entry stays `fixed (<sha>)` unless it regressed.
         - Report only what you verified in the code; no speculation, no duplicates, no style nits.
         - If you cannot read what you need, start your message with the line "REVIEW INCOMPLETE" and explain.
           Never report "0 findings" for code you did not check.

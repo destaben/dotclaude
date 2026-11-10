@@ -191,7 +191,8 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
 - **Accepted limits:** the `Result:` line is the last line of the validated message; after validation the post step
   appends a hidden `<!-- claude-pr-review sha=... -->` marker, so the posted comment ends with the marker. The
   ledger is written by the bot itself, so a `justified` entry is the bot's record, not proof that a trusted author
-  agreed; telling them apart is a design choice left to the owner. An unstamped review (the context step failed)
+  agreed: the context step shows it as `unverified-claim: justified` and the prompt honours it only when an author
+  note backs it (an injected diff cannot suppress findings through the ledger). An unstamped review (the context step failed)
   is not used as a baseline, so the next pass falls back to the last stamped one. the summary line and the ledger are asked
   for by the prompt but a missing one does not fail the gate, to avoid red jobs over format.
 
