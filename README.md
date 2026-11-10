@@ -67,9 +67,10 @@ Personal overrides (API keys, local-only permissions) go in that project's
 | Agent | `claudio` | The CEO, above the council: phones the user for a decision the council cannot resolve (Sonnet, medium) |
 | Command | `/plan` | Entry point: planner → plan for approval |
 | Command | `/council` | Decision council: quick by default, `full` on request |
+| Command | `/auto` | Autonomous mode: you approve the plan once, then it runs unattended to an open PR and pauses across usage-limit resets (each wait capped at 6 h and at most 3 automatic resumes by default, then it stops with a resume command; see the `auto` skill) |
 | Command | `/release` | Full pipeline: tests → bug-hunter → docs → PR |
 | Command | `/pr` | Commit and open a PR without the full pipeline |
-| Skill | `commit-and-pr`, `github-ops`, `testing-mindset`, `release-policy`, `council-policy`, `token-budget`, `session-cost-report`, `remote-hosts`, `worker` (needs an owner-listed SSH host with Docker: see "What the owner's host must provide" in its SKILL.md), `ceo-call` (inert until set up: see its "What it needs" and "Is it set up?" sections), `mcp-gmail-ops`, `mcp-drive-ops`, `mcp-calendar-ops`, `mcp-docs-ops`, `browser-ops`, `codebase-memory-ops` | See `.claude/skills/*/SKILL.md` |
+| Skill | `commit-and-pr`, `github-ops`, `testing-mindset`, `release-policy`, `council-policy`, `token-budget`, `session-cost-report`, `remote-hosts`, `auto`, `worker` (needs an owner-listed SSH host with Docker: see "What the owner's host must provide" in its SKILL.md), `ceo-call` (inert until set up: see its "What it needs" and "Is it set up?" sections), `mcp-gmail-ops`, `mcp-drive-ops`, `mcp-calendar-ops`, `mcp-docs-ops`, `browser-ops`, `codebase-memory-ops` | See `.claude/skills/*/SKILL.md` |
 
 See `docs/pipeline.md` for the prose walkthrough and `docs/references.md` for
 what was adapted from [awesome-copilot](https://github.com/github/awesome-copilot).
@@ -118,7 +119,7 @@ flowchart TD
     H --> I{Severity}
     I -->|severe| J[Auto-fix, max 2 loops]
     J --> H
-    I -->|non-severe| K[Ask you]
+    I -->|non-severe| K["Ask you (under /auto: listed in the PR, none applied)"]
     K --> M
     I -->|none| M["Documenter (Haiku, low)"]
     M --> N["Commit and PR (auto-commit)"]
@@ -133,7 +134,8 @@ boxes.
 `/council` is the decision step: a quick council (contrarian, outsider, chair)
 by default, or a full one (adding first principles, visionary, executor),
 whose chair's verdict settles the choice (except the escalation cases in the
-`council-policy` skill). Other entry points sit outside the diagram: `/pr`
+`council-policy` skill). `/auto` runs the same stages unattended after one plan approval and pauses across usage-limit resets (see the
+`auto` skill). Other entry points sit outside the diagram: `/pr`
 runs the `commit-and-pr` skill directly, for a change you've already verified
 yourself and don't want the full `/release` pipeline for, and the `worker` skill,
 which you start yourself and which publishes its result as a draft pull request for you
@@ -142,7 +144,7 @@ to review (the outcomes are in the skill's *Running it* exit codes and its *Publ
 in `CLAUDE.md`, skills, and agents.
 
 Severe findings are security issues, data loss, failing tests, and broken
-public contracts. Everything else asks you first. No step here is a hook —
+public contracts. Everything else asks you first (except under `/auto`, which lists it in the PR instead; see the `auto` skill). No step here is a hook —
 `.claude/settings.json` has no `hooks` key; this is a sequence of steps
 inside `/release` itself. The one exception is the `claudio` agent's shell guard (see
 `docs/pipeline.md`).
