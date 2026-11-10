@@ -577,6 +577,11 @@ class WorkerCase(unittest.TestCase):
         knobs = {key[len("STUB_CLAUDE_"):].lower(): value for key, value in env.items()
                  if key.startswith("STUB_CLAUDE_")}
         (self.claude_cfg / "stub-config.json").write_text(json.dumps(knobs))
+        # The stub reads only the JSON file. Leaving the knobs in the child's environment as well would
+        # make one huge value (the 200 KB checkpoint test) exceed Linux's 128 KiB limit for a single
+        # environment string, and exec fails with E2BIG on a CI runner even though macOS accepts it.
+        for key in [k for k in env if k.startswith("STUB_CLAUDE_")]:
+            del env[key]
 
     def run_worker(self, *args, env=None, alias="box", repo=REPO, config=True):
         merged = {**self.env, **(env or {})}
@@ -2240,6 +2245,14 @@ class CommitTests(WorkerCase):
         summary = read_summary(run_dir / "summary.env")
         self.assertEqual(summary["STATUS"], "blocked", result.stderr)
         self.assertIn("left out of the commit", summary["REASON"])
+
+    def test_stub_knobs_never_reach_the_child_environment(self):
+        # Regression: a 200 KB knob value in the environment made exec fail with E2BIG on Linux
+        # (128 KiB limit per string); the stub reads its knobs from a file only.
+        env = {"PATH": "x", "STUB_CLAUDE_CHECKPOINT": "long line " * 20000}
+        self.write_claude_knobs(env)
+        self.assertEqual(env, {"PATH": "x"})
+        self.assertIn("long line", (self.claude_cfg / "stub-config.json").read_text())
 
     def test_a_very_long_checkpoint_does_not_stop_the_pull_request_from_being_prepared(self):
         result = self.run_publishing(STUB_CLAUDE_OUT="done", STUB_CLAUDE_CHECKPOINT="long line " * 12000)

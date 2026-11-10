@@ -132,3 +132,36 @@ redact() {
     s{(?i)([?&](?:key|api_?key|access_?token|token|auth|password|passwd|secret|sig|signature)=)[^&\s"\x27]+}{$1REDACTED}g;
     s{(?i)((?:(?:password|passwd|passphrase|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|credentials?)(?:[_-][A-Za-z0-9_-]*)?|pass|pwd|auth|cookie|session(?:[_-]?(?:id|token|key))?|(?<![A-Za-z0-9])[A-Za-z0-9]+[_-]key)["\x27]?\s*[=:]\s*)(?:"[^"]*"|\x27[^\x27]*\x27|[^\s"\x27]+)}{$1REDACTED}g'
 }
+
+# conf_file <name> <override-var-name>: print the path of a vault-side config file. Location, first
+# match wins: the file named by the override variable, $REMOTE_HOSTS_VAULT/config/<name>, then
+# ${XDG_CONFIG_HOME:-~/.config}/remote-hosts/<name>. The path is printed even if the file is missing.
+conf_file() {
+  eval "_ov=\${$2:-}"
+  if [ -n "$_ov" ]; then printf '%s\n' "$_ov"
+  elif [ -n "${REMOTE_HOSTS_VAULT:-}" ]; then printf '%s\n' "$REMOTE_HOSTS_VAULT/config/$1"
+  else printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/remote-hosts/$1"
+  fi
+}
+
+# conf_get <file> <key>: print the value of the first "<key> <value>" line (whitespace separated).
+# '#' starts a comment line; a trailing " # comment" after the value is stripped. A line with the key
+# and no value gives an empty value (never the key name). Config is parsed, never sourced, so a value
+# cannot run code.
+conf_get() {
+  awk -v k="$2" '$1==k { v=$0; sub(/^[^ \t]+/, "", v); sub(/^[ \t]+/, "", v); if (v ~ /^#/) v=""; sub(/[ \t]+#.*$/, "", v); sub(/[ \t]+$/, "", v); print v; exit }' "$1"
+}
+
+# conf_has <file> <key>: succeed if some line starts with the key, whether or not it has a value. Lets a
+# caller tell "not configured" from "configured but unusable" and fail closed on the latter.
+conf_has() {
+  awk -v k="$2" '$1==k { found=1; exit } END { exit !found }' "$1"
+}
+
+# conf_unknown_key <file> <allowed-key>...: print the first key in the file that is not in the allowed
+# list (blank lines and comment lines ignored) and succeed; fail if every key is known. A misspelled
+# key would otherwise silently disable the setting it was meant to carry, such as a safety guard.
+conf_unknown_key() {
+  _cf=$1; shift
+  awk -v list=" $* " '$1 !~ /^#/ && NF && index(list, " " $1 " ") == 0 { print $1; found=1; exit } END { exit !found }' "$_cf"
+}
