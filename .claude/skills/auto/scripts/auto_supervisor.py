@@ -12,6 +12,7 @@ AUTO_MAX_BUDGET_USD (optional hard cap passed to claude as --max-budget-usd).
 """
 import argparse
 import datetime as dt
+import fcntl
 import hashlib
 import json
 import os
@@ -82,6 +83,19 @@ def snapshot(repo):
 def state_dir(repo):
     common = Path(git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
     return common / "auto"  # inside .git: never tracked, never committed
+
+
+def take_lock(state_file):
+    """Exclusive lock for the life of this process, so two supervisors never drive one checkpoint
+    (a sleeping run and a manual resume would edit the same tree). Released by the OS on exit."""
+    Path(state_file).parent.mkdir(parents=True, exist_ok=True)
+    f = open(f"{state_file}.lock", "a")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.close()
+        raise Stop("another supervisor is already running this checkpoint")
+    return f
 
 
 def _zone(tail):
@@ -329,6 +343,7 @@ def main(argv=None):
             cp = {"version": VERSION, "repo": str(repo), "task": args.task, "plan": plan, "completed": [],
                   "resumes": 0, "pauses": [], "status": "new", "stage": None,
                   "state_file": str(state_dir(repo) / f"auto-{sid}.json"), **snap}
+            lock = take_lock(cp["state_file"])
             save(cp)
             notify("start", f"autonomous run started on {cp['branch']}")
         else:
@@ -341,6 +356,7 @@ def main(argv=None):
                     raise Stop("no checkpoint found")
                 path = files[-1]
             cp = load(path)
+            lock = take_lock(cp["state_file"])
             cp["resumes"] = 0  # the owner chose to resume: a fresh budget of automatic resumes
             if cp["status"] == "done":
                 raise Stop("that run is already done")

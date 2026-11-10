@@ -256,6 +256,21 @@ class TestReverify(Base):
         (self.repo / "half.txt").write_text("partial edits")
         self.assertEqual(self.sup("resume", "--state", str(cp_path)).returncode, 0)
 
+    def test_second_supervisor_on_a_held_checkpoint_is_refused(self):
+        import fcntl
+        self.script(["ok"])
+        self.assertEqual(self.start("--max-wait-hours", "0").returncode, 0)
+        cp_path = next((self.repo / ".git" / "auto").glob("auto-*.json"))
+        cp = json.loads(cp_path.read_text())
+        cp.update(status="paused", completed=["implement"])
+        cp_path.write_text(json.dumps(cp))
+        with open(str(cp_path) + ".lock", "w") as held:  # a live supervisor holds the lock while it sleeps
+            fcntl.flock(held, fcntl.LOCK_EX)
+            r = self.sup("resume", "--state", str(cp_path))
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertIn("already running", r.stderr)
+        self.assertEqual(json.loads(cp_path.read_text())["status"], "paused")  # checkpoint untouched
+
     def test_empty_plan_is_refused(self):
         self.plan_file.write_text("  \n")
         self.script([])
