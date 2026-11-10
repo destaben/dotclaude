@@ -99,6 +99,8 @@
    draft), then pushes that branch and opens a draft pull request with
    the owner's own `gh`. The cost is that nothing is published until the owner's
    machine picks the run up, and private repos are out of scope for this version.
+   A saved bundle has no publish command: the owner reviews it and, to publish, repeats the run
+   (a new result, at the cost of more quota), because a manual push would skip these checks.
    The residual risks are listed in the skill's own section. The one the owner accepted
    for the spike: the allowed test runners execute code the worker wrote, with network
    access and read access to the login, so tasks come only from owner-authored input and
