@@ -136,8 +136,7 @@ by default, or a full one (adding first principles, visionary, executor),
 whose chair's verdict settles the choice (except the escalation cases in the
 `council-policy` skill). Other entry points sit outside the diagram: `/pr`
 runs the `commit-and-pr` skill directly, for a change you've already verified
-yourself and don't want the full `/release` pipeline for, the `auto` skill (`/auto`, which runs the stages after you approve the plan),
-and the `worker` skill,
+yourself and don't want the full `/release` pipeline for, and the `worker` skill,
 which you start yourself and which publishes its result as a draft pull request for you
 to review (the outcomes are in the skill's *Running it* exit codes and its *Publishing* section). The
 `token-auditor` agent runs on demand (not part of this diagram) to report context bloat

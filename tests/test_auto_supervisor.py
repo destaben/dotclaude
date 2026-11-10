@@ -45,6 +45,10 @@ if act.startswith("limiterr:"):  # the limit sentence on stdout, then unrelated 
     print(act[9:].replace("{reset}", str(int(time.time()) + 2)))
     sys.stderr.write("(node) ExperimentalWarning: something unrelated\n")
     sys.exit(0)
+if act.startswith("limittail:"):  # the limit sentence, then a trailing hint line, exit 0
+    print(act[10:].replace("{reset}", str(int(time.time()) + 2)))
+    print("Run /usage for details.")
+    sys.exit(0)
 if act.startswith("prose0:"):  # a successful stage whose last line is prose that merely mentions the wording
     print(act[7:]); sys.exit(0)
 if act.startswith("limit0:"):
@@ -171,7 +175,7 @@ class TestLimits(Base):
         self.assertIn("weekly", r.stdout)
         self.assertEqual(len(self.calls()), 1)
 
-    def test_five_hour_limit_without_readable_reset_uses_fallback_within_cap(self):
+    def test_five_hour_limit_without_readable_reset_over_the_cap_stops(self):
         self.script(["limit:Session limit reached."])
         r = self.start("--fallback-wait-minutes", "400", "--max-wait-hours", "6")
         self.assertEqual(r.returncode, 2)  # 400 min > 6h cap
@@ -291,6 +295,13 @@ class TestInvocationAndNotify(Base):
         self.assertEqual(self.checkpoint()["resumes"], 1)
         self.assertEqual(self.calls()[0]["stage"], self.calls()[1]["stage"])
 
+    def test_limit_sentence_followed_by_a_hint_line_is_still_a_pause(self):
+        self.script(["limittail:Claude usage limit reached|{reset}", "ok", "ok", "ok"])
+        r = self.start()
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertEqual(self.checkpoint()["resumes"], 1)
+        self.assertEqual(self.calls()[0]["stage"], self.calls()[1]["stage"])
+
     def test_prose_that_starts_with_the_limit_words_is_not_a_pause(self):
         self.script(["prose0:Usage limit reached handling is now in place.", "ok", "ok"])
         r = self.start()
@@ -400,6 +411,9 @@ class TestParseReset(unittest.TestCase):
     def test_classify_requires_the_limit_sentence_at_the_start_of_the_last_line(self):
         self.assertIsNone(self.m.classify("Added usage limit reached detection; PR opened."))
         self.assertIsNone(self.m.classify("Usage limit reached handling is now in place."))
+        self.assertIsNone(self.m.classify("Limit reached. Stopping."))
+        info = self.m.classify("Claude usage limit reached|1800003600\nRun /usage for details.")
+        self.assertEqual(self.m.parse_reset(info["block"], 0), 1800003600)
         self.assertIsNotNone(self.m.classify("noise\nClaude AI usage limit reached|1800003600"))
         self.assertIsNotNone(self.m.classify("You've hit your weekly limit. Resets Fri 9am"))
         self.assertIsNotNone(self.m.classify("Session limit reached. Your limit will reset at 3pm."))

@@ -45,7 +45,8 @@ PROMPT_RULES = (
 # the sentence ends there: end of line or punctuation, so "limit reached handling is ..." is prose
 END = r"(?=\s*(?:$|[.|,;:!\u00b7\u2014-]))"
 LIMIT_RE = re.compile((
-    r"^\W*(?:claude(?:\s+ai)?\s+)?(?:(?:weekly|session|opus|5-hour)\s+)*(?:usage\s+)?limit\s+(?:reached|hit)\b{END}"
+    r"^\W*(?:claude(?:\s+ai)?\s+)?(?:(?:(?:weekly|session|opus|5-hour)\s+)+(?:usage\s+)?|usage\s+)limit\s+(?:reached|hit)\b{END}"
+    r"|^\W*(?:claude(?:\s+ai)?\s+)?limit\s+reached\s*\|\s*\d{9,}"
     r"|^\W*(?:you(?:'ve|\s+have)\s+)?(?:hit|reached)\s+your\s+.{0,30}limit\b{END}").replace("{END}", END), re.I)
 WEEKLY_RE = re.compile(r"week", re.I)
 
@@ -106,13 +107,16 @@ def parse_reset(text, now):
 
 
 def classify(output):
-    """None when the output does not end in a usage-limit sentence, else the window ('5h' or
-    'weekly') and the block (the last line) that the reset time must be read from."""
-    lines = [x.strip() for x in output.splitlines() if x.strip()]
-    # the limit message is claude's last word; output that only quotes it mid-stream is an ordinary failure
-    if not lines or len(lines[-1]) > 300 or not LIMIT_RE.search(lines[-1]):
-        return None
-    return {"window": "weekly" if WEEKLY_RE.search(lines[-1]) else "5h", "block": lines[-1]}
+    """None when none of the last three lines is a usage-limit sentence, else the window ('5h' or
+    'weekly') and the block (that line and what follows it) the reset time must be read from."""
+    lines = [x.strip() for x in output.splitlines() if x.strip()][-3:]
+    # the limit message is claude's last word, at most followed by a hint line; a quote buried
+    # earlier in the output (a failing test, a log) is an ordinary failure
+    for n, line in reversed(list(enumerate(lines))):
+        if len(line) <= 300 and LIMIT_RE.search(line):
+            block = "\n".join(lines[n:])
+            return {"window": "weekly" if WEEKLY_RE.search(block) else "5h", "block": block}
+    return None
 
 
 def load(path):

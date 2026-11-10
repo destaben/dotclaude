@@ -45,10 +45,10 @@ never skips them.
 
 ## Usage limits
 A limit is a pause, not a failure: it does not count toward the escalation rule.
-- **Detect:** a stage whose last stdout line or last stderr line starts with the CLI's usage-limit sentence (5-hour or
+- **Detect:** a stage whose last three stdout lines or last three stderr lines include a line that starts with the CLI's usage-limit sentence (5-hour or
   weekly window), at any exit code. Prose that only mentions the wording, or a failure that quotes it
   mid-output, is not a limit. Any other failure stops the run, unretried.
-- **Reset time:** parsed from that same last line only (epoch, "in N hours", "at 3pm"). If unreadable, a 5-hour
+- **Reset time:** parsed from that same line and the hint lines after it only (epoch, "in N hours", "at 3pm"). If unreadable, a 5-hour
   limit falls back to 330 minutes; a weekly limit stops, because a guess could be days wrong.
 - **Wait:** until reset plus a 120 s margin, only if that is within the maximum wait (default 6 h)
   and automatic resumes so far are under the maximum (default 3). Otherwise stop with the
