@@ -55,14 +55,24 @@ def review_comments(comments):
     for c in comments:
         body = c.get("body") or ""
         first = next((ln for ln in body.splitlines() if ln.strip()), "")
-        if is_bot(c) and REVIEW_HEAD_RE.match(first) and MARKER_RE.search(body):
+        if is_bot(c) and REVIEW_HEAD_RE.match(first) and final_marker(body):
             found.append(c)
     return found
 
 
+def final_marker(body):
+    """The sha of a marker that is the comment's final line, else None.
+
+    The stamp step appends the real marker as the last line, so a marker anywhere
+    else is the agent's own text (possibly forged by an injected diff) and counts for nothing.
+    """
+    lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
+    match = MARKER_RE.fullmatch(lines[-1]) if lines else None
+    return match.group(1) if match else None
+
+
 def last_marker(body):
-    """The reviewed sha of the LAST marker: the real one is appended after any text of the agent's."""
-    return MARKER_RE.findall(body)[-1]
+    return final_marker(body)
 
 
 def parse_ledger(text):
@@ -84,10 +94,14 @@ def previous_state(comments):
     return last_marker(body), parse_ledger(body)
 
 
-def author_notes(pr_body, comments):
-    """Justifications: the PR description and comments from trusted humans."""
+def author_notes(pr_body, comments, body_association="NONE"):
+    """Justifications: the PR description and comments from trusted humans.
+
+    The description counts only when its author is trusted too: on a fork PR it is
+    written by whoever opened it.
+    """
     notes = []
-    if (pr_body or "").strip():
+    if (pr_body or "").strip() and body_association in TRUSTED:
         notes.append(("PR description", pr_body.strip()))
     for c in comments:
         if is_bot(c) or c.get("author_association") not in TRUSTED:
@@ -99,10 +113,10 @@ def author_notes(pr_body, comments):
     return notes
 
 
-def clip(text, limit):
+def clip(text, limit, rest="read the rest with `gh pr diff`"):
     if len(text) <= limit:
         return text
-    return text[:limit] + f"\n[... cut at {limit} characters; read the rest with `gh pr diff`]"
+    return text[:limit] + f"\n[... cut at {limit} characters; {rest}]"
 
 
 def render(pr_number, head_sha, last_sha, ledger, notes, diff, diff_error=None):
@@ -127,7 +141,7 @@ def render(pr_number, head_sha, last_sha, ledger, notes, diff, diff_error=None):
     out += ["", "## Author notes (justifications to honor)", ""]
     if notes:
         for title, body in notes:
-            out += [f"### {title}", "", clip(body, NOTE_LIMIT), ""]
+            out += [f"### {title}", "", clip(body, NOTE_LIMIT, "read the whole text with `gh pr view --comments`"), ""]
     else:
         out += ["(none)", ""]
     out += ["## Incremental diff since the previous review", ""]
@@ -155,6 +169,8 @@ def fetch_comments(pr_number):
     try:  # inline review-thread comments carry justifications too; best effort
         inline = gh_json("api", "--paginate", "--slurp", f"repos/{repo}/pulls/{pr_number}/comments")
         comments += [c for page in inline for c in (page if isinstance(page, list) else [page])]
+        reviews = gh_json("api", "--paginate", "--slurp", f"repos/{repo}/pulls/{pr_number}/reviews")
+        comments += [c for page in reviews for c in (page if isinstance(page, list) else [page])]
     except Exception:  # noqa: BLE001
         pass
     return comments
@@ -172,7 +188,7 @@ def git_diff(last_sha, head_sha):
 def cmd_context(pr_number, head_sha, output):
     try:
         comments = fetch_comments(pr_number)
-        pr = gh_json("pr", "view", pr_number, "--json", "body")
+        pr = gh_json("pr", "view", pr_number, "--json", "body,authorAssociation")
     except Exception as exc:  # noqa: BLE001 - never fail the review over its context
         Path(output).write_text(
             render(pr_number, head_sha, None, {}, [], None)
@@ -187,7 +203,7 @@ def cmd_context(pr_number, head_sha, output):
             diff, error = git_diff(last_sha, head_sha)
         except Exception as exc:  # noqa: BLE001
             diff, error = None, type(exc).__name__
-    notes = author_notes((pr or {}).get("body"), comments)
+    notes = author_notes((pr or {}).get("body"), comments, (pr or {}).get("authorAssociation", "NONE"))
     Path(output).write_text(
         render(pr_number, head_sha, last_sha, ledger, notes, diff, error), encoding="utf-8"
     )

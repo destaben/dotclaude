@@ -73,7 +73,8 @@ back to the user: see "When the council cannot resolve it" there, and the `ceo-c
 This workflow is dotclaude's own project-specific CI — it is *not* installed
 by `install.py`; to use it in another repo, project-scope install the agents
 there too (see the README's Install section) and copy this workflow file in,
-together with `.github/scripts/check_review.py` (without it no review is posted).
+together with `.github/scripts/check_review.py` (without it no review is posted) and, optionally,
+`.github/scripts/review_context.py` (without it every pass is a full first pass with no ledger).
 It runs the same `bug-hunter` agent against a GitHub pull request, instead of
 a local diff, followed by the `documenter` — no new agent, see
 `docs/decisions/0001-pipeline-and-agents.md`. Triggered on every
@@ -95,7 +96,7 @@ contains the value of one of the job's tokens is never posted either (exit 2,
 no retry). The post also requires the action step to have succeeded; if it
 failed, the job fails and nothing is posted or retried. The review is advisory: a
 prompt-injected diff can still influence what it says. Reviews have memory: the first pass
-runs a fixed checklist, every finding has a stable id, and the comment ends with a ledger
+runs a fixed checklist, every finding has a stable id, and the comment carries a ledger before the `Result:` line (the posted comment ends with the hidden marker)
 (open, fixed, justified, withdrawn); a hidden marker records the reviewed commit, and
 `.github/scripts/review_context.py` hands the next run that ledger, the diff since then and
 the author's justifications (copy it with the workflow, it is best effort). Inactive until you

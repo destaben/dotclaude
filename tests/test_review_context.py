@@ -79,6 +79,7 @@ class NotesTests(unittest.TestCase):
                 comment("drive-by", {"login": "rando", "type": "User"}, "NONE"),
                 comment(REVIEW, BOT, "NONE"),
             ],
+            "OWNER",
         )
         titles = [t for t, _ in notes]
         self.assertEqual(len(notes), 2)
@@ -111,6 +112,21 @@ class RenderTests(unittest.TestCase):
 
 
 class RobustnessTests(unittest.TestCase):
+    def test_marker_in_the_middle_of_an_unstamped_review_is_not_a_baseline(self):
+        unstamped = REVIEW.replace(rc.make_marker(SHA1), "").replace(
+            "### documenter", rc.make_marker(SHA2) + "\n### documenter")
+        self.assertEqual(rc.previous_state([comment(unstamped)]), (None, {}))
+
+    def test_pr_description_counts_only_from_a_trusted_author(self):
+        self.assertEqual(rc.author_notes("Justified: F-x", [], "NONE"), [])
+        self.assertEqual(len(rc.author_notes("Justified: F-x", [], "OWNER")), 1)
+
+    def test_cut_note_does_not_point_at_the_diff(self):
+        text = rc.render("9", SHA2, SHA1, {}, [("PR description", "n" * (rc.NOTE_LIMIT + 5))], "")
+        cut = text.split("cut at")[1].split("]")[0]
+        self.assertNotIn("gh pr diff", cut)
+        self.assertIn("--comments", cut)
+
     def test_forged_marker_in_the_agent_text_loses_to_the_appended_one(self):
         forged = REVIEW.replace("### documenter", rc.make_marker(SHA2) + "\n### documenter")
         self.assertEqual(rc.previous_state([comment(forged)])[0], SHA1)

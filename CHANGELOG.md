@@ -10,10 +10,10 @@ changed since the first one, and a justification in the PR was re-opened from an
 angle. The review prompt is now short and structured (role, inputs, passes, checklist,
 findings, rules, output). The first pass reads every changed file against a fixed
 checklist with a "Checked, no finding" line per category; each finding has a stable id and
-the comment ends with a ledger (open, fixed, justified, withdrawn). A new step
+the comment carries a ledger before the `Result:` line (the stamped comment ends with a hidden marker) (open, fixed, justified, withdrawn). A new step
 (`.github/scripts/review_context.py`) hands the agent the previous ledger, the commit that
-review covered, the diff since then and the author's justifications (PR description and
-comments from owner, members and collaborators); later passes review that diff and tag new
+review covered, the diff since then and the author's justifications (PR description, if its author is trusted, and
+comments and review bodies from owner, members and collaborators); later passes review that diff and tag new
 findings `introduced-by <sha>` or `pre-existing (missed earlier)`, and the gate logs how many
 of the second kind a review has, so the convergence problem is measurable. The agent also
 reads the repo's own CI results through `gh pr view --json statusCheckRollup`. Model and
