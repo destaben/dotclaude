@@ -8,7 +8,7 @@ Start autonomous mode for this task: $ARGUMENTS
 Follow the `auto` skill; it owns the rules, the guardrails and the resume behavior. If
 $ARGUMENTS is empty, ask what task to run instead of guessing.
 
-1. If $ARGUMENTS is `--resume`, run the supervisor's `resume` subcommand with the same `--repo` (see the skill's "Running it") and report; skip the rest.
+1. If $ARGUMENTS is `--resume`, run the supervisor's `resume` subcommand with the same `--repo` (the task repository's top-level directory, from `git rev-parse --show-toplevel` in that repo, as in step 4) or with `--state FILE` (see the skill's "Running it"), and report; skip the rest.
 2. **Plan, approved by you.** Invoke the `planner` agent as `/plan` does, convening `/council` for
    real design choices per `council-policy`. Show the plan and wait for explicit approval. This is
    the only point where autonomous mode asks you anything; it never approves a plan itself.
