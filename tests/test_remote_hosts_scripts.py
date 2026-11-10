@@ -1035,6 +1035,15 @@ class HaCallTests(HaCase):
                 self.assertNotEqual(r.returncode, 0, r.stdout)
                 self.assertFalse(any("services" in c for c in self.curl_calls()))
 
+    def test_a_misspelled_key_in_ha_conf_is_a_setup_error_for_both_scripts(self):
+        self.conf.write_text("url http://ha.test:8123\nprinter_power_entiy switch.printer_power\nprinter_moonraker printer.test:80\n")
+        for script, args in (("ha-call.sh", ("switch", "turn_off", "switch.printer_power", "--yes")), ("ha-read.sh", ("config",))):
+            with self.subTest(script=script):
+                r = self.run_script(script, *args, PRINT_STATE="printing")
+                self.assertEqual(r.returncode, 4, r.stdout + r.stderr)
+                self.assertIn("printer_power_entiy", r.stderr)
+        self.assertEqual(self.curl_calls(), [])
+
     def test_a_bare_key_has_no_value_instead_of_taking_the_key_name(self):
         self.conf.write_text("url http://ha.test:8123\nkeychain_service\n")
         self.run_script("ha-read.sh", "config")
@@ -1107,6 +1116,7 @@ class HealthcheckTests(HaCase):
         line = self.notifications()[0]
         self.assertIn("box: unreachable", line)
         self.assertIn("-- ", line)
+        self.assertTrue(line.split("-- ", 1)[1].startswith("1 problem(s)"), line)   # the text after "--" is the message
 
     def test_missing_ping_and_nc_cannot_report_a_host_as_ok(self):
         tools = self.t / "tools"

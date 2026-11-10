@@ -157,3 +157,11 @@ conf_get() {
 conf_has() {
   awk -v k="$2" '$1==k { found=1; exit } END { exit !found }' "$1"
 }
+
+# conf_unknown_key <file> <allowed-key>...: print the first key in the file that is not in the allowed
+# list (blank lines and comment lines ignored) and succeed; fail if every key is known. A misspelled
+# key would otherwise silently disable the setting it was meant to carry, such as a safety guard.
+conf_unknown_key() {
+  _cf=$1; shift
+  awk -v list=" $* " '$1 !~ /^#/ && NF && index(list, " " $1 " ") == 0 { print $1; found=1; exit } END { exit !found }' "$_cf"
+}

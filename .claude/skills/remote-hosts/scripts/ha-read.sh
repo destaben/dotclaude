@@ -47,6 +47,9 @@ esac
 
 conf=$(conf_file ha.conf REMOTE_HOSTS_HA_CONF)
 [ -f "$conf" ] && [ -r "$conf" ] || { echo "setup: no readable ha.conf at $conf" >&2; exit 4; }
+if bad=$(conf_unknown_key "$conf" url keychain_service printer_power_entity printer_moonraker); then
+  echo "setup: unknown key '$(printf '%s' "$bad" | tr -c 'A-Za-z0-9._-' '?')' in ha.conf (a misspelled key must not silently drop a setting)" >&2; exit 4
+fi
 url=$(conf_get "$conf" url); svc=$(conf_get "$conf" keychain_service); svc=${svc:-remote-hosts-ha}
 case "$url" in
   http://*|https://*) ;;
