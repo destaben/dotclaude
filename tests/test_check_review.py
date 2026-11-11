@@ -289,8 +289,24 @@ class WorkflowContractTests(unittest.TestCase):
 
     def test_review_is_stamped_with_the_head_sha_before_it_is_posted(self):
         stamp = self.text.index(" stamp ")
-        self.assertLess(stamp, self.text.index('gh pr comment "$PR_NUMBER"'))
+        self.assertLess(stamp, self.text.rindex('gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/review.md"'))
         self.assertIn("HEAD_SHA: ${{ steps.context.outputs.head_sha }}", self.text)
+
+    def test_diff_is_written_into_the_workspace_before_the_review(self):
+        step = self.text.index("id: diff")
+        self.assertLess(step, self.text.index("id: review"))
+        self.assertIn("continue-on-error: true", self.text[step : self.text.index("id: context")])
+        for needle in (".review-diff.patch", ".review-changed-files.txt"):
+            self.assertIn(needle, self.text[step : self.text.index("id: context")])
+            self.assertIn(needle, self.text[self.text.index("REVIEW_PROMPT"):self.text.index("steps:")])
+
+    def test_still_incomplete_review_posts_a_notice_and_stays_green(self):
+        post = self.text[self.text.index("name: Post the review"):]
+        self.assertIn('"$rc" -eq 3', post)
+        self.assertIn("not reviewed", post)
+        self.assertIn("exit 0", post)
+        # the unfinished agent text is never what gets posted in that branch
+        self.assertIn("notice.md", post)
 
     def test_no_line_exceeds_150_columns(self):
         for number, line in enumerate(self.text.splitlines(), 1):
