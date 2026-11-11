@@ -289,8 +289,36 @@ class WorkflowContractTests(unittest.TestCase):
 
     def test_review_is_stamped_with_the_head_sha_before_it_is_posted(self):
         stamp = self.text.index(" stamp ")
-        self.assertLess(stamp, self.text.index('gh pr comment "$PR_NUMBER"'))
+        self.assertLess(stamp, self.text.rindex('gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/review.md"'))
         self.assertIn("HEAD_SHA: ${{ steps.context.outputs.head_sha }}", self.text)
+
+    def test_diff_is_written_into_the_workspace_before_the_review(self):
+        step = self.text.index("id: diff")
+        end = self.text.index("id: context")
+        self.assertLess(step, self.text.index("id: review"))
+        block = self.text[step:end]
+        self.assertIn("continue-on-error: true", block)
+        self.assertIn("github.event.pull_request.number || github.event.issue.number }}\n        continue-on-error", block)
+        self.assertIn('gh pr diff "$PR_NUMBER" > .review-diff.patch || fail', block)
+        self.assertIn('gh pr diff "$PR_NUMBER" --name-only > .review-changed-files.txt || fail', block)
+        self.assertIn("fail() { rm -f .review-diff.patch .review-changed-files.txt; exit 1; }", block)
+        prompt = self.text[self.text.index("REVIEW_PROMPT"):self.text.index("steps:")]
+        for needle in (".review-diff.patch", ".review-changed-files.txt"):
+            self.assertIn(needle, prompt)
+
+    def test_still_incomplete_review_posts_only_a_static_notice_and_stays_green(self):
+        post = self.text[self.text.index("name: Post the review"):]
+        start = post.index('"$rc" -eq 3')
+        branch = post[start:post.index("elif", start)]
+        self.assertIn("not reviewed", branch)
+        self.assertIn('gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/notice.md"', branch)
+        # exit 0 comes after the notice is posted, and the agent's text is never referenced here
+        self.assertLess(branch.index("gh pr comment"), branch.index("exit 0"))
+        self.assertNotIn("review.md", branch)
+        # the stamp (which marks a finished review) is only after this branch
+        self.assertGreater(post.index(" stamp "), start)
+        # setup errors still fail the job
+        self.assertIn('elif [ "$rc" -ne 0 ]', post)
 
     def test_no_line_exceeds_150_columns(self):
         for number, line in enumerate(self.text.splitlines(), 1):

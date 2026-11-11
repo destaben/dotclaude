@@ -84,12 +84,14 @@ run on fork PRs when a trusted user asks for it), or manually via
 `docs/decisions/0002-cost-and-quota.md`). Draft PRs are skipped until ready, and
 a newer run on the same PR cancels the one in progress. The agent's final
 message is the review; a workflow step posts it, so the agent has no
-write tools. That step only posts a *finished* review: the message must start
+write tools. That step posts a *finished* review, or the "not reviewed" notice described below: a review message must start
 with `## Review of PR #<n>` and end with
 `Result: <total> findings (<severe> severe, <non-severe> non-severe)`
 (`.github/scripts/check_review.py`, copy it with the workflow). An incomplete
-message, such as a "waiting for the agents" status, is retried once and then
-fails the job instead of being posted as if it were a review. A review that
+message, such as a "waiting for the agents" status, is retried once; if it is
+still incomplete, a "not reviewed" notice is posted instead (once per run, no dedupe across pushes) (the
+unfinished text never is) and the job stays green. The workflow writes the PR diff
+to `.review-diff.patch` first, because the agents can only `Read` the workspace. A review that
 contains the value of one of the job's tokens is never posted either (exit 2,
 no retry). The post also requires the action step to have succeeded; if it
 failed, the job fails and nothing is posted or retried. The review is advisory: a

@@ -63,8 +63,7 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   good review is not discarded over cosmetics; the `## Review of PR #<n>`
   marker itself stays exact apart from an allowed suffix after the number, as the issue's contract and the prompt specify.
   Anything stricter-looking than that is deliberate: the contract is a fixed
-  first and last line, and a drifting agent fails visibly (red job, nothing
-  posted) instead of posting something unverifiable.
+  first and last line, and a drifting agent fails visibly ("not reviewed" notice, nothing else posted) instead of posting something unverifiable.
 - **Fail closed on the action's outcome.** The post step now needs the action
   step to have succeeded. Before, a finished review was posted even if the
   action exited non-zero; now it is not, and the retry covers incomplete
@@ -72,7 +71,9 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   failure (exit 2, a crash or syntax error, or the script itself missing)
   fails the job at once; a missing or unreadable execution file is an
   incomplete review (exit 3) and is retried. A failed retry run is never
-  posted.
+  posted. A review still incomplete after the retry posts a "not
+  reviewed" notice (once per run) and the job stays green (issue #29); exit 2 and a failed
+  retry still fail it.
 - **Depends on** GitHub expanding `env` inside the action's `with:` inputs (an
   Actions expression feature, not the action itself) and the action
   populating the `execution_file` output (observed on this repo's review runs,
@@ -156,8 +157,9 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   retried or posted. A result that errors while the step exits green is the
   intermittent early stop this work targets, so one retry is worth its cost.
 - **Retry once, then fail.** One extra run only when the first result is
-  incomplete (so the normal cost is unchanged); if it is still incomplete the
-  job goes red and nothing is posted.
+  incomplete (so the normal cost is unchanged); if it is still incomplete a
+  "not reviewed" notice is posted and the job stays green (issue #29). Exit 2
+  (setup or secret leak) and a failed retry still fail the job and post nothing.
 - **Not done: one edited comment per PR** (`gh pr comment --edit-last`). An
   edit raises no new comment, so a session or automation waiting for new
   comments would miss it, and the per-commit history would be lost. A comment
@@ -166,7 +168,7 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   in about six runs on PR #9, an observation, not a measured rate) and
   unproven to be an effort problem. If an incomplete result still survives the
   retry, raise `--effort` for this workflow only and weigh
-  the cost then; the failed runs are visible as red checks with a warning line.
+  the cost then; the failed runs show a "not reviewed" notice (or a red check on a setup error) and a warning line.
 
 ## Review convergence (2026-11-10, issue #11)
 - **What changed:** the prompt is structured and asks for a checklist first pass, stable finding ids, a

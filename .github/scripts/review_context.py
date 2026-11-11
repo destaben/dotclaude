@@ -113,7 +113,7 @@ def author_notes(pr_body, comments, body_association="NONE"):
     return notes
 
 
-def clip(text, limit, rest="read the rest with `gh pr diff`"):
+def clip(text, limit, rest="read the rest of `.review-diff.patch` with offset/limit"):
     if len(text) <= limit:
         return text
     return text[:limit] + f"\n[... cut at {limit} characters; {rest}]"
@@ -148,9 +148,9 @@ def render(pr_number, head_sha, last_sha, ledger, notes, diff, diff_error=None):
         out += ["(none)", ""]
     out += ["## Incremental diff since the previous review", ""]
     if not last_sha:
-        out.append("(not applicable on a first pass; use `gh pr diff`)")
+        out.append("(not applicable on a first pass; use `.review-diff.patch`)")
     elif diff is None:
-        out.append(f"(unavailable: {diff_error or 'unknown'}; review the full `gh pr diff`)")
+        out.append(f"(unavailable: {diff_error or 'unknown'}; review the full `.review-diff.patch`)")
     elif not diff.strip():
         out.append("(no changes since that commit)")
     else:
