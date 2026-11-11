@@ -294,19 +294,31 @@ class WorkflowContractTests(unittest.TestCase):
 
     def test_diff_is_written_into_the_workspace_before_the_review(self):
         step = self.text.index("id: diff")
+        end = self.text.index("id: context")
         self.assertLess(step, self.text.index("id: review"))
-        self.assertIn("continue-on-error: true", self.text[step : self.text.index("id: context")])
+        block = self.text[step:end]
+        self.assertIn("continue-on-error: true", block)
+        self.assertIn("github.event.pull_request.number || github.event.issue.number }}\n        continue-on-error", block)
+        self.assertIn('gh pr diff "$PR_NUMBER" > .review-diff.patch || fail', block)
+        self.assertIn('gh pr diff "$PR_NUMBER" --name-only > .review-changed-files.txt || fail', block)
+        self.assertIn("fail() { rm -f .review-diff.patch .review-changed-files.txt; exit 1; }", block)
+        prompt = self.text[self.text.index("REVIEW_PROMPT"):self.text.index("steps:")]
         for needle in (".review-diff.patch", ".review-changed-files.txt"):
-            self.assertIn(needle, self.text[step : self.text.index("id: context")])
-            self.assertIn(needle, self.text[self.text.index("REVIEW_PROMPT"):self.text.index("steps:")])
+            self.assertIn(needle, prompt)
 
-    def test_still_incomplete_review_posts_a_notice_and_stays_green(self):
+    def test_still_incomplete_review_posts_only_a_static_notice_and_stays_green(self):
         post = self.text[self.text.index("name: Post the review"):]
-        self.assertIn('"$rc" -eq 3', post)
-        self.assertIn("not reviewed", post)
-        self.assertIn("exit 0", post)
-        # the unfinished agent text is never what gets posted in that branch
-        self.assertIn("notice.md", post)
+        start = post.index('"$rc" -eq 3')
+        branch = post[start:post.index("elif", start)]
+        self.assertIn("not reviewed", branch)
+        self.assertIn('gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/notice.md"', branch)
+        # exit 0 comes after the notice is posted, and the agent's text is never referenced here
+        self.assertLess(branch.index("gh pr comment"), branch.index("exit 0"))
+        self.assertNotIn("review.md", branch)
+        # the stamp (which marks a finished review) is only after this branch
+        self.assertGreater(post.index(" stamp "), start)
+        # setup errors still fail the job
+        self.assertIn('elif [ "$rc" -ne 0 ]', post)
 
     def test_no_line_exceeds_150_columns(self):
         for number, line in enumerate(self.text.splitlines(), 1):

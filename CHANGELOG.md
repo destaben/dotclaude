@@ -3,6 +3,15 @@
 All notable changes to this repo are recorded here. Entries explain why a
 change was made, not just what changed — the diff already shows what.
 
+## 2026-11-11 — PR review reads a diff file and posts a notice when it cannot finish
+
+On large or deletion-heavy PRs the review agents could not read the diff: they only have `Read` on the
+workspace, a big `gh pr diff` result is spilled outside it, and subagents have no shell. The workflow now
+writes `.review-diff.patch` and the changed-file list into the workspace first. A review that is still
+incomplete after the one retry used to turn the job red with nothing posted, which was noise because the
+next push gets a fresh review; it now posts a "not reviewed" notice and stays green (issue #29). Setup
+errors and secret leaks still fail the job.
+
 ## 2026-11-10 — Corrections to the `/auto` docs after review
 
 The review of the `auto` PR left three inaccuracies: `--repo` is required only for `start` and for

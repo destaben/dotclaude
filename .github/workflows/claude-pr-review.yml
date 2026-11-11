@@ -79,7 +79,8 @@ jobs:
         1. `.review-diff.patch` (the full PR diff) and `.review-changed-files.txt` (changed paths, deleted ones
            included): `Read` them from the repo root, in chunks with offset/limit when the patch is large; do not
            run `gh pr diff` for the full patch, its output can be too big to read back. `gh pr view` gives the
-           description. If either file is missing or empty, start with "REVIEW INCOMPLETE": never review without the diff.
+           description. If either file is missing, or the patch is empty while the list is not, start with "REVIEW INCOMPLETE":
+           never review without the diff. Both empty means a PR with no changes.
            `gh pr view --json statusCheckRollup` shows the
            repo's own CI jobs: use failing results instead of re-deriving them, and say when you ran nothing yourself.
         2. `.review-context.md`, if it exists: the previous ledger, the commit that review covered, the author's
@@ -147,9 +148,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
         run: |
-          # On any failure leave no partial file, so the agent sees it is missing and says so.
-          gh pr diff "$PR_NUMBER" > .review-diff.patch || { rm -f .review-diff.patch; exit 1; }
-          gh pr diff "$PR_NUMBER" --name-only > .review-changed-files.txt || { rm -f .review-changed-files.txt; exit 1; }
+          # On any failure remove both files, so the agent sees they are missing and says so.
+          fail() { rm -f .review-diff.patch .review-changed-files.txt; exit 1; }
+          gh pr diff "$PR_NUMBER" > .review-diff.patch || fail
+          gh pr diff "$PR_NUMBER" --name-only > .review-changed-files.txt || fail
 
       # Gives the agent a memory (.github/scripts/review_context.py): the
       # previous review's ledger, the commit it covered, the author's notes and
@@ -236,7 +238,7 @@ jobs:
       # `@claude review` comment path also runs on fork PRs when a trusted user
       # asks for it. Treat the review as advisory. A workflow_dispatch run has
       # no PR number, so there is nothing to post to and it is skipped.
-      # A review that is still incomplete here is not posted: a one-time "not
+      # A review that is still incomplete here is not posted: a "not
       # reviewed" notice goes up instead and the job stays green; a setup or
       # secret-leak stop (exit 2) still fails the job. (The
       # action itself could add its own comments; none were seen on this

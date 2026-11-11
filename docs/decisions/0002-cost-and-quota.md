@@ -71,8 +71,8 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   failure (exit 2, a crash or syntax error, or the script itself missing)
   fails the job at once; a missing or unreadable execution file is an
   incomplete review (exit 3) and is retried. A failed retry run is never
-  posted. A review still incomplete after the retry posts a one-time "not
-  reviewed" notice and the job stays green (issue #29); exit 2 and a failed
+  posted. A review still incomplete after the retry posts a "not
+  reviewed" notice (once per run) and the job stays green (issue #29); exit 2 and a failed
   retry still fail it.
 - **Depends on** GitHub expanding `env` inside the action's `with:` inputs (an
   Actions expression feature, not the action itself) and the action
@@ -157,8 +157,9 @@ bug-hunter and documenter agents...") as the review, so anything waiting for
   retried or posted. A result that errors while the step exits green is the
   intermittent early stop this work targets, so one retry is worth its cost.
 - **Retry once, then fail.** One extra run only when the first result is
-  incomplete (so the normal cost is unchanged); if it is still incomplete the
-  job goes red and nothing is posted.
+  incomplete (so the normal cost is unchanged); if it is still incomplete a
+  "not reviewed" notice is posted and the job stays green (issue #29). Exit 2
+  (setup or secret leak) and a failed retry still fail the job and post nothing.
 - **Not done: one edited comment per PR** (`gh pr comment --edit-last`). An
   edit raises no new comment, so a session or automation waiting for new
   comments would miss it, and the per-commit history would be lost. A comment

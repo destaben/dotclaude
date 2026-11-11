@@ -85,7 +85,7 @@ It runs automatically on every non-draft, same-repo PR (`opened`/`synchronize`/`
 `docs/decisions/0002-cost-and-quota.md` for why. Waiting on that review from a session
 is described in `docs/pipeline.md`. The workflow posts only a finished review (it
 validates the agent's message with `.github/scripts/check_review.py`, retries
-once, then fails the run). Reviews carry a ledger of findings between pushes (see
+once, then posts a "not reviewed" notice and stays green; a setup error still fails the run). Reviews carry a ledger of findings between pushes (see
 `docs/pipeline.md`). `install.py` does not copy the scripts: put `check_review.py` and
 `review_context.py` in the project together with the workflow file.
 

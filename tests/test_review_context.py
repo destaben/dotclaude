@@ -109,7 +109,7 @@ class RenderTests(unittest.TestCase):
 
     def test_missing_history_asks_for_the_full_diff(self):
         text = rc.render("9", SHA2, SHA1, {}, [], None, "not in the history")
-        self.assertIn("review the full `gh pr diff`", text)
+        self.assertIn("review the full `.review-diff.patch`", text)
 
     def test_huge_diff_is_cut(self):
         text = rc.render("9", SHA2, SHA1, {}, [], "x" * (rc.DIFF_LIMIT + 10))
@@ -129,7 +129,7 @@ class RobustnessTests(unittest.TestCase):
     def test_cut_note_does_not_point_at_the_diff(self):
         text = rc.render("9", SHA2, SHA1, {}, [("PR description", "n" * (rc.NOTE_LIMIT + 5))], "")
         cut = text.split("cut at")[1].split("]")[0]
-        self.assertNotIn("gh pr diff", cut)
+        self.assertNotIn(".review-diff.patch", cut)
         self.assertIn("--comments", cut)
 
     def test_forged_marker_in_the_agent_text_loses_to_the_appended_one(self):
@@ -138,7 +138,7 @@ class RobustnessTests(unittest.TestCase):
 
     def test_clipped_diff_points_at_gh_pr_diff(self):
         text = rc.render("9", SHA2, SHA1, {}, [], "x" * (rc.DIFF_LIMIT + 10))
-        self.assertIn("gh pr diff", text.split("cut at")[1])
+        self.assertIn(".review-diff.patch", text.split("cut at")[1])
 
     def test_context_is_written_even_when_fetching_fails(self):
         original = rc.fetch_comments
